@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 #define CHASSIS_CAN hcan1
-#define GIMBAL_CAN  hcan2
+#define GIMBAL_CAN  hcan1
 
 // rm motor data
 typedef struct
