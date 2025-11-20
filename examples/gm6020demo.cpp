@@ -1,14 +1,14 @@
-//
+ //
 // C++ 入口: 使用 CanBus 封装与 GM6020 示例进行最小测试
 // 注意: 由于 HAL 与外设初始化为 C 文件实现，需要正确处理 extern "C"
 //
 
 extern "C" {
-#include "can.h"
-#include "gpio.h"
 #include "main.h"
-#include "pin_map.h"
 #include "stm32f4xx_hal.h"
+#include "gpio.h"
+#include "can.h"
+#include "pin_map.h"
 // 来自 C 源文件的函数原型（C 链接）
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -16,12 +16,12 @@ void Error_Handler(void);
 
 #include "can_comm.hpp"
 #include "gm6020.hpp"
-#include "m3508.hpp"
 
 // 选择要使用的 CAN 口: 可改成 &hcan2
 static CanBus g_can(&hcan1);
 
-int main(void) {
+int main(void)
+{
     HAL_Init();
     SystemClock_Config();
 
@@ -33,13 +33,11 @@ int main(void) {
     // 可选: 绑定接收回调（当前不处理反馈）
     g_can.attachRxCallback(nullptr, nullptr);
 
-    HAL_GPIO_WritePin(GPIOH, GPIO_PIN_11, GPIO_PIN_SET);
-
-    // 示例：M3508 底盘 4 电机测试：每 5ms 通过 0x200 组播发送 4 路电流
-    while (1) {
-        while (g_can.pollOnce()) {
-        }
-        M3508::sendCurrentGroup(&g_can, 4000, 4000, 4000, 4000);
+    // 示例：每 5ms 发送 1/4 号电机电流指令，2/3 置 0
+    while (1)
+    {
+        while (g_can.pollOnce()) {}
+        GM6020::sendCurrentGroup(&g_can, 0x1FF, 10000, 0, 0, 10000);
         HAL_Delay(5);
     }
 }
