@@ -229,6 +229,22 @@ void CAN2_RX0_IRQHandler(void)
   /* USER CODE END CAN2_RX0_IRQn 1 */
 }
 
+/**
+  * @brief This function handles OTG_FS global interrupt.
+  * @details USB 中断处理函数 - 必须存在否则 USB 枚举会失败
+  *          这个中断处理器响应 USB 设备的所有事件，包括：
+  *          - 数据接收 (OUT tokens)
+  *          - 数据发送完成 (IN tokens)
+  *          - 总线重置
+  *          - 挂起/恢复等
+  */
+extern PCD_HandleTypeDef hpcd_USB_OTG_FS;
+
+void OTG_FS_IRQHandler(void)
+{
+  HAL_PCD_IRQHandler(&hpcd_USB_OTG_FS);
+}
+
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
