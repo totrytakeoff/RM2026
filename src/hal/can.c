@@ -1,5 +1,5 @@
 #include "can.h"
-#include "main.h"
+
 
 CAN_HandleTypeDef hcan1;
 CAN_HandleTypeDef hcan2;
@@ -133,10 +133,10 @@ void can_filter_init(void)
   filter.FilterBank = 14;
   HAL_CAN_ConfigFilter(&hcan2, &filter);
 
-  // Start CAN and enable RX0 pending notifications
+  // Start CAN but暂时禁用接收中断，避免GM6020上电时的中断风暴
   HAL_CAN_Start(&hcan1);
-  HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  // HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING); // 暂时注释掉
 
   HAL_CAN_Start(&hcan2);
-  HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
+  // HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING); // 暂时注释掉
 }

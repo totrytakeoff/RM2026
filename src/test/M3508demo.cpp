@@ -39,8 +39,7 @@ int main(void) {
     while (1) {
         while (g_can.pollOnce()) {
         }
-
-        GM6020::sendCurrentGroup(g_can, 100000, 100000, 100000, 100000, 100000);
+        M3508::sendCurrentGroup(&g_can, 2000, 4000, 4000, 4000);
         HAL_Delay(5);
     }
 }

@@ -4,44 +4,31 @@
 //
 
 extern "C" {
-#include "hal/can.h"
-#include "hal/gpio.h"
+
+#include "gpio.h"
 #include "main.h"
-#include "bsp/pin_map.h"
+#include "pin_map.h"
 #include "stm32f4xx_hal.h"
 // 来自 C 源文件的函数原型（C 链接）
 void SystemClock_Config(void);
 void Error_Handler(void);
 }
 
-#include "drivers/can_comm.hpp"
-#include "drivers/gm6020.hpp"
-#include "drivers/m3508.hpp"
-
-// 选择要使用的 CAN 口: 可改成 &hcan2
-static CanBus g_can(&hcan1);
-
 int main(void) {
     HAL_Init();
     SystemClock_Config();
 
     MX_GPIO_Init();
-    MX_CAN1_Init();
-    MX_CAN2_Init();
-    can_filter_init();
 
-    // 可选: 绑定接收回调（当前不处理反馈）
-    g_can.attachRxCallback(nullptr, nullptr);
+    HAL_GPIO_WritePin(GPIOH, GPIO_PIN_12, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOH, GPIO_PIN_11, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
 
-    HAL_GPIO_WritePin(GPIOH, GPIO_PIN_11, GPIO_PIN_SET);
-
-    // 示例：M3508 底盘 4 电机测试：每 5ms 通过 0x200 组播发送 4 路电流
     while (1) {
-        while (g_can.pollOnce()) {
-        }
-
-        GM6020::sendCurrentGroup(g_can, 100000, 100000, 100000, 100000, 100000);
-        HAL_Delay(5);
+        HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
+        HAL_Delay(500);
+        HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_RESET);
+        HAL_Delay(500);
     }
 }
 
