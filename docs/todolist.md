@@ -1,6 +1,5 @@
 # 模块驱动封装 todolists
 
-
 * [X] can
 * [X] GM6020
 * [X] M3508/C620/M2006/C610
@@ -11,6 +10,7 @@
 * [ ] adc/v
 * [ ] spi
 * [ ] bmi088/IMU/Ins
+* [ ] remote_control
 * [ ] chassis_module
 * [ ] glmbal_module
 * [ ] freertos_frameware
