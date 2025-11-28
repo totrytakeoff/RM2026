@@ -5,8 +5,7 @@
 * [X] GM6020
 * [X] M3508/C620/M2006/C610
 * [X] led
-* [X] key/button
-* [ ] buzzer
+* [X] key/buttoner
 * [ ] usb
 * [ ] uart
 * [ ] adc/v
