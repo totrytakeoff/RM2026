@@ -60,7 +60,8 @@ bool GM6020::setPwmUs(uint16_t us)
 {
     if (!pwm_tim_ || period_ticks_ == 0) return false;
     uint32_t period_us = 20000; // 50Hz -> 20ms
-    if (us < 500) us = 500; if (us > 2500) us = 2500; // 安全夹取
+    if (us < 500) us = 500;
+    if (us > 2500) us = 2500; // 安全夹取
     uint32_t ccr = (uint32_t)((uint64_t)(period_ticks_ + 1) * us / period_us);
     __HAL_TIM_SET_COMPARE(pwm_tim_, pwm_channel_, ccr);
     return true;
@@ -68,7 +69,8 @@ bool GM6020::setPwmUs(uint16_t us)
 
 bool GM6020::setPwmSpeed(float rpm)
 {
-    if (rpm < -100.f) rpm = -100.f; if (rpm > 100.f) rpm = 100.f;
+    if (rpm < -100.f) rpm = -100.f;
+    if (rpm > 100.f) rpm = 100.f;
     float us = 1520.f + (rpm/100.f) * 400.f; // +-400us 范围
     return setPwmUs((uint16_t)us);
 }
@@ -76,7 +78,8 @@ bool GM6020::setPwmSpeed(float rpm)
 bool GM6020::setPwmPosition(float degrees, float center_us, float span_us)
 {
     float us = center_us + (degrees/90.f) * span_us; // +-90deg -> +-span
-    if (us < 1000.f) us = 1000.f; if (us > 2000.f) us = 2000.f;
+    if (us < 1000.f) us = 1000.f;
+    if (us > 2000.f) us = 2000.f;
     return setPwmUs((uint16_t)us);
 }
 

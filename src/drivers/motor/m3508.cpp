@@ -30,6 +30,12 @@ bool M3508::sendCurrentGroup(CanBus* can, int16_t i1, int16_t i2, int16_t i3, in
     uint8_t p[8]; pack4(p, i1,i2,i3,i4);
     return can->sendStd(kGroupCurrent, p, 8) == HAL_OK;
 }
+bool M3508::sendCurrentGroup2(CanBus* can, int16_t i1, int16_t i2, int16_t i3, int16_t i4)
+{
+    if (!can) return false;
+    uint8_t p[8]; pack4(p, i1,i2,i3,i4);
+    return can->sendStd(kGroupCurrent2, p, 8) == HAL_OK;
+}
 
 void M3508::parseFeedback(const CAN_RxHeaderTypeDef* h, const uint8_t* d)
 {

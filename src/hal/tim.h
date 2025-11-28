@@ -40,13 +40,7 @@ extern TIM_HandleTypeDef htim5;
 void MX_TIM1_Init(void);
 void MX_TIM5_Init(void);
 
-// RGB LED控制函数声明
-void RGB_SetColor(uint8_t red, uint8_t green, uint8_t blue);
-void RGB_Start(void);
-void RGB_Stop(void);
-void RGB_Breathing(uint8_t red, uint8_t green, uint8_t blue, uint16_t speed);
-void RGB_Rainbow(uint16_t speed);
-void RGB_Blink(uint8_t red, uint8_t green, uint8_t blue, uint16_t speed, uint8_t times);
+
 
 // MSP函数声明
 void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle);

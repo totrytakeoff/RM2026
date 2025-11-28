@@ -20,7 +20,7 @@ extern "C" {
 #include "stm32f4xx_hal.h"
 }
 
-#include "can_comm.hpp"
+#include "../protocol/can_comm.hpp"
 
 /**
  * @brief GM6020 电机封装（接口声明）

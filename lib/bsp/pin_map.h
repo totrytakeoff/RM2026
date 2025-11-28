@@ -3,7 +3,7 @@
 
 /******************************************************************************
  *
- * @file       pin_map.hpp
+ * @file       pin_map.h
  * @brief      RoboMaster开发板C型引脚映射头文件
  * @note
  * - 开发板主控: STM32F407IGH6
@@ -35,9 +35,9 @@ extern "C" {
  * @brief 开发板集成1颗共阳极RGB LED指示灯
  *
  * @note 控制逻辑:
- * - IO口输出高电平: 对应LED熄灭 (共阳极)
- * - IO口输出低电平: 对应LED点亮
- * - 可通过PWM控制亮度
+ * - IO口输出高电平: 对应LED点亮 (共阳极)
+ * - IO口输出低电平: 对应LED熄灭
+ * - 可通过PWM控制亮度，占空比越高越亮
  *
  * @warning 使用PWM控制时，频率建议1kHz以上，占空比0%~100%对应亮度0%~100%
  */
@@ -47,6 +47,10 @@ extern "C" {
 #define LED_G_GPIO_PORT GPIOH /*!< 绿色LED所在GPIO端口 */
 #define LED_B_PIN GPIO_PIN_10 /*!< 蓝色LED控制引脚 */
 #define LED_B_GPIO_PORT GPIOH /*!< 蓝色LED所在GPIO端口 */
+
+
+
+
 
 #define LED_RED_ON() HAL_GPIO_WritePin(LED_R_GPIO_PORT, LED_R_PIN, GPIO_PIN_RESET)
 #define LED_RED_OFF() HAL_GPIO_WritePin(LED_R_GPIO_PORT, LED_R_PIN, GPIO_PIN_SET)
@@ -63,6 +67,13 @@ extern "C" {
 /**
  * @}
  */
+
+
+#define LED_TIM TIM5
+#define LED_R_CHANNEL TIM_CHANNEL_3
+#define LED_G_CHANNEL TIM_CHANNEL_2
+#define LED_B_CHANNEL TIM_CHANNEL_1
+
 
 /**
  * @defgroup Power_Control 电源控制

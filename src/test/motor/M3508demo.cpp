@@ -4,19 +4,23 @@
 //
 
 extern "C" {
+#include "stm32f4xx_hal.h"
+
+//注意 硬件初始化文件一定要 extern "C"
 #include "hal/can.h"
 #include "hal/gpio.h"
-#include "main.h"
-#include "bsp/pin_map.h"
-#include "stm32f4xx_hal.h"
 // 来自 C 源文件的函数原型（C 链接）
 void SystemClock_Config(void);
 void Error_Handler(void);
+void MX_CAN1_Init(void);
+void MX_CAN2_Init(void);
+void can_filter_init(void);
+void MX_GPIO_Init(void);
 }
 
-#include "drivers/can_comm.hpp"
-#include "drivers/gm6020.hpp"
-#include "drivers/m3508.hpp"
+#include "drivers/protocol/can_comm.hpp"
+#include "drivers/motor/gm6020.hpp"
+#include "drivers/motor/m3508.hpp"
 
 // 选择要使用的 CAN 口: 可改成 &hcan2
 static CanBus g_can(&hcan1);
@@ -39,7 +43,7 @@ int main(void) {
     while (1) {
         while (g_can.pollOnce()) {
         }
-        M3508::sendCurrentGroup(&g_can, 2000, 4000, 4000, 4000);
+        M3508::sendCurrentGroup2(&g_can, 2000, 4000, 4000, 4000);
         HAL_Delay(5);
     }
 }

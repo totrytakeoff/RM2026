@@ -18,7 +18,7 @@ extern "C" {
 #include "stm32f4xx_hal.h"
 }
 
-#include "can_comm.hpp"
+#include "../protocol/can_comm.hpp"
 
 /**
  * @brief M3508/C610/C620 底盘电机封装（仅接口声明）
@@ -29,6 +29,7 @@ class M3508 {
 public:
     /** 组播帧常量：底盘 4 电机电流控制 */
     static constexpr uint16_t kGroupCurrent = 0x200;
+    static constexpr uint16_t kGroupCurrent2 = 0x1FF;
 
     /** 电机反馈结构 */
     struct Measure {
@@ -57,6 +58,7 @@ public:
      * @brief 批量发送 4 通道电流（推荐同时控制多电机时使用）
      */
     static bool sendCurrentGroup(CanBus* can, int16_t i1, int16_t i2, int16_t i3, int16_t i4);
+    static bool sendCurrentGroup2(CanBus* can, int16_t i1, int16_t i2, int16_t i3, int16_t i4);
 
     /**
      * @brief 解析来自电机的反馈帧（在接收回调或轮询时调用）

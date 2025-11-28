@@ -14,8 +14,8 @@ void SystemClock_Config(void);
 void Error_Handler(void);
 }
 
-#include "drivers/can_comm.hpp"
-#include "drivers/gm6020.hpp"
+#include "../drivers/protocol/can_comm.hpp"
+#include "../drivers/motor/gm6020.hpp"
 
 // 选择要使用的 CAN 口: 可改成 &hcan2
 static CanBus g_can(&hcan1);
