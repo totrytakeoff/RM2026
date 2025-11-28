@@ -7,11 +7,14 @@
  * 功能：按KEY按钮切换红橙黄绿青蓝紫颜色
  */
 
-#include "../drivers/button.hpp"
-#include "../drivers/led.hpp"
+#include "../../drivers/btn/button.hpp"
+#include "../../drivers/led/led.hpp"
+extern "C" {
 #include "hal/gpio.h"
 #include "hal/tim.h"
 #include "main.h"
+
+}
 
 // 外部定时器句柄声明
 extern TIM_HandleTypeDef htim5;
