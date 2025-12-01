@@ -8,7 +8,6 @@ extern "C" {
 #include "stm32f4xx_hal.h"
 #include "hal/gpio.h"
 #include "hal/can.h"
-#include "bsp/pin_map.h"
 // 来自 C 源文件的函数原型（C 链接）
 void SystemClock_Config(void);
 void Error_Handler(void);

@@ -5,7 +5,8 @@
 //  设计目标:
 //  - 以 HAL 的 CAN_HandleTypeDef 为依托，提供简洁稳定的发送与接收轮询接口
 //  - 无动态内存申请、无异常、无 STL，适用于资源受限的 MCU 环境
-//  - 可选回调，在主动轮询时对每帧数据进行处理（避免在中断中做重活）
+//  - 支持多个回调注册，在主动轮询时对每帧数据进行处理（避免在中断中做重活）
+//  - 支持基于 CAN ID 的回调过滤，提高处理效率
 //
 #ifndef CAN_COMM_HPP
 #define CAN_COMM_HPP
@@ -18,7 +19,7 @@ extern "C" {
  * @brief 嵌入式友好的 CAN 封装类（不使用 STL、无动态分配）
  *
  * 基于 HAL 的 `CAN_HandleTypeDef` 提供简洁的发送与接收轮询接口，
- * 并支持向上层注册接收回调（回调只在主动 poll 时触发）。
+ * 并支持向上层注册多个接收回调（回调只在主动 poll 时触发）。
  */
 class CanBus {
 public:
@@ -32,17 +33,63 @@ public:
     typedef void (*RxCallback)(const CAN_RxHeaderTypeDef* header, const uint8_t* data, void* user);
 
     /**
+     * @brief 回调节点结构体（链表节点）
+     */
+    struct CallbackNode {
+        RxCallback callback;     /**< 回调函数指针 */
+        void* user_data;         /**< 用户上下文数据 */
+        uint32_t filter_id;      /**< 过滤 ID（0 表示接收所有）*/
+        bool use_filter;         /**< 是否启用 ID 过滤 */
+        bool is_ext_id;          /**< 是否为扩展 ID */
+        CallbackNode* next;      /**< 下一个节点 */
+    };
+
+    /**
+     * @brief 最大回调数量限制（静态数组大小）
+     */
+    static constexpr uint8_t MAX_CALLBACKS = 16;
+
+    /**
      * @brief 构造函数
      * @param handle 底层 HAL CAN 句柄（例如 &hcan1）
      */
     explicit CanBus(CAN_HandleTypeDef* handle);
 
     /**
-     * @brief 绑定接收回调（可选）
+     * @brief 注册接收回调（支持多个回调）
      * @param cb 回调函数指针
      * @param user 用户上下文指针，原样传入回调
+     * @return true=注册成功，false=回调列表已满
      */
-    void attachRxCallback(RxCallback cb, void* user);
+    bool registerRxCallback(RxCallback cb, void* user = nullptr);
+
+    /**
+     * @brief 注册带 ID 过滤的接收回调
+     * @param cb 回调函数指针
+     * @param filter_id 过滤的 CAN ID（只有匹配的帧才会触发此回调）
+     * @param is_ext_id 是否为扩展 ID
+     * @param user 用户上下文指针
+     * @return true=注册成功，false=回调列表已满
+     */
+    bool registerRxCallback(RxCallback cb, uint32_t filter_id, bool is_ext_id, void* user = nullptr);
+
+    /**
+     * @brief 注销指定的回调函数
+     * @param cb 要注销的回调函数指针
+     * @return true=注销成功，false=未找到该回调
+     */
+    bool unregisterRxCallback(RxCallback cb);
+
+    /**
+     * @brief 清除所有回调
+     */
+    void clearAllCallbacks();
+
+    /**
+     * @brief 获取当前注册的回调数量
+     * @return 回调数量
+     */
+    uint8_t getCallbackCount() const;
 
     /**
      * @brief 发送标准帧（非阻塞，将数据入硬件邮箱）
@@ -74,9 +121,18 @@ public:
     CAN_HandleTypeDef* handle();
 
 private:
-    CAN_HandleTypeDef* h_;   /**< HAL CAN 句柄（外部初始化与启动） */
-    RxCallback         rx_cb_;   /**< 接收回调指针 */
-    void*              rx_user_; /**< 用户上下文指针 */
+    /**
+     * @brief 触发所有匹配的回调
+     * @param header 接收帧头
+     * @param data 接收数据
+     */
+    void invokeCallbacks(const CAN_RxHeaderTypeDef* header, const uint8_t* data);
+
+private:
+    CAN_HandleTypeDef* h_;           /**< HAL CAN 句柄（外部初始化与启动） */
+    CallbackNode callback_pool_[MAX_CALLBACKS]; /**< 回调节点池（静态分配）*/
+    CallbackNode* callback_list_;    /**< 回调链表头指针 */
+    uint8_t callback_count_;         /**< 当前回调数量 */
 };
 
 #endif // CAN_COMM_HPP
