@@ -25,8 +25,8 @@ PIDController::PIDController(float kp, float ki, float kd)
     , i_term_(0.0f)
     , d_term_(0.0f)
     , output_(0.0f)
-    , out_min_(-100.0f)
-    , out_max_(100.0f)
+    , out_min_(-20000.0f)  // 修改默认限制，避免电机控制输出不足
+    , out_max_(20000.0f)   // 修改默认限制，避免电机控制输出不足
     , sample_time_(0.02f)  // 默认20ms
     , last_time_(0)
     , mode_(Mode::AUTOMATIC)

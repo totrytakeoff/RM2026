@@ -1,6 +1,26 @@
 //
-// C++ 入口: 使用 CanBus 封装与 GM6020 示例进行最小测试
+// C++ 入口: M3508 电机控制测试
 // 注意: 由于 HAL 与外设初始化为 C 文件实现，需要正确处理 extern "C"
+//
+// ========== 重要说明 ==========
+// 1. 速度控制问题：
+//    - M3508 速度环 PID 推荐参数：Kp=5~10, Ki=0.1~0.5, Kd=0
+//    - 如果 Kp 过大（如15.0），会导致震荡和超调
+//    - 如果 Kp 过小（如3.0），会导致启动力矩不足，电机不转
+//    - 原因：Kp=3时，1000rpm误差产生3000电流(约3.66A)，无法克服静摩擦
+//    - 已修正为 Kp=8.0, Ki=0.3（提供约9.76A启动电流）
+//
+// 2. 位置控制问题：
+//    - 测试6使用的是简化P控制，不是完整PID
+//    - 位置环：位置误差 × Kp = 目标速度
+//    - 速度环：速度误差 × Kp = 输出电流
+//    - 已添加死区判断（±5°）避免在目标位置震荡
+//    - 推荐参数：位置环Kp=0.3~1.0, 速度环Kp=5~10
+//
+// 3. 控制模式选择：
+//    - 测试1-2：使用完整PID的速度环控制（推荐）
+//    - 测试3-4：使用完整PID的位置环控制（推荐）
+//    - 测试5-6：简化P控制（快速测试用）
 //
 
 extern "C" {
@@ -46,17 +66,18 @@ void init_motors() {
     motor3.init();
     motor4.init();
     
-    // 配置速度环 PID 参数（根据实际情况调整）
-    motor1.setSpeedPID(15.0f, 0.8f, 0.0f);
-    motor2.setSpeedPID(15.0f, 0.8f, 0.0f);
-    motor3.setSpeedPID(15.0f, 0.8f, 0.0f);
-    motor4.setSpeedPID(15.0f, 0.8f, 0.0f);
+    // 配置速度环 PID 参数（M3508推荐：Kp=5~10, Ki=0.1~0.5）
+    // 注意：Kp太小会导致启动力矩不足，电机不转
+    motor1.setSpeedPID(8.0f, 0.3f, 0.0f);
+    motor2.setSpeedPID(8.0f, 0.3f, 0.0f);
+    motor3.setSpeedPID(8.0f, 0.3f, 0.0f);
+    motor4.setSpeedPID(8.0f, 0.3f, 0.0f);
     
-    // 配置位置环 PID 参数
-    motor1.setPositionPID(0.8f, 0.0f, 0.2f);
-    motor2.setPositionPID(0.8f, 0.0f, 0.2f);
-    motor3.setPositionPID(0.8f, 0.0f, 0.2f);
-    motor4.setPositionPID(0.8f, 0.0f, 0.2f);
+    // 配置位置环 PID 参数（位置环输出为速度，Kp=0.3~1.0）
+    motor1.setPositionPID(0.5f, 0.0f, 0.1f);
+    motor2.setPositionPID(0.5f, 0.0f, 0.1f);
+    motor3.setPositionPID(0.5f, 0.0f, 0.1f);
+    motor4.setPositionPID(0.5f, 0.0f, 0.1f);
     
     motors_initialized = true;
     
@@ -172,6 +193,51 @@ void test_position_direct(float target1, float target2, float target3, float tar
                                 1);
 }
 
+static inline float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+void test_speed_manual_kp(float target_speed, float kp) {
+    while (g_can.pollOnce()) {}
+    float current_speed = static_cast<float>(motor1.measure().speed_rpm);
+    float out = (target_speed - current_speed) * kp;
+    out = clampf(out, -16384.0f, 16384.0f);
+    motor1.setCurrent(static_cast<int16_t>(out));
+}
+
+static inline void put16_be(uint8_t* p, uint8_t off, int16_t v) {
+    p[off] = (uint8_t)(v >> 8);
+    p[off + 1] = (uint8_t)(v);
+}
+
+void test_speed_kp_raw(float target_speed, float kp, uint8_t motor_id = 1) {
+    while (g_can.pollOnce()) {}
+    int16_t spd = 0;
+    switch (motor_id) {
+        case 1: spd = motor1.measure().speed_rpm; break;
+        case 2: spd = motor2.measure().speed_rpm; break;
+        case 3: spd = motor3.measure().speed_rpm; break;
+        case 4: spd = motor4.measure().speed_rpm; break;
+        default: spd = motor1.measure().speed_rpm; break;
+    }
+    float outf = (target_speed - (float)spd) * kp;
+    if (outf > 16384.0f) outf = 16384.0f; if (outf < -16384.0f) outf = -16384.0f;
+    int16_t out = (int16_t)outf;
+    uint8_t data[8] = {0};
+    uint16_t can_id;
+    uint8_t slot_off;
+    if (motor_id >= 1 && motor_id <= 4) {
+        can_id = M3508::kGroupCurrent;
+        slot_off = (uint8_t)((motor_id - 1) * 2);
+    } else {
+        can_id = M3508::kGroupCurrent2;
+        uint8_t idx = (uint8_t)((motor_id - 5) & 0x03);
+        slot_off = (uint8_t)(idx * 2);
+    }
+    put16_be(data, slot_off, out);
+    g_can.sendStd(can_id, data, 8);
+}
+
 /**
  * @brief HAL库 CAN接收FIFO0消息挂起回调（中断处理）
  */
@@ -194,8 +260,11 @@ int main(void) {
     // 延迟等待电机上电稳定
     HAL_Delay(200);
     
+
     // 初始化电机
     init_motors();
+
+    HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
     
     // LED 指示就绪
     HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
@@ -205,19 +274,29 @@ int main(void) {
     
     // 测试 1: 单电机速度环测试
     // while (1) {
-    //     test_speed_single(1000.0f);  // 1000 rpm
+    //     test_speed_manual_kp(500.0f, 8.0f);
     //     HAL_Delay(1);
     // }
     
     // 测试 2: 四电机速度环批量测试
     // while (1) {
-    //     test_speed_group(500.0f, -500.0f, 800.0f, -800.0f);
+    //     test_speed_group(1500.0f, -500.0f, 800.0f, -800.0f);
     //     HAL_Delay(1);
     // }
     
     // 测试 3: 单电机位置环测试（往复运动）
     // while (1) {
     //     test_position_single(360.0f);   // 转到 360 度
+    //     HAL_Delay(2000);
+    //     test_position_single(300.0f);   
+    //     HAL_Delay(2000);
+    //     test_position_single(240.0f);   
+    //     HAL_Delay(2000);
+    //     test_position_single(180.0f);   
+    //     HAL_Delay(2000);
+    //     test_position_single(120.0f);   
+    //     HAL_Delay(2000);
+    //     test_position_single(60.0f);   
     //     HAL_Delay(2000);
     //     test_position_single(0.0f);     // 转回 0 度
     //     HAL_Delay(2000);
@@ -232,17 +311,20 @@ int main(void) {
     // }
     
     // 测试 5: 直接速度环测试（无需实例，直接传值）
+    // 注意：Kp建议使用5.0-10.0，太小会导致电机不转
     while (1) {
-        test_speed_direct(200.0f, -1000.0f, 500.0f, -500.0f);
+        test_speed_direct(1000.0f, -100.0f, 200.0f, -200.0f, 8.0f);  // 最后一个参数是Kp
         HAL_Delay(1);
     }
     
     // 测试 6: 直接位置环测试（无需实例，直接传值）
+    // 注意：这是简化的P控制，已添加死区判断（±5°）避免震荡
+    // 推荐参数：pos_kp=0.5, spd_kp=8.0
     // while (1) {
-    //     test_position_direct(0.0f, 0.0f, 0.0f, 0.0f);
-    //     HAL_Delay(2000);
-    //     test_position_direct(360.0f, 720.0f, 180.0f, 540.0f);
-    //     HAL_Delay(2000);
+    //     test_position_direct(0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 8.0f);
+    //     HAL_Delay(3000);
+    //     test_position_direct(360.0f, 720.0f, 180.0f, 540.0f, 0.5f, 8.0f);
+    //     HAL_Delay(3000);
     // }
     
     // 测试 7: 速度环变速测试

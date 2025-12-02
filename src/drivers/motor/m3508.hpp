@@ -41,6 +41,12 @@ public:
         POSITION_LOOP = 2   /**< 位置环控制 */
     };
 
+    /** 位置模式 */
+    enum class PositionMode {
+        MULTI_TURN = 0,     /**< 多圈绝对角（使用 total_angle，单位度） */
+        SHORTEST_PATH = 1   /**< 最短路就近角（对机械角取模 [-180,180]） */
+    };
+
     /** 电机反馈结构 */
     struct Measure {
         uint16_t ecd;          /**< 编码器原始值 (0-8191) */
@@ -83,6 +89,26 @@ public:
      * @param target_angle 目标角度（度）
      */
     void setTargetPosition(float target_angle);
+
+    /**
+     * @brief 设置位置模式
+     */
+    void setPositionMode(PositionMode mode);
+
+    /**
+     * @brief 设置位置环输出速度与加速度限制（单位 rpm / rpm/s）
+     */
+    void setPositionLimits(float speed_limit_rpm, float accel_limit_rpm_s);
+
+    /**
+     * @brief 设定多圈绝对角目标（并切换到多圈模式）
+     */
+    void setTargetPositionMultiTurn(float target_angle);
+
+    /**
+     * @brief 设定就近角目标（单位度，0..360 任意取模，并切换到就近模式）
+     */
+    void setTargetPositionShortest(float target_angle);
 
     /**
      * @brief 更新控制器（在主循环中周期调用）
@@ -226,6 +252,7 @@ private:
     Measure meas_;             /**< 测量数据 */
     
     ControlMode mode_;         /**< 控制模式 */
+    PositionMode position_mode_;/**< 位置模式 */
     float target_speed_;       /**< 目标速度 (rpm) */
     float target_position_;    /**< 目标位置（度） */
     int16_t output_current_;   /**< 输出电流 */
@@ -234,6 +261,11 @@ private:
     PIDController pos_pid_;    /**< 位置环PID */
     
     bool initialized_;         /**< 初始化标志 */
+    bool has_feedback_;        /**< 已收到反馈 */
+    bool pos_aligned_;         /**< 位置对齐完成 */
+    float last_target_speed_;  /**< 上周期目标速度 (rpm) */
+    float speed_limit_rpm_;    /**< 目标速度限幅 */
+    float accel_limit_rpm_s_;  /**< 目标加速度限幅 */
 };
 
 #endif // M3508_HPP

@@ -10,6 +10,16 @@ extern "C" {
 #include "m3508.hpp"
 #include <cmath>
 
+static inline float wrap_deg_180(float x) {
+    float y = std::fmod(x + 180.0f, 360.0f);
+    if (y < 0) y += 360.0f;
+    return y - 180.0f;
+}
+
+static inline float clampf(float v, float lo, float hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 // M3508 编码器分辨率
 static constexpr uint16_t ECD_RANGE = 8192;
 static constexpr float ECD_TO_DEGREE = 360.0f / ECD_RANGE;
@@ -20,12 +30,18 @@ M3508::M3508(CanBus* can, uint8_t motor_id)
     , slot_(0)
     , fbk_id_(0x200 + motor_id)
     , mode_(ControlMode::OPEN_LOOP)
+    , position_mode_(PositionMode::MULTI_TURN)
     , target_speed_(0.0f)
     , target_position_(0.0f)
     , output_current_(0)
-    , speed_pid_(10.0f, 0.5f, 0.0f)  // 默认速度环 PID 参数
+    , speed_pid_(8.0f, 0.3f, 0.0f)  // 默认速度环 PID 参数 (足够的启动力矩)
     , pos_pid_(0.5f, 0.0f, 0.1f)     // 默认位置环 PID 参数
     , initialized_(false)
+    , has_feedback_(false)
+    , pos_aligned_(false)
+    , last_target_speed_(0.0f)
+    , speed_limit_rpm_(200.0f)
+    , accel_limit_rpm_s_(1000.0f)
 {
     // 确定槽位索引
     if (id_ >= 1 && id_ <= 4) {
@@ -44,7 +60,7 @@ M3508::M3508(CanBus* can, uint8_t motor_id)
     speed_pid_.setSampleTime(0.001f);  // 1ms
     speed_pid_.setMode(PIDController::Mode::AUTOMATIC);
     
-    pos_pid_.setOutputLimits(-500.0f, 500.0f);  // 位置环输出限制为速度
+    pos_pid_.setOutputLimits(-speed_limit_rpm_, speed_limit_rpm_);
     pos_pid_.setSampleTime(0.001f);
     pos_pid_.setMode(PIDController::Mode::AUTOMATIC);
 }
@@ -91,6 +107,28 @@ void M3508::setTargetPosition(float target_angle) {
     mode_ = ControlMode::POSITION_LOOP;
 }
 
+void M3508::setPositionMode(PositionMode mode) {
+    position_mode_ = mode;
+}
+
+void M3508::setPositionLimits(float speed_limit_rpm, float accel_limit_rpm_s) {
+    if (speed_limit_rpm < 1.0f) speed_limit_rpm = 1.0f;
+    if (accel_limit_rpm_s < 1.0f) accel_limit_rpm_s = 1.0f;
+    speed_limit_rpm_ = speed_limit_rpm;
+    accel_limit_rpm_s_ = accel_limit_rpm_s;
+    pos_pid_.setOutputLimits(-speed_limit_rpm_, speed_limit_rpm_);
+}
+
+void M3508::setTargetPositionMultiTurn(float target_angle) {
+    setPositionMode(PositionMode::MULTI_TURN);
+    setTargetPosition(target_angle);
+}
+
+void M3508::setTargetPositionShortest(float target_angle) {
+    setPositionMode(PositionMode::SHORTEST_PATH);
+    setTargetPosition(target_angle);
+}
+
 bool M3508::update(float dt) {
     if (!can_) return false;
     
@@ -112,19 +150,51 @@ bool M3508::update(float dt) {
         }
         
         case ControlMode::POSITION_LOOP: {
-            // 位置环控制（级联）
-            float current_pos = static_cast<float>(meas_.total_angle);
-            
-            // 位置环输出作为速度环输入
-            float target_speed = (dt > 0.0f)
-                ? pos_pid_.compute(target_position_, current_pos, dt)
-                : pos_pid_.compute(target_position_, current_pos);
-            
-            // 速度环输出电流
+            if (!has_feedback_) {
+                return setCurrent(0);
+            }
+
+            if (!pos_aligned_) {
+                if (position_mode_ == PositionMode::MULTI_TURN) {
+                    target_position_ = static_cast<float>(meas_.total_angle);
+                } else {
+                    target_position_ = static_cast<float>(meas_.ecd) * ECD_TO_DEGREE;
+                }
+                last_target_speed_ = 0.0f;
+                pos_aligned_ = true;
+                return setCurrent(0);
+            }
+
+            float target_speed_cmd = 0.0f;
+            if (position_mode_ == PositionMode::MULTI_TURN) {
+                float current_pos = static_cast<float>(meas_.total_angle);
+                target_speed_cmd = (dt > 0.0f)
+                    ? pos_pid_.compute(target_position_, current_pos, dt)
+                    : pos_pid_.compute(target_position_, current_pos);
+            } else {
+                float mech_deg = static_cast<float>(meas_.ecd) * ECD_TO_DEGREE;
+                float tgt = std::fmod(target_position_, 360.0f);
+                if (tgt < 0) tgt += 360.0f;
+                float err = tgt - mech_deg;
+                err = wrap_deg_180(err);
+                float adjusted_target = mech_deg + err;
+                target_speed_cmd = (dt > 0.0f)
+                    ? pos_pid_.compute(adjusted_target, mech_deg, dt)
+                    : pos_pid_.compute(adjusted_target, mech_deg);
+            }
+
+            target_speed_cmd = clampf(target_speed_cmd, -speed_limit_rpm_, speed_limit_rpm_);
+            float used_dt = (dt > 0.0f) ? dt : 0.001f;
+            float max_delta = accel_limit_rpm_s_ * used_dt;
+            float delta = target_speed_cmd - last_target_speed_;
+            if (delta > max_delta) target_speed_cmd = last_target_speed_ + max_delta;
+            else if (delta < -max_delta) target_speed_cmd = last_target_speed_ - max_delta;
+            last_target_speed_ = target_speed_cmd;
+
             float current_speed = static_cast<float>(meas_.speed_rpm);
             float output = (dt > 0.0f)
-                ? speed_pid_.compute(target_speed, current_speed, dt)
-                : speed_pid_.compute(target_speed, current_speed);
+                ? speed_pid_.compute(target_speed_cmd, current_speed, dt)
+                : speed_pid_.compute(target_speed_cmd, current_speed);
             current = static_cast<int16_t>(output);
             break;
         }
@@ -139,6 +209,10 @@ void M3508::setControlMode(ControlMode mode) {
         // 切换模式时重置 PID
         speed_pid_.reset();
         pos_pid_.reset();
+        if (mode_ == ControlMode::POSITION_LOOP) {
+            pos_aligned_ = false;
+            last_target_speed_ = 0.0f;
+        }
     }
 }
 
@@ -225,53 +299,60 @@ bool M3508::updatePositionGroup(M3508* m1, M3508* m2, M3508* m3, M3508* m4, floa
     
     // 计算各电机的电流输出
     int16_t currents[4] = {0};
-    
-    if (m1->mode_ == ControlMode::POSITION_LOOP) {
-        float pos = static_cast<float>(m1->meas_.total_angle);
-        float target_speed = (dt > 0.0f)
-            ? m1->pos_pid_.compute(m1->target_position_, pos, dt)
-            : m1->pos_pid_.compute(m1->target_position_, pos);
-        float speed = static_cast<float>(m1->meas_.speed_rpm);
+
+    M3508* arr[4] = {m1, m2, m3, m4};
+    for (int i = 0; i < 4; ++i) {
+        M3508* m = arr[i];
+        if (!m || m->mode_ != ControlMode::POSITION_LOOP) continue;
+
+        if (!m->has_feedback_) {
+            currents[i] = 0;
+            continue;
+        }
+
+        if (!m->pos_aligned_) {
+            if (m->position_mode_ == PositionMode::MULTI_TURN) {
+                m->target_position_ = static_cast<float>(m->meas_.total_angle);
+            } else {
+                m->target_position_ = static_cast<float>(m->meas_.ecd) * ECD_TO_DEGREE;
+            }
+            m->last_target_speed_ = 0.0f;
+            m->pos_aligned_ = true;
+            currents[i] = 0;
+            continue;
+        }
+
+        float target_speed_cmd = 0.0f;
+        if (m->position_mode_ == PositionMode::MULTI_TURN) {
+            float current_pos = static_cast<float>(m->meas_.total_angle);
+            target_speed_cmd = (dt > 0.0f)
+                ? m->pos_pid_.compute(m->target_position_, current_pos, dt)
+                : m->pos_pid_.compute(m->target_position_, current_pos);
+        } else {
+            float mech_deg = static_cast<float>(m->meas_.ecd) * ECD_TO_DEGREE;
+            float tgt = std::fmod(m->target_position_, 360.0f);
+            if (tgt < 0) tgt += 360.0f;
+            float err = tgt - mech_deg;
+            err = wrap_deg_180(err);
+            float adjusted_target = mech_deg + err;
+            target_speed_cmd = (dt > 0.0f)
+                ? m->pos_pid_.compute(adjusted_target, mech_deg, dt)
+                : m->pos_pid_.compute(adjusted_target, mech_deg);
+        }
+
+        target_speed_cmd = clampf(target_speed_cmd, -m->speed_limit_rpm_, m->speed_limit_rpm_);
+        float used_dt = (dt > 0.0f) ? dt : 0.001f;
+        float max_delta = m->accel_limit_rpm_s_ * used_dt;
+        float delta = target_speed_cmd - m->last_target_speed_;
+        if (delta > max_delta) target_speed_cmd = m->last_target_speed_ + max_delta;
+        else if (delta < -max_delta) target_speed_cmd = m->last_target_speed_ - max_delta;
+        m->last_target_speed_ = target_speed_cmd;
+
+        float speed = static_cast<float>(m->meas_.speed_rpm);
         float output = (dt > 0.0f)
-            ? m1->speed_pid_.compute(target_speed, speed, dt)
-            : m1->speed_pid_.compute(target_speed, speed);
-        currents[0] = static_cast<int16_t>(output);
-    }
-    
-    if (m2->mode_ == ControlMode::POSITION_LOOP) {
-        float pos = static_cast<float>(m2->meas_.total_angle);
-        float target_speed = (dt > 0.0f)
-            ? m2->pos_pid_.compute(m2->target_position_, pos, dt)
-            : m2->pos_pid_.compute(m2->target_position_, pos);
-        float speed = static_cast<float>(m2->meas_.speed_rpm);
-        float output = (dt > 0.0f)
-            ? m2->speed_pid_.compute(target_speed, speed, dt)
-            : m2->speed_pid_.compute(target_speed, speed);
-        currents[1] = static_cast<int16_t>(output);
-    }
-    
-    if (m3->mode_ == ControlMode::POSITION_LOOP) {
-        float pos = static_cast<float>(m3->meas_.total_angle);
-        float target_speed = (dt > 0.0f)
-            ? m3->pos_pid_.compute(m3->target_position_, pos, dt)
-            : m3->pos_pid_.compute(m3->target_position_, pos);
-        float speed = static_cast<float>(m3->meas_.speed_rpm);
-        float output = (dt > 0.0f)
-            ? m3->speed_pid_.compute(target_speed, speed, dt)
-            : m3->speed_pid_.compute(target_speed, speed);
-        currents[2] = static_cast<int16_t>(output);
-    }
-    
-    if (m4->mode_ == ControlMode::POSITION_LOOP) {
-        float pos = static_cast<float>(m4->meas_.total_angle);
-        float target_speed = (dt > 0.0f)
-            ? m4->pos_pid_.compute(m4->target_position_, pos, dt)
-            : m4->pos_pid_.compute(m4->target_position_, pos);
-        float speed = static_cast<float>(m4->meas_.speed_rpm);
-        float output = (dt > 0.0f)
-            ? m4->speed_pid_.compute(target_speed, speed, dt)
-            : m4->speed_pid_.compute(target_speed, speed);
-        currents[3] = static_cast<int16_t>(output);
+            ? m->speed_pid_.compute(target_speed_cmd, speed, dt)
+            : m->speed_pid_.compute(target_speed_cmd, speed);
+        currents[i] = static_cast<int16_t>(output);
     }
     
     // 批量发送
@@ -340,17 +421,27 @@ bool M3508::controlPositionDirect(CanBus* can,
 {
     if (!can) return false;
     
-    // 位置环计算（简化 PD 控制）
-    float target_speeds[4];
-    target_speeds[0] = (target_pos1 - current_pos1) * pos_kp;
-    target_speeds[1] = (target_pos2 - current_pos2) * pos_kp;
-    target_speeds[2] = (target_pos3 - current_pos3) * pos_kp;
-    target_speeds[3] = (target_pos4 - current_pos4) * pos_kp;
+    // 位置环计算（简化 P 控制）
+    float pos_errors[4];
+    pos_errors[0] = target_pos1 - current_pos1;
+    pos_errors[1] = target_pos2 - current_pos2;
+    pos_errors[2] = target_pos3 - current_pos3;
+    pos_errors[3] = target_pos4 - current_pos4;
     
-    // 限制速度环输出
+    float target_speeds[4];
+    // 死区判断：当位置误差小于5度时，目标速度为0
     for (int i = 0; i < 4; i++) {
-        if (target_speeds[i] > 500.0f) target_speeds[i] = 500.0f;
-        if (target_speeds[i] < -500.0f) target_speeds[i] = -500.0f;
+        if (pos_errors[i] > -5.0f && pos_errors[i] < 5.0f) {
+            target_speeds[i] = 0.0f;
+        } else {
+            target_speeds[i] = pos_errors[i] * pos_kp;
+        }
+    }
+    
+    // 限制速度环输出（降低最大速度以提高精度）
+    for (int i = 0; i < 4; i++) {
+        if (target_speeds[i] > 200.0f) target_speeds[i] = 200.0f;
+        if (target_speeds[i] < -200.0f) target_speeds[i] = -200.0f;
     }
     
     // 速度环计算（简化 P 控制）
@@ -387,6 +478,7 @@ void M3508::parseFeedback(const CAN_RxHeaderTypeDef* h, const uint8_t* d)
     
     // 更新累计角度
     updateTotalAngle();
+    has_feedback_ = true;
 }
 
 void M3508::canRxCallback(const CAN_RxHeaderTypeDef* header, const uint8_t* data, void* user) {
@@ -396,10 +488,12 @@ void M3508::canRxCallback(const CAN_RxHeaderTypeDef* header, const uint8_t* data
 }
 
 void M3508::updateTotalAngle() {
-    if (meas_.last_ecd == 0 && meas_.ecd == 0) {
-        return;  // 首次接收，不计算
+    // 首次有效反馈：仅初始化角度，不做圈数与溢出判断，避免错误的首圈计数
+    if (meas_.last_ecd == 0 && meas_.total_rounds == 0 && meas_.total_angle == 0) {
+        meas_.total_angle = static_cast<int32_t>(meas_.ecd * ECD_TO_DEGREE);
+        return;
     }
-    
+
     int32_t delta = static_cast<int32_t>(meas_.ecd) - static_cast<int32_t>(meas_.last_ecd);
     
     // 处理编码器溢出

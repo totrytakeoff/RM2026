@@ -14,9 +14,14 @@ void MX_CAN1_Init(void)
   hcan1.Init.TimeSeg1 = CAN_BS1_10TQ;
   hcan1.Init.TimeSeg2 = CAN_BS2_3TQ;
   hcan1.Init.TimeTriggeredMode = DISABLE;
-  hcan1.Init.AutoBusOff = DISABLE;
-  hcan1.Init.AutoWakeUp = DISABLE;
-  hcan1.Init.AutoRetransmission = DISABLE;
+  // 关键修复：启用自动错误恢复与重发
+  // 场景说明：若MCU先启动而电机电调未上电，CAN发送无ACK会导致错误计数攀升并进入Bus-Off。
+  // 若未启用自动恢复/唤醒/重发，之后即便电机再上电，CAN控制器也不会自动恢复，
+  // 需要“重启开发板”或手动Stop/Start才能恢复。
+  // 解决方案：打开以下选项以实现自动恢复与可靠收发。
+  hcan1.Init.AutoBusOff = ENABLE;       // 允许进入Bus-Off后自动恢复
+  hcan1.Init.AutoWakeUp = ENABLE;       // 总线活动恢复后自动唤醒控制器
+  hcan1.Init.AutoRetransmission = ENABLE; // 无ACK等情况自动重发，提高可靠性
   hcan1.Init.ReceiveFifoLocked = DISABLE;
   hcan1.Init.TransmitFifoPriority = DISABLE;
   if (HAL_CAN_Init(&hcan1) != HAL_OK)
@@ -34,9 +39,10 @@ void MX_CAN2_Init(void)
   hcan2.Init.TimeSeg1 = CAN_BS1_10TQ;
   hcan2.Init.TimeSeg2 = CAN_BS2_3TQ;
   hcan2.Init.TimeTriggeredMode = DISABLE;
-  hcan2.Init.AutoBusOff = DISABLE;
-  hcan2.Init.AutoWakeUp = DISABLE;
-  hcan2.Init.AutoRetransmission = DISABLE;
+  // 同CAN1：启用自动恢复/唤醒/重发，避免“电机断电-后上电”导致的不可用状态
+  hcan2.Init.AutoBusOff = ENABLE;
+  hcan2.Init.AutoWakeUp = ENABLE;
+  hcan2.Init.AutoRetransmission = ENABLE;
   hcan2.Init.ReceiveFifoLocked = DISABLE;
   hcan2.Init.TransmitFifoPriority = DISABLE;
   if (HAL_CAN_Init(&hcan2) != HAL_OK)
@@ -134,10 +140,14 @@ void can_filter_init(void)
   filter.FilterBank = 14;
   HAL_CAN_ConfigFilter(&hcan2, &filter);
 
-  // Start CAN but暂时禁用接收中断，避免GM6020上电时的中断风暴
+  // 启动 CAN 并启用常用中断：
+  // 1) RX FIFO0 新报文挂起（触发应用层轮询/回调，保证反馈及时更新）
+  // 2) 错误、中断、Bus-Off（便于应用层必要时感知异常并记录日志）
   HAL_CAN_Start(&hcan1);
-  // HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING); // 暂时注释掉
+  HAL_CAN_ActivateNotification(&hcan1, 
+      CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_BUSOFF | CAN_IT_ERROR);
 
   HAL_CAN_Start(&hcan2);
-  // HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING); // 暂时注释掉
+  HAL_CAN_ActivateNotification(&hcan2, 
+      CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_BUSOFF | CAN_IT_ERROR);
 }
