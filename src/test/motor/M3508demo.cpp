@@ -59,28 +59,28 @@ static bool motors_initialized = false;
  */
 void init_motors() {
     if (motors_initialized) return;
-    
+
     // 注册 CAN 回调
     motor1.init();
     motor2.init();
     motor3.init();
     motor4.init();
-    
+
     // 配置速度环 PID 参数（M3508推荐：Kp=5~10, Ki=0.1~0.5）
     // 注意：Kp太小会导致启动力矩不足，电机不转
     motor1.setSpeedPID(8.0f, 0.3f, 0.0f);
     motor2.setSpeedPID(8.0f, 0.3f, 0.0f);
     motor3.setSpeedPID(8.0f, 0.3f, 0.0f);
     motor4.setSpeedPID(8.0f, 0.3f, 0.0f);
-    
+
     // 配置位置环 PID 参数（位置环输出为速度，Kp=0.3~1.0）
     motor1.setPositionPID(0.5f, 0.0f, 0.1f);
     motor2.setPositionPID(0.5f, 0.0f, 0.1f);
     motor3.setPositionPID(0.5f, 0.0f, 0.1f);
     motor4.setPositionPID(0.5f, 0.0f, 0.1f);
-    
+
     motors_initialized = true;
-    
+
     // LED 指示初始化完成
     HAL_GPIO_WritePin(GPIOH, GPIO_PIN_11, GPIO_PIN_SET);
 }
@@ -92,10 +92,10 @@ void init_motors() {
 void test_speed_single(float target_speed) {
     // 设置电机 1 目标速度
     motor1.setTargetSpeed(target_speed);
-    
+
     // 更新控制器
     motor1.update();
-    
+
     // 打印调试信息（可选）
     // printf("Speed: %d rpm, Target: %.0f rpm\n", motor1.measure().speed_rpm, target_speed);
 }
@@ -107,7 +107,7 @@ void test_speed_single(float target_speed) {
 void test_speed_group(float s1, float s2, float s3, float s4) {
     // 批量设置目标速度
     M3508::setSpeedGroup(&motor1, &motor2, &motor3, &motor4, s1, s2, s3, s4);
-    
+
     // 批量更新速度环
     M3508::updateSpeedGroup(&motor1, &motor2, &motor3, &motor4);
 }
@@ -119,10 +119,10 @@ void test_speed_group(float s1, float s2, float s3, float s4) {
 void test_position_single(float target_position) {
     // 设置电机 1 目标位置
     motor1.setTargetPosition(target_position);
-    
+
     // 更新控制器
     motor1.update();
-    
+
     // 打印调试信息（可选）
     // printf("Pos: %ld deg, Target: %.0f deg\n", motor1.measure().total_angle, target_position);
 }
@@ -134,7 +134,7 @@ void test_position_single(float target_position) {
 void test_position_group(float p1, float p2, float p3, float p4) {
     // 批量设置目标位置
     M3508::setPositionGroup(&motor1, &motor2, &motor3, &motor4, p1, p2, p3, p4);
-    
+
     // 批量更新位置环
     M3508::updatePositionGroup(&motor1, &motor2, &motor3, &motor4);
 }
@@ -142,8 +142,51 @@ void test_position_group(float p1, float p2, float p3, float p4) {
 /**
  * @brief 停止所有电机
  */
-void stop_all_motors() {
-    M3508::sendCurrentGroup(&g_can, 0, 0, 0, 0);
+void stop_all_motors() { M3508::sendCurrentGroup(&g_can, 0, 0, 0, 0); }
+
+static void run_update_group_ms(uint32_t ms) {
+    for (uint32_t t = 0; t < ms; ++t) {
+        while (g_can.pollOnce()) {
+        }
+        M3508::updatePositionGroup(&motor1, &motor2, &motor3, &motor4);
+        HAL_Delay(1);
+    }
+}
+
+static void run_to_target_multi(float target_deg, uint32_t timeout_ms) {
+    motor1.setTargetPositionMultiTurn(target_deg);
+    for (uint32_t t = 0; t < timeout_ms; ++t) {
+        while (g_can.pollOnce()) {
+        }
+        M3508::updatePositionGroup(&motor1, &motor2, &motor3, &motor4);
+        float err = target_deg - motor1.measure().total_angle;
+        if (err < 0) err = -err;
+        float spd = (motor1.measure().speed_rpm >= 0) ? (float)motor1.measure().speed_rpm : -(float)motor1.measure().speed_rpm;
+        if (err <= 3.0f && spd < 5.0f) {
+            break;
+        }
+        HAL_Delay(1);
+    }
+}
+
+void position_verify_multiturn() {
+    motor1.setPositionLimits(200.0f, 1000.0f);
+    motor1.setPositionPID(0.5f, 0.0f, 0.1f);
+    const float seq[] = {0.0f, 360.0f, 720.0f, 540.0f, 180.0f, 0.0f, -360.0f};
+    for (size_t i = 0; i < sizeof(seq) / sizeof(seq[0]); ++i) {
+        motor1.setTargetPositionMultiTurn(seq[i]);
+        run_update_group_ms(2000);
+    }
+}
+
+void position_verify_shortest() {
+    motor1.setPositionLimits(200.0f, 1000.0f);
+    motor1.setPositionPID(0.5f, 0.0f, 0.1f);
+    const float seq[] = {10.0f, 350.0f, 5.0f, 355.0f, 15.0f, 345.0f};
+    for (size_t i = 0; i < sizeof(seq) / sizeof(seq[0]); ++i) {
+        motor1.setTargetPositionShortest(seq[i]);
+        run_update_group_ms(1500);
+    }
 }
 
 /**
@@ -151,18 +194,17 @@ void stop_all_motors() {
  * @param target1-4 目标速度 (rpm)
  * @param kp PID 参数
  */
-void test_speed_direct(float target1, float target2, float target3, float target4, float kp = 15.0f) {
+void test_speed_direct(float target1, float target2, float target3, float target4,
+                       float kp = 15.0f) {
     // 获取当前速度
     float current1 = static_cast<float>(motor1.measure().speed_rpm);
     float current2 = static_cast<float>(motor2.measure().speed_rpm);
     float current3 = static_cast<float>(motor3.measure().speed_rpm);
     float current4 = static_cast<float>(motor4.measure().speed_rpm);
-    
+
     // 直接控制（简化 P 控制）
-    M3508::controlSpeedDirect(&g_can, 
-                             target1, target2, target3, target4,
-                             current1, current2, current3, current4,
-                             kp, 0.0f, 0.0f, 1);
+    M3508::controlSpeedDirect(&g_can, target1, target2, target3, target4, current1, current2,
+                              current3, current4, kp, 0.0f, 0.0f, 1);
 }
 
 /**
@@ -170,35 +212,29 @@ void test_speed_direct(float target1, float target2, float target3, float target
  * @param target1-4 目标位置（度）
  * @param pos_kp, spd_kp PID 参数
  */
-void test_position_direct(float target1, float target2, float target3, float target4, 
-                         float pos_kp = 0.8f, float spd_kp = 15.0f) {
+void test_position_direct(float target1, float target2, float target3, float target4,
+                          float pos_kp = 0.8f, float spd_kp = 15.0f) {
     // 获取当前位置和速度
     float pos1 = static_cast<float>(motor1.measure().total_angle);
     float pos2 = static_cast<float>(motor2.measure().total_angle);
     float pos3 = static_cast<float>(motor3.measure().total_angle);
     float pos4 = static_cast<float>(motor4.measure().total_angle);
-    
+
     float spd1 = static_cast<float>(motor1.measure().speed_rpm);
     float spd2 = static_cast<float>(motor2.measure().speed_rpm);
     float spd3 = static_cast<float>(motor3.measure().speed_rpm);
     float spd4 = static_cast<float>(motor4.measure().speed_rpm);
-    
+
     // 直接控制（简化级联 P 控制）
-    M3508::controlPositionDirect(&g_can,
-                                target1, target2, target3, target4,
-                                pos1, pos2, pos3, pos4,
-                                spd1, spd2, spd3, spd4,
-                                pos_kp, 0.0f, 0.0f,
-                                spd_kp, 0.0f, 0.0f,
-                                1);
+    M3508::controlPositionDirect(&g_can, target1, target2, target3, target4, pos1, pos2, pos3, pos4,
+                                 spd1, spd2, spd3, spd4, pos_kp, 0.0f, 0.0f, spd_kp, 0.0f, 0.0f, 1);
 }
 
-static inline float clampf(float v, float lo, float hi) {
-    return v < lo ? lo : (v > hi ? hi : v);
-}
+static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 void test_speed_manual_kp(float target_speed, float kp) {
-    while (g_can.pollOnce()) {}
+    while (g_can.pollOnce()) {
+    }
     float current_speed = static_cast<float>(motor1.measure().speed_rpm);
     float out = (target_speed - current_speed) * kp;
     out = clampf(out, -16384.0f, 16384.0f);
@@ -211,17 +247,29 @@ static inline void put16_be(uint8_t* p, uint8_t off, int16_t v) {
 }
 
 void test_speed_kp_raw(float target_speed, float kp, uint8_t motor_id = 1) {
-    while (g_can.pollOnce()) {}
+    while (g_can.pollOnce()) {
+    }
     int16_t spd = 0;
     switch (motor_id) {
-        case 1: spd = motor1.measure().speed_rpm; break;
-        case 2: spd = motor2.measure().speed_rpm; break;
-        case 3: spd = motor3.measure().speed_rpm; break;
-        case 4: spd = motor4.measure().speed_rpm; break;
-        default: spd = motor1.measure().speed_rpm; break;
+        case 1:
+            spd = motor1.measure().speed_rpm;
+            break;
+        case 2:
+            spd = motor2.measure().speed_rpm;
+            break;
+        case 3:
+            spd = motor3.measure().speed_rpm;
+            break;
+        case 4:
+            spd = motor4.measure().speed_rpm;
+            break;
+        default:
+            spd = motor1.measure().speed_rpm;
+            break;
     }
     float outf = (target_speed - (float)spd) * kp;
-    if (outf > 16384.0f) outf = 16384.0f; if (outf < -16384.0f) outf = -16384.0f;
+    if (outf > 16384.0f) outf = 16384.0f;
+    if (outf < -16384.0f) outf = -16384.0f;
     int16_t out = (int16_t)outf;
     uint8_t data[8] = {0};
     uint16_t can_id;
@@ -241,10 +289,38 @@ void test_speed_kp_raw(float target_speed, float kp, uint8_t motor_id = 1) {
 /**
  * @brief HAL库 CAN接收FIFO0消息挂起回调（中断处理）
  */
-extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
+extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan) {
     if (hcan == g_can.handle()) {
         // 轮询接收，触发已注册的回调
         g_can.pollOnce();
+    }
+}
+
+void test_fn() {
+    // 🔧 完整重新配置所有参数（覆盖init_motors的设置）
+    
+    // ① 先设置速度/加速度限制（这会同时更新位置PID的输出限幅）
+    motor1.setPositionLimits(800.0f, 3000.0f);  // vmax=800rpm, accel=3000rpm/s
+    
+    // ② 设置位置环PID：P提供响应，D提供阻尼（针对超调，可增D到0.8~1.0）
+    motor1.setPositionPID(25.0f, 0.0f, 0.6f);   // Kp=25, Ki=0, Kd=0.6 (增大D项减少超调)
+    
+    // ③ 设置速度环PID
+    motor1.setSpeedPID(8.0f, 0.2f, 0.0f);       // Kp=8, Ki=0.2
+    
+    // ④ 设置死区
+    motor1.setLowSpeedFloor(0.0f, 3.0f);        // deadband=3°
+    
+    // ⑤ 再次确认限制（防止被重置）
+    motor1.setPositionLimits(800.0f, 3000.0f);
+
+    float ang = 350.0f;
+
+    while (1) {
+        for (size_t i = 0; ; ++i) {
+            float tgt = i * ang;
+            run_to_target_multi(tgt, 1000);
+        }
     }
 }
 
@@ -259,49 +335,50 @@ int main(void) {
 
     // 延迟等待电机上电稳定
     HAL_Delay(200);
-    
 
     // 初始化电机
     init_motors();
 
     HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
-    
+
     // LED 指示就绪
     HAL_GPIO_WritePin(GPIOH, GPIO_PIN_10, GPIO_PIN_SET);
-    
+
+    test_fn();
+
     // ========== 测试选择 ==========
     // 取消注释你想测试的部分
-    
+
     // 测试 1: 单电机速度环测试
     // while (1) {
     //     test_speed_manual_kp(500.0f, 8.0f);
     //     HAL_Delay(1);
     // }
-    
+
     // 测试 2: 四电机速度环批量测试
     // while (1) {
     //     test_speed_group(1500.0f, -500.0f, 800.0f, -800.0f);
     //     HAL_Delay(1);
     // }
-    
+
     // 测试 3: 单电机位置环测试（往复运动）
     // while (1) {
     //     test_position_single(360.0f);   // 转到 360 度
     //     HAL_Delay(2000);
-    //     test_position_single(300.0f);   
+    //     test_position_single(300.0f);
     //     HAL_Delay(2000);
-    //     test_position_single(240.0f);   
+    //     test_position_single(240.0f);
     //     HAL_Delay(2000);
-    //     test_position_single(180.0f);   
+    //     test_position_single(180.0f);
     //     HAL_Delay(2000);
-    //     test_position_single(120.0f);   
+    //     test_position_single(120.0f);
     //     HAL_Delay(2000);
-    //     test_position_single(60.0f);   
+    //     test_position_single(60.0f);
     //     HAL_Delay(2000);
     //     test_position_single(0.0f);     // 转回 0 度
     //     HAL_Delay(2000);
     // }
-    
+
     // 测试 4: 四电机位置环批量测试
     // while (1) {
     //     test_position_group(0.0f, 0.0f, 0.0f, 0.0f);
@@ -309,14 +386,13 @@ int main(void) {
     //     test_position_group(360.0f, 720.0f, 180.0f, 540.0f);
     //     HAL_Delay(2000);
     // }
-    
-    // 测试 5: 直接速度环测试（无需实例，直接传值）
-    // 注意：Kp建议使用5.0-10.0，太小会导致电机不转
+
+    // 位置模式验证循环
     while (1) {
-        test_speed_direct(1000.0f, -100.0f, 200.0f, -200.0f, 8.0f);  // 最后一个参数是Kp
-        HAL_Delay(1);
+        // position_verify_multiturn();
+        // position_verify_shortest();
     }
-    
+
     // 测试 6: 直接位置环测试（无需实例，直接传值）
     // 注意：这是简化的P控制，已添加死区判断（±5°）避免震荡
     // 推荐参数：pos_kp=0.5, spd_kp=8.0
@@ -326,7 +402,7 @@ int main(void) {
     //     test_position_direct(360.0f, 720.0f, 180.0f, 540.0f, 0.5f, 8.0f);
     //     HAL_Delay(3000);
     // }
-    
+
     // 测试 7: 速度环变速测试
     // while (1) {
     //     // 加速

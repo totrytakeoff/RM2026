@@ -42,6 +42,11 @@ M3508::M3508(CanBus* can, uint8_t motor_id)
     , last_target_speed_(0.0f)
     , speed_limit_rpm_(200.0f)
     , accel_limit_rpm_s_(1000.0f)
+    , min_speed_floor_rpm_(80.0f)
+    , pos_deadband_deg_(2.0f)
+    , pos_deadband_release_deg_(3.0f)
+    , floor_taper_deg_(6.0f)
+    , pos_hold_(false)
 {
     // 确定槽位索引
     if (id_ >= 1 && id_ <= 4) {
@@ -60,7 +65,9 @@ M3508::M3508(CanBus* can, uint8_t motor_id)
     speed_pid_.setSampleTime(0.001f);  // 1ms
     speed_pid_.setMode(PIDController::Mode::AUTOMATIC);
     
-    pos_pid_.setOutputLimits(-speed_limit_rpm_, speed_limit_rpm_);
+    // 位置PID输出deg/s，需要按rpm限制转换：rpm → deg/s = rpm * 360 / 60
+    float pos_limit_deg_s = speed_limit_rpm_ * 360.0f / 60.0f;
+    pos_pid_.setOutputLimits(-pos_limit_deg_s, pos_limit_deg_s);
     pos_pid_.setSampleTime(0.001f);
     pos_pid_.setMode(PIDController::Mode::AUTOMATIC);
 }
@@ -116,7 +123,25 @@ void M3508::setPositionLimits(float speed_limit_rpm, float accel_limit_rpm_s) {
     if (accel_limit_rpm_s < 1.0f) accel_limit_rpm_s = 1.0f;
     speed_limit_rpm_ = speed_limit_rpm;
     accel_limit_rpm_s_ = accel_limit_rpm_s;
-    pos_pid_.setOutputLimits(-speed_limit_rpm_, speed_limit_rpm_);
+    // 更新位置PID输出限幅（转换为deg/s）
+    float pos_limit_deg_s = speed_limit_rpm_ * 360.0f / 60.0f;
+    pos_pid_.setOutputLimits(-pos_limit_deg_s, pos_limit_deg_s);
+}
+
+void M3508::setLowSpeedFloor(float min_speed_floor_rpm, float pos_deadband_deg) {
+    if (min_speed_floor_rpm < 0.0f) min_speed_floor_rpm = 0.0f;
+    if (pos_deadband_deg < 0.0f) pos_deadband_deg = 0.0f;
+    min_speed_floor_rpm_ = min_speed_floor_rpm;
+    pos_deadband_deg_ = pos_deadband_deg;
+}
+
+void M3508::setDeadbandTaper(float deadband_deg, float release_deg, float floor_taper_deg) {
+    if (deadband_deg < 0.0f) deadband_deg = 0.0f;
+    if (release_deg < deadband_deg) release_deg = deadband_deg;
+    if (floor_taper_deg <= 0.0f) floor_taper_deg = 1.0f;
+    pos_deadband_deg_ = deadband_deg;
+    pos_deadband_release_deg_ = release_deg;
+    floor_taper_deg_ = floor_taper_deg;
 }
 
 void M3508::setTargetPositionMultiTurn(float target_angle) {
@@ -166,21 +191,34 @@ bool M3508::update(float dt) {
             }
 
             float target_speed_cmd = 0.0f;
+            float pos_err_deg = 0.0f;
             if (position_mode_ == PositionMode::MULTI_TURN) {
                 float current_pos = static_cast<float>(meas_.total_angle);
-                target_speed_cmd = (dt > 0.0f)
-                    ? pos_pid_.compute(target_position_, current_pos, dt)
-                    : pos_pid_.compute(target_position_, current_pos);
+                pos_err_deg = target_position_ - current_pos;
             } else {
                 float mech_deg = static_cast<float>(meas_.ecd) * ECD_TO_DEGREE;
                 float tgt = std::fmod(target_position_, 360.0f);
                 if (tgt < 0) tgt += 360.0f;
-                float err = tgt - mech_deg;
-                err = wrap_deg_180(err);
-                float adjusted_target = mech_deg + err;
-                target_speed_cmd = (dt > 0.0f)
-                    ? pos_pid_.compute(adjusted_target, mech_deg, dt)
-                    : pos_pid_.compute(adjusted_target, mech_deg);
+                float err = wrap_deg_180(tgt - mech_deg);
+                pos_err_deg = err;
+            }
+            // 位置环：完整PID控制，输出速度指令
+            float abs_err = std::fabs(pos_err_deg);
+            if (abs_err <= pos_deadband_deg_) {
+                // 死区内：清零并复位位置PID
+                target_speed_cmd = 0.0f;
+                pos_pid_.reset();
+            } else {
+                // 位置PID输出速度指令（单位：deg → rpm需要转换）
+                // pos_pid_ 输入输出都是角度域，需要手动转rpm
+                float pos_output_deg_s = (dt > 0.0f)
+                    ? pos_pid_.compute(target_position_, target_position_ - pos_err_deg, dt)
+                    : pos_pid_.compute(target_position_, target_position_ - pos_err_deg);
+                // 转换：deg/s → rpm（rpm = deg/s * 60 / 360）
+                target_speed_cmd = pos_output_deg_s * 60.0f / 360.0f;
+                // 限速
+                if (target_speed_cmd > speed_limit_rpm_) target_speed_cmd = speed_limit_rpm_;
+                if (target_speed_cmd < -speed_limit_rpm_) target_speed_cmd = -speed_limit_rpm_;
             }
 
             target_speed_cmd = clampf(target_speed_cmd, -speed_limit_rpm_, speed_limit_rpm_);
@@ -191,11 +229,17 @@ bool M3508::update(float dt) {
             else if (delta < -max_delta) target_speed_cmd = last_target_speed_ - max_delta;
             last_target_speed_ = target_speed_cmd;
 
-            float current_speed = static_cast<float>(meas_.speed_rpm);
-            float output = (dt > 0.0f)
-                ? speed_pid_.compute(target_speed_cmd, current_speed, dt)
-                : speed_pid_.compute(target_speed_cmd, current_speed);
-            current = static_cast<int16_t>(output);
+            // 仅在接近目标（误差足够小）且速度指令极小时才进入零速保持
+            if (std::fabs(target_speed_cmd) < 1.0f && abs_err <= pos_deadband_deg_ * 2.0f) {
+                speed_pid_.reset();
+                current = 0;
+            } else {
+                float current_speed = static_cast<float>(meas_.speed_rpm);
+                float output = (dt > 0.0f)
+                    ? speed_pid_.compute(target_speed_cmd, current_speed, dt)
+                    : speed_pid_.compute(target_speed_cmd, current_speed);
+                current = static_cast<int16_t>(output);
+            }
             break;
         }
     }
@@ -323,21 +367,33 @@ bool M3508::updatePositionGroup(M3508* m1, M3508* m2, M3508* m3, M3508* m4, floa
         }
 
         float target_speed_cmd = 0.0f;
+        float pos_err_deg = 0.0f;
         if (m->position_mode_ == PositionMode::MULTI_TURN) {
             float current_pos = static_cast<float>(m->meas_.total_angle);
-            target_speed_cmd = (dt > 0.0f)
-                ? m->pos_pid_.compute(m->target_position_, current_pos, dt)
-                : m->pos_pid_.compute(m->target_position_, current_pos);
+            pos_err_deg = m->target_position_ - current_pos;
         } else {
             float mech_deg = static_cast<float>(m->meas_.ecd) * ECD_TO_DEGREE;
             float tgt = std::fmod(m->target_position_, 360.0f);
             if (tgt < 0) tgt += 360.0f;
-            float err = tgt - mech_deg;
-            err = wrap_deg_180(err);
-            float adjusted_target = mech_deg + err;
-            target_speed_cmd = (dt > 0.0f)
-                ? m->pos_pid_.compute(adjusted_target, mech_deg, dt)
-                : m->pos_pid_.compute(adjusted_target, mech_deg);
+            float err = wrap_deg_180(tgt - mech_deg);
+            pos_err_deg = err;
+        }
+        // 位置环：完整PID控制，输出速度指令
+        float abs_err = std::fabs(pos_err_deg);
+        if (abs_err <= m->pos_deadband_deg_) {
+            // 死区内：清零并复位位置PID
+            target_speed_cmd = 0.0f;
+            m->pos_pid_.reset();
+        } else {
+            // 位置PID输出速度指令（单位：deg → rpm需要转换）
+            float pos_output_deg_s = (dt > 0.0f)
+                ? m->pos_pid_.compute(m->target_position_, m->target_position_ - pos_err_deg, dt)
+                : m->pos_pid_.compute(m->target_position_, m->target_position_ - pos_err_deg);
+            // 转换：deg/s → rpm
+            target_speed_cmd = pos_output_deg_s * 60.0f / 360.0f;
+            // 限速
+            if (target_speed_cmd > m->speed_limit_rpm_) target_speed_cmd = m->speed_limit_rpm_;
+            if (target_speed_cmd < -m->speed_limit_rpm_) target_speed_cmd = -m->speed_limit_rpm_;
         }
 
         target_speed_cmd = clampf(target_speed_cmd, -m->speed_limit_rpm_, m->speed_limit_rpm_);
@@ -348,11 +404,17 @@ bool M3508::updatePositionGroup(M3508* m1, M3508* m2, M3508* m3, M3508* m4, floa
         else if (delta < -max_delta) target_speed_cmd = m->last_target_speed_ - max_delta;
         m->last_target_speed_ = target_speed_cmd;
 
-        float speed = static_cast<float>(m->meas_.speed_rpm);
-        float output = (dt > 0.0f)
-            ? m->speed_pid_.compute(target_speed_cmd, speed, dt)
-            : m->speed_pid_.compute(target_speed_cmd, speed);
-        currents[i] = static_cast<int16_t>(output);
+        // 仅在接近目标（误差足够小）且速度指令极小时才进入零速保持
+        if (std::fabs(target_speed_cmd) < 1.0f && abs_err <= m->pos_deadband_deg_ * 2.0f) {
+            m->speed_pid_.reset();
+            currents[i] = 0;
+        } else {
+            float speed = static_cast<float>(m->meas_.speed_rpm);
+            float output = (dt > 0.0f)
+                ? m->speed_pid_.compute(target_speed_cmd, speed, dt)
+                : m->speed_pid_.compute(target_speed_cmd, speed);
+            currents[i] = static_cast<int16_t>(output);
+        }
     }
     
     // 批量发送

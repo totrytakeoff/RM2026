@@ -101,6 +101,15 @@ public:
     void setPositionLimits(float speed_limit_rpm, float accel_limit_rpm_s);
 
     /**
+     * @brief 设置低速“速度地板”和位置死区，用于克服静摩擦
+     * @param min_speed_floor_rpm 当仍有明显位置误差时，目标速度不会小于该值（按符号保留）
+     * @param pos_deadband_deg 认为“已到位”的误差阈值（度），用于允许速度降为0
+     */
+    void setLowSpeedFloor(float min_speed_floor_rpm, float pos_deadband_deg);
+
+    void setDeadbandTaper(float deadband_deg, float release_deg, float floor_taper_deg);
+
+    /**
      * @brief 设定多圈绝对角目标（并切换到多圈模式）
      */
     void setTargetPositionMultiTurn(float target_angle);
@@ -266,6 +275,11 @@ private:
     float last_target_speed_;  /**< 上周期目标速度 (rpm) */
     float speed_limit_rpm_;    /**< 目标速度限幅 */
     float accel_limit_rpm_s_;  /**< 目标加速度限幅 */
+    float min_speed_floor_rpm_;/**< 低速速度地板 (rpm) */
+    float pos_deadband_deg_;   /**< 位置死区 (deg) */
+    float pos_deadband_release_deg_;
+    float floor_taper_deg_;
+    bool pos_hold_;
 };
 
 #endif // M3508_HPP
