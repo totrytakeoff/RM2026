@@ -282,6 +282,148 @@ void OTG_FS_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+// 声明外部C++类和函数
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// SerialPort类的前向声明和访问函数
+typedef struct SerialPort SerialPort;
+SerialPort* getSerialPort(int index);
+
+// SerialPort类的公共方法（通过友元访问）
+void SerialPort_handleIRQ(SerialPort* port);
+void SerialPort_rxCompleteCallback(SerialPort* port);
+void SerialPort_txCompleteCallback(SerialPort* port);
+void SerialPort_errorCallback(SerialPort* port);
+UART_HandleTypeDef* SerialPort_getUartHandle(SerialPort* port);
+DMA_HandleTypeDef* SerialPort_getDmaTxHandle(SerialPort* port);
+DMA_HandleTypeDef* SerialPort_getDmaRxHandle(SerialPort* port);
+
+#ifdef __cplusplus
+}
+#endif
+
+/**
+ * @brief USART1中断服务函数
+ */
+void USART1_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(0);
+    if (port) {
+        SerialPort_handleIRQ(port);
+    }
+}
+
+/**
+ * @brief USART6中断服务函数
+ */
+void USART6_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(3);
+    if (port) {
+        SerialPort_handleIRQ(port);
+    }
+}
+
+/**
+ * @brief DMA2 Stream7中断服务函数 (USART1 TX)
+ */
+void DMA2_Stream7_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(0);
+    if (port) {
+        DMA_HandleTypeDef* hdma = SerialPort_getDmaTxHandle(port);
+        if (hdma) {
+            HAL_DMA_IRQHandler(hdma);
+        }
+    }
+}
+
+/**
+ * @brief DMA2 Stream2中断服务函数 (USART1 RX)
+ */
+void DMA2_Stream2_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(0);
+    if (port) {
+        DMA_HandleTypeDef* hdma = SerialPort_getDmaRxHandle(port);
+        if (hdma) {
+            HAL_DMA_IRQHandler(hdma);
+        }
+    }
+}
+
+/**
+ * @brief DMA2 Stream6中断服务函数 (USART6 TX)
+ */
+void DMA2_Stream6_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(3);
+    if (port) {
+        DMA_HandleTypeDef* hdma = SerialPort_getDmaTxHandle(port);
+        if (hdma) {
+            HAL_DMA_IRQHandler(hdma);
+        }
+    }
+}
+
+/**
+ * @brief DMA2 Stream1中断服务函数 (USART6 RX)
+ */
+void DMA2_Stream1_IRQHandler(void)
+{
+    SerialPort* port = getSerialPort(3);
+    if (port) {
+        DMA_HandleTypeDef* hdma = SerialPort_getDmaRxHandle(port);
+        if (hdma) {
+            HAL_DMA_IRQHandler(hdma);
+        }
+    }
+}
+
+/**
+ * @brief HAL库UART接收完成回调
+ */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    for (int i = 0; i < 4; i++) {
+        SerialPort* port = getSerialPort(i);
+        if (port && SerialPort_getUartHandle(port) == huart) {
+            SerialPort_rxCompleteCallback(port);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief HAL库UART发送完成回调
+ */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    for (int i = 0; i < 4; i++) {
+        SerialPort* port = getSerialPort(i);
+        if (port && SerialPort_getUartHandle(port) == huart) {
+            SerialPort_txCompleteCallback(port);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief HAL库UART错误回调
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    for (int i = 0; i < 4; i++) {
+        SerialPort* port = getSerialPort(i);
+        if (port && SerialPort_getUartHandle(port) == huart) {
+            SerialPort_errorCallback(port);
+            break;
+        }
+    }
+}
+
 // 声明外部C函数（用于处理Button中断）
 extern void button_interrupt_handler(uint16_t GPIO_Pin);
 
