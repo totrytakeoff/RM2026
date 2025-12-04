@@ -41,7 +41,6 @@ SerialPort::SerialPort(SerialType type)
             huart_ = &huart1_instance;
             hdma_tx_ = &hdma_usart1_tx;
             hdma_rx_ = &hdma_usart1_rx;
-            g_serialPorts[0] = this;
             break;
         case SerialType::UART2:
             huart_ = &huart2_instance;
@@ -55,7 +54,6 @@ SerialPort::SerialPort(SerialType type)
             huart_ = &huart6_instance;
             hdma_tx_ = &hdma_usart6_tx;
             hdma_rx_ = &hdma_usart6_rx;
-            g_serialPorts[3] = this;
             break;
         case SerialType::USB_CDC:
             // USB CDC将在后续实现
@@ -111,7 +109,24 @@ SerialStatus SerialPort::init(const SerialConfig& config) {
     }
     
     initialized_ = true;
-    
+    // 注册到全局实例表，供中断处理器查找（延后到 init 以避免静态初始化顺序问题）
+    switch (type_) {
+        case SerialType::UART1:
+            g_serialPorts[0] = this;
+            break;
+        case SerialType::UART2:
+            g_serialPorts[1] = this;
+            break;
+        case SerialType::UART3:
+            g_serialPorts[2] = this;
+            break;
+        case SerialType::UART6:
+            g_serialPorts[3] = this;
+            break;
+        default:
+            break;
+    }
+
     // 6. 自动启动接收
     startReceive();
     
@@ -133,6 +148,23 @@ SerialStatus SerialPort::deinit() {
     }
     
     initialized_ = false;
+    // 注销全局实例表
+    switch (type_) {
+        case SerialType::UART1:
+            if (g_serialPorts[0] == this) g_serialPorts[0] = nullptr;
+            break;
+        case SerialType::UART2:
+            if (g_serialPorts[1] == this) g_serialPorts[1] = nullptr;
+            break;
+        case SerialType::UART3:
+            if (g_serialPorts[2] == this) g_serialPorts[2] = nullptr;
+            break;
+        case SerialType::UART6:
+            if (g_serialPorts[3] == this) g_serialPorts[3] = nullptr;
+            break;
+        default:
+            break;
+    }
     return SerialStatus::OK;
 }
 
@@ -438,6 +470,9 @@ SerialStatus SerialPort::receive(uint8_t* data, size_t length, uint32_t timeout)
     if (!initialized_ || !huart_ || !data || length == 0) {
         return SerialStatus::ERROR;
     }
+    if (mode_ != SerialMode::POLLING) {
+        return SerialStatus::ERROR;
+    }
     
     HAL_StatusTypeDef status = HAL_UART_Receive(huart_, data, length, timeout);
     
@@ -461,10 +496,16 @@ size_t SerialPort::read(uint8_t* data, size_t maxLength) {
  * @brief 获取可用数据量
  */
 size_t SerialPort::available() const {
-    if (rxHead_ >= rxTail_) {
-        return rxHead_ - rxTail_;
+    size_t head;
+    size_t tail;
+    __disable_irq();
+    head = rxHead_;
+    tail = rxTail_;
+    __enable_irq();
+    if (head >= tail) {
+        return head - tail;
     } else {
-        return (RX_BUFFER_SIZE * 2) - rxTail_ + rxHead_;
+        return (RX_BUFFER_SIZE * 2) - tail + head;
     }
 }
 
@@ -472,8 +513,10 @@ size_t SerialPort::available() const {
  * @brief 清空接收缓冲区
  */
 void SerialPort::flush() {
+    __disable_irq();
     rxHead_ = 0;
     rxTail_ = 0;
+    __enable_irq();
     memset(rxRingBuffer_, 0, RX_BUFFER_SIZE * 2);
 }
 
@@ -589,16 +632,27 @@ void SerialPort::handleIdleInterrupt() {
  */
 void SerialPort::rxCompleteCallback() {
     if (mode_ == SerialMode::INTERRUPT) {
-        // 中断模式：将数据写入环形缓冲区
         writeToRingBuffer(rxBuffer_, 1);
-        
-        // 调用回调
         if (rxCallback_) {
             rxCallback_(rxBuffer_, 1);
         }
-        
-        // 重新启动接收
         HAL_UART_Receive_IT(huart_, rxBuffer_, 1);
+    } else if (mode_ == SerialMode::DMA) {
+        const size_t half = RX_BUFFER_SIZE / 2;
+        writeToRingBuffer(rxBuffer_ + half, half);
+        if (rxCallback_) {
+            rxCallback_(rxBuffer_ + half, half);
+        }
+    }
+}
+
+void SerialPort::rxHalfCompleteCallback() {
+    if (mode_ == SerialMode::DMA) {
+        const size_t half = RX_BUFFER_SIZE / 2;
+        writeToRingBuffer(rxBuffer_, half);
+        if (rxCallback_) {
+            rxCallback_(rxBuffer_, half);
+        }
     }
 }
 
@@ -650,15 +704,26 @@ size_t SerialPort::readFromRingBuffer(uint8_t* data, size_t maxLength) {
         return 0;
     }
     
-    size_t availableData = available();
+    __disable_irq();
+    size_t head = rxHead_;
+    size_t tail = rxTail_;
+    size_t availableData;
+    if (head >= tail) {
+        availableData = head - tail;
+    } else {
+        availableData = (RX_BUFFER_SIZE * 2) - tail + head;
+    }
+    __enable_irq();
     if (maxLength > availableData) {
         maxLength = availableData;
     }
     
+    __disable_irq();
     for (size_t i = 0; i < maxLength; i++) {
         data[i] = rxRingBuffer_[rxTail_];
         rxTail_ = (rxTail_ + 1) % (RX_BUFFER_SIZE * 2);
     }
+    __enable_irq();
     
     return maxLength;
 }
@@ -701,6 +766,15 @@ void SerialPort_handleIRQ(SerialPort* port) {
 void SerialPort_rxCompleteCallback(SerialPort* port) {
     if (port) {
         port->rxCompleteCallback();
+    }
+}
+
+/**
+ * @brief C风格包装函数 - 调用rxHalfCompleteCallback
+ */
+void SerialPort_rxHalfCpltCallback(SerialPort* port) {
+    if (port) {
+        port->rxHalfCompleteCallback();
     }
 }
 

@@ -6,7 +6,11 @@
 protocol/
 ├── serial_port.hpp          # 串口类头文件
 ├── serial_port.cpp          # 串口类实现
-└── README.md               # 本文件
+├── usb_port.hpp             # USB类头文件
+├── usb_port.cpp             # USB类实现
+├── can_comm.hpp             # CAN通讯类头文件
+├── can_comm.cpp             # CAN通讯类实现
+└── README.md                # 本文件
 ```
 
 ## 🚀 快速开始
@@ -155,13 +159,17 @@ uart1.init(config);
 
 ## 🔄 USB-CDC支持
 
-USB虚拟串口接口已预留，后续版本将实现：
+✅ **已实现！** USB虚拟串口类`USBPort`已完成：
 
 ```cpp
-SerialPort usbSerial(SerialType::USB_CDC);
-usbSerial.init();
-usbSerial.sendString("USB Serial\r\n");
+#include "usb_port.hpp"
+
+USBPort usb;
+usb.init();
+usb.sendString("Hello USB!\r\n");
 ```
+
+详细文档：`/docs/protocol/USB_PORT_USAGE.md`
 
 ## 📝 API速查
 

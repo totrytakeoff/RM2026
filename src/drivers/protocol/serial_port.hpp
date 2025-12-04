@@ -2,7 +2,7 @@
  * @file serial_port.hpp
  * @brief 通用串口通讯类 - 支持UART和USB-CDC
  * @version 1.0
- * @date 2024-12-02
+ * @date 2025-12-02
  * 
  * @details
  * 提供统一的串口通讯接口，支持：
@@ -102,6 +102,7 @@ struct SerialPort;
 SerialPort* getSerialPort(int index);
 void SerialPort_handleIRQ(SerialPort* port);
 void SerialPort_rxCompleteCallback(SerialPort* port);
+void SerialPort_rxHalfCpltCallback(SerialPort* port);
 void SerialPort_txCompleteCallback(SerialPort* port);
 void SerialPort_errorCallback(SerialPort* port);
 UART_HandleTypeDef* SerialPort_getUartHandle(SerialPort* port);
@@ -259,6 +260,7 @@ public:
      * @brief UART接收完成回调（由HAL库调用）
      */
     void rxCompleteCallback();
+    void rxHalfCompleteCallback();
     
     /**
      * @brief UART发送完成回调（由HAL库调用）
@@ -273,6 +275,7 @@ public:
     // 友元函数声明 - 允许C包装函数访问私有成员
     friend void SerialPort_handleIRQ(SerialPort* port);
     friend void SerialPort_rxCompleteCallback(SerialPort* port);
+    friend void SerialPort_rxHalfCpltCallback(SerialPort* port);
     friend void SerialPort_txCompleteCallback(SerialPort* port);
     friend void SerialPort_errorCallback(SerialPort* port);
     friend UART_HandleTypeDef* SerialPort_getUartHandle(SerialPort* port);

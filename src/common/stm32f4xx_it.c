@@ -294,11 +294,18 @@ SerialPort* getSerialPort(int index);
 // SerialPort类的公共方法（通过友元访问）
 void SerialPort_handleIRQ(SerialPort* port);
 void SerialPort_rxCompleteCallback(SerialPort* port);
+void SerialPort_rxHalfCpltCallback(SerialPort* port);
 void SerialPort_txCompleteCallback(SerialPort* port);
 void SerialPort_errorCallback(SerialPort* port);
 UART_HandleTypeDef* SerialPort_getUartHandle(SerialPort* port);
 DMA_HandleTypeDef* SerialPort_getDmaTxHandle(SerialPort* port);
 DMA_HandleTypeDef* SerialPort_getDmaRxHandle(SerialPort* port);
+
+// USBPort类的前向声明和访问函数
+typedef struct USBPort USBPort;
+USBPort* getUSBPortInstance(void);
+void USBPort_connectCallback(USBPort* port);
+void USBPort_disconnectCallback(USBPort* port);
 
 #ifdef __cplusplus
 }
@@ -391,6 +398,20 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         SerialPort* port = getSerialPort(i);
         if (port && SerialPort_getUartHandle(port) == huart) {
             SerialPort_rxCompleteCallback(port);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief HAL库UART半缓冲接收完成回调（DMA HT）
+ */
+void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)
+{
+    for (int i = 0; i < 4; i++) {
+        SerialPort* port = getSerialPort(i);
+        if (port && SerialPort_getUartHandle(port) == huart) {
+            SerialPort_rxHalfCpltCallback(port);
             break;
         }
     }

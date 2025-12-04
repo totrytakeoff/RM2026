@@ -9,6 +9,12 @@
 #include "usbd_def.h"
 #include "main.h"
 
+/* USBPort C-bridge declarations (defined with C linkage in C++) */
+typedef struct USBPort USBPort;
+USBPort* getUSBPortInstance(void);
+void USBPort_connectCallback(USBPort* port);
+void USBPort_disconnectCallback(USBPort* port);
+
 /* USB句柄 */
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 extern void Error_Handler(void);
@@ -127,14 +133,29 @@ void HAL_PCD_ISOINIncompleteCallback(PCD_HandleTypeDef *hpcd, uint8_t epnum)
   USBD_LL_IsoINIncomplete((USBD_HandleTypeDef*)hpcd->pData, epnum);
 }
 
+/* HAL PCD connect/disconnect callbacks
+ * Call into the USB Device stack AND notify the USBPort wrapper
+ */
 void HAL_PCD_ConnectCallback(PCD_HandleTypeDef *hpcd)
 {
+  /* Inform USB device stack */
   USBD_LL_DevConnected((USBD_HandleTypeDef*)hpcd->pData);
+  /* Notify C++ wrapper (if present) */
+  USBPort* port = getUSBPortInstance();
+  if (port) {
+    USBPort_connectCallback(port);
+  }
 }
 
 void HAL_PCD_DisconnectCallback(PCD_HandleTypeDef *hpcd)
 {
+  /* Inform USB device stack */
   USBD_LL_DevDisconnected((USBD_HandleTypeDef*)hpcd->pData);
+  /* Notify C++ wrapper (if present) */
+  USBPort* port = getUSBPortInstance();
+  if (port) {
+    USBPort_disconnectCallback(port);
+  }
 }
 
 /* USBD LL接口函数 */
@@ -153,7 +174,8 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
     hpcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
     hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
     hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
-    /* 启用 VBUS 感知 - 若板子没有 VBUS sense 脚接线，可改为 DISABLE */
+    /* 关闭 VBUS 感知（很多通用板未连接VBUS感知脚）。
+     * 如果你的硬件已连接VBUS感知，请改回 ENABLE。*/
     hpcd_USB_OTG_FS.Init.vbus_sensing_enable = ENABLE;
     hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
 

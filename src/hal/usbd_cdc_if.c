@@ -25,10 +25,24 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];  // USB发送缓冲区 - 存储要发�
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
+
+/* USB类集成 - 声明外部C++类访问函数 */
+typedef struct USBPort USBPort;
+extern USBPort* getUSBPortInstance(void);
+extern void USBPort_rxCallback(USBPort* port, uint8_t* data, uint32_t len);
+extern void USBPort_connectCallback(USBPort* port);
+extern void USBPort_disconnectCallback(USBPort* port);
+
+/* 使用模式选择：0=原始命令模式，1=USBPort类模式 */
+#define USE_USB_PORT_CLASS 1
+
 /* 命令处理相关变量 - 用于解析从PC接收的控制命令 */
 #define CMD_BUFFER_SIZE 64                   // 命令缓冲区大小
+
+#if !USE_USB_PORT_CLASS
 static uint8_t cmd_buffer[CMD_BUFFER_SIZE];  // 命令缓冲区 - 存储接收到的命令字符
 static uint16_t cmd_length = 0;              // 当前命令长度计数器
+#endif
 
 /* RGB LED控制命令格式定义 */
 // 基础命令格式: "LED X\r\n" 其中X为0或1，控制红色LED的开关状态
@@ -45,13 +59,15 @@ static uint16_t cmd_length = 0;              // 当前命令长度计数器
 /* USER CODE END PRIVATE_VARIABLES */
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
-/* 私有函数声明 */
+/* 私有函数声明 - 仅在原始命令模式下使用 */
+#if !USE_USB_PORT_CLASS
 static void ProcessCommand(uint8_t* buf, uint16_t len);           // 主命令处理函数
 static void SendHelpMessage(void);                                // 发送帮助信息
 static void SendStatusMessage(void);                              // 发送LED状态信息
 static void ProcessLEDCommand(uint8_t* cmd, uint16_t len);        // 处理单色LED命令
 static void ProcessRGBCommand(uint8_t* cmd, uint16_t len);        // 处理RGB LED命令
 static void SetSingleLED(GPIO_TypeDef* GPIO_Port, uint16_t GPIO_Pin, uint8_t state); // 设置单个LED状态
+#endif
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 static int8_t CDC_Init_FS(void);
@@ -92,6 +108,16 @@ static int8_t CDC_Init_FS(void)
   /* 设置USB接收缓冲区 - 用于接收从PC发送的数据 */
   // 参数：USB设备句柄、接收缓冲区地址
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
+  
+  /* 关键：启动第一次USB接收 - 准备接收来自PC的数据 */
+  // 这个调用非常重要！没有它USB将无法接收任何数据
+  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+
+  /* 通知USBPort：CDC接口已初始化（设备已配置） */
+  USBPort* port = getUSBPortInstance();
+  if (port) {
+    USBPort_connectCallback(port);
+  }
 
   return (USBD_OK);  // 返回成功状态
   /* USER CODE END 3 */
@@ -104,6 +130,11 @@ static int8_t CDC_Init_FS(void)
 static int8_t CDC_DeInit_FS(void)
 {
   /* USER CODE BEGIN 4 */
+  /* 通知USBPort：CDC接口去初始化（设备已断开） */
+  USBPort* port = getUSBPortInstance();
+  if (port) {
+    USBPort_disconnectCallback(port);
+  }
   return (USBD_OK);
   /* USER CODE END 4 */
 }
@@ -184,10 +215,17 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  /* 确保USB底层下一次可以继续接收：显式设置接收缓冲区（与官方示例一致） */
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+  /* 确保USB底层下一次可以继续接收：始终使用固定的接收缓冲区 */
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
 
-  /* 逐字节处理接收到的数据 */
+#if USE_USB_PORT_CLASS
+  /* 使用USBPort类模式 - 将数据传递给C++类处理 */
+  USBPort* port = getUSBPortInstance();
+  if (port) {
+    USBPort_rxCallback(port, Buf, *Len);
+  }
+#else
+  /* 原始命令处理模式 - 逐字节处理接收到的数据 */
   for (uint32_t i = 0; i < *Len; i++) {
 
     /* 检查命令结束符 - 换行符或回车符表示一个完整命令 */
@@ -213,6 +251,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
       CDC_Transmit_FS((uint8_t*)error, strlen(error)); // 发送错误响应
     }
   }
+#endif
 
   /* 重新准备USB接收，为下一次数据传输做准备 */
   // 这个调用非常重要，它告诉USB底层可以接收下一个数据包
@@ -259,9 +298,18 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
   if (hcdc->TxState != 0) {
     return USBD_BUSY; // 发送忙，需要等待当前发送完成
   }
+  
+  /* 🔥 关键修复：必须复制数据到UserTxBufferFS！
+   * 因为Buf可能指向UserRxBufferFS，会被下一次接收覆盖！
+   * USB CDC的发送是异步的，必须使用独立的发送缓冲区！
+   */
+  if (Len > APP_TX_DATA_SIZE) {
+    Len = APP_TX_DATA_SIZE;  // 限制长度，防止缓冲区溢出
+  }
+  memcpy(UserTxBufferFS, Buf, Len);  // ← 复制数据到发送缓冲区
 
   /* 设置发送缓冲区和数据长度 */
-  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
+  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, Len);
 
   /* 启动USB数据包发送 */
   result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
@@ -272,6 +320,7 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
+#if !USE_USB_PORT_CLASS
 /**
   * @brief  主命令处理函数 - 解析和执行从PC接收的控制命令
   * @details 这是一个功能丰富的LED控制系统，支持多种命令格式：
@@ -469,6 +518,7 @@ static void SetSingleLED(GPIO_TypeDef* GPIO_Port, uint16_t GPIO_Pin, uint8_t sta
   HAL_GPIO_WritePin(GPIO_Port, GPIO_Pin,
                     (state) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
+#endif  // !USE_USB_PORT_CLASS
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

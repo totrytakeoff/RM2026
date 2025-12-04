@@ -22,6 +22,7 @@
 #include "usbd_desc.h"      // USB描述符头文件 - 定义设备的各种描述符
 #include "usbd_cdc.h"       // USB CDC类头文件 - 通信设备类的标准实现
 #include "usbd_cdc_if.h"    // USB CDC接口头文件 - 自定义的CDC接口实现
+#include "main.h"           // 主头文件 - 包含Error_Handler声明
 
 /* USER CODE BEGIN Includes */
 
