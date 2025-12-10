@@ -1,3 +1,13 @@
+# =============================================================================
+# @file hal/CMakeLists.txt
+# @brief CubeMX 生成的 HAL 源码构建配置
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 收集 HAL 源/启动文件，生成 HAL_Lib 静态库与 HAL_IRQ OBJECT 库，并设置必须的包含/编译选项。
+# =============================================================================
+
 # 收集 hal 目录下的所有 CubeMX 生成的源文件（中断向量/IT 单独处理）
 file(GLOB HAL_SOURCES "adc.c" "can.c" "crc.c" "dac.c" "dma.c" "freertos.c" "gpio.c" "i2c.c" "rng.c" "rtc.c" "spi.c" "stm32f4xx_hal_msp.c" "stm32f4xx_hal_timebase_tim.c" "system_stm32f4xx.c" "tim.c" "usart.c" "usb_device.c" "usbd_cdc_if.c" "usbd_conf.c" "usbd_desc.c")
 

@@ -1,148 +1,86 @@
-# RoboMaster 嵌入式框架 - 分层CMakeLists系统
+# RoboMaster 嵌入式框架 - CMake 分层设计说明
 
-## 项目概述
+本项目采用“根 CMakeLists + 多子目录”模式来组织 STM32 工程。所有 MCU 相关配置集中在 `cmake/`，具体功能划分到 `lib/`、`hal/`、`Src/` 与 `test/`。本文概述各层的职责以及如何扩展。
 
-本项目基于HNUYueLuRM开源框架，采用分层CMakeLists管理系统，将开源框架封装为静态链接库，并提供模块化的单元测试管理。
-
-## 项目结构
+## 结构示意
 
 ```
-framework/
-├── CMakeLists.txt              # 根CMakeLists文件，管理整个项目
-├── lib/                        # 开源框架库
-│   ├── HNUYueLuRM/            # HNUYueLuRM开源框架源代码
-│   └── CMakeLists.txt         # 将HNUYueLuRM编译为静态库
-├── application/                # 应用层代码
-│   └── CMakeLists.txt         # 构建应用程序
-├── test/                       # 单元测试
-│   ├── motor_test/            # 电机测试
-│   │   ├── CMakeLists.txt     # 电机测试CMakeLists
-│   │   └── main.cpp           # 测试源文件
-│   ├── test_imu/              # IMU测试
-│   │   ├── CMakeLists.txt     # IMU测试CMakeLists
-│   │   └── main.c             # 测试源文件
-│   └── CMakeLists.txt         # 测试管理CMakeLists
-├── Inc/                        # 公共头文件
-├── Src/                        # 公共源文件
-└── config/                     # 配置文件
-    └── linker/                 # 链接脚本
+RM2026/
+├── CMakeLists.txt
+├── cmake/
+│   ├── Toolchain.cmake
+│   ├── Functions.cmake
+│   └── TestFunctions.cmake
+├── lib/
+│   └── HNUYueLuRM/        # Drivers/Middlewares/BSP/Modules/Common
+├── hal/                   # CubeMX HAL 源码 + IRQ
+├── Src/                   # main.c 与 application/*
+└── test/
+    ├── CMakeLists.txt     # 自动遍历子目录
+    ├── motor_test/
+    └── test_imu/
 ```
 
-## 构建系统说明
+## 根 CMakeLists.txt
 
-### 分层CMakeLists设计
+- 自动加载 `cmake/Toolchain.cmake`，统一设置编译器、MCU Flags、链接脚本等。
+- 依序 `add_subdirectory(lib)` → `add_subdirectory(hal)` → `add_subdirectory(Src)` → `add_subdirectory(test)`，确保依赖先行编译。
+- 通过 `include(cmake/Functions.cmake)`、`include(CTest)` 提供辅助函数与测试开关。
+- 定义通用目标：`clean-all`、`upload`、`upload-verbose`、`verify`。这些命令直接调用 OpenOCD，把 `build/Src/app.elf` 下载或校验至 STM32F407。
 
-本项目采用分层CMakeLists设计，各层职责如下：
+## cmake/ 目录
 
-1. **根CMakeLists.txt**：负责全局配置、工具链设置、MCU参数配置和子目录管理
-2. **lib/CMakeLists.txt**：将HNUYueLuRM开源框架编译为静态链接库
-3. **application/CMakeLists.txt**：构建应用程序，链接静态库
-4. **test/CMakeLists.txt**：管理所有单元测试项目
-5. **test/*/CMakeLists.txt**：各测试项目的具体构建配置
+| 文件 | 作用 |
+| --- | --- |
+| `Toolchain.cmake` | 指定 `arm-none-eabi-*` 工具链、`MCU_FLAGS`、`MCU_LINKER_SCRIPT`、`DSP_LIB` 以及默认 `CMAKE_BUILD_TYPE`。 |
+| `Functions.cmake` | `color_message()` 与 `target_include_directories_recursively()` 等辅助函数，供 lib/Src 等模块复用。 |
+| `TestFunctions.cmake` | 定义 `create_embedded_test()` 与 `create_unit_test()`，用于在 `test/*` 中快速生成目标、HEX/BIN 以及 OpenOCD/JLink 下载命令。 |
 
-### 编译命令
+## 子模块 CMakeLists
 
-#### 基本构建
+### lib/HNUYueLuRM
 
-```bash
-# 创建构建目录
-mkdir build && cd build
+- 将开源框架划分为多个静态库：`HNUYueLuRM_drivers`、`_middlewares`、`_common`、`_bsp`、`_modules`。
+- 每个库都继承 `MCU_FLAGS`，并通过 `target_include_directories`/`target_include_directories_recursively` 暴露头文件。
+- 最终提供 `HNUYueLuRM_Framework`（INTERFACE 库）作为聚合目标，方便其它模块整体链接。
 
-# 配置项目
-cmake .. -DCMAKE_BUILD_TYPE=Debug
+### hal/
 
-# 构建所有目标
-make -j$(nproc)
-```
+- `hal/CMakeLists.txt` 使用 `file(GLOB ...)` 收集 CubeMX 生成的 `*.c`，并额外把 `startup_stm32f407xx.s` 加入 HAL 静态库。
+- `HAL_Lib`：封装所有 HAL 源码与 USB/FreeRTOS/SEGGER 依赖的 include。
+- `HAL_IRQ`：把 `stm32f4xx_it.c` 构建为 OBJECT 库，在链接时直接注入，保证中断向量不会被静态链接器优化掉。
 
-#### 分层构建
+### Src/
 
-```bash
-# 仅构建静态库
-make HNUYueLuRM_Lib
+- 收集 `main.c` 与 `application/**` 的全部 `.c/.cpp`，构建成 `app.elf`。
+- 通过 `target_include_directories_recursively()` 将 `application` 下的子目录自动加入 include path。
+- 链接顺序中加入 `-Wl,--start-group/--end-group`，确保多个静态库间的循环依赖被正确解析。
+- 后处理命令生成 `.hex`、`.bin`，并写出 `.map`、`--print-memory-usage` 报告。
 
-# 仅构建应用程序
-make basic_framework
+### test/
 
-# 构建特定测试项目
-make test_motor_test
-make test_test_imu
+- 顶层 `test/CMakeLists.txt` 会遍历所有子目录，只要含有 `CMakeLists.txt` 就 `add_subdirectory`。
+- 各测试子目录只需 `include(cmake/TestFunctions.cmake)` 并调用 `create_embedded_test()`，即可自动继承主工程的工具链、HAL/HNU 库、DSP 链接等配置。
+- `create_embedded_test()` 在 `${TEST_OUTPUT_DIR}`（默认为 `build/tests`）下生成 ELF/HEX/BIN，并附带 `flash-test_<name>`、`build-and-flash-test_<name>` 与（若找到 JLink）`flash-test_<name>-jlink`。
 
-# 构建所有测试项目
-make test
-```
+## 扩展建议
 
-#### 下载命令
+### 新增测试项目
 
-```bash
-# 使用DAP下载应用程序
-make download-dap
+1. 在 `test/` 下创建目录，例如 `imu_calibration/`。
+2. 复制 `test/motor_test/CMakeLists.txt`，替换 `project()` 名称。
+3. 根据需要设置 `SOURCES`、`EXTRA_SOURCES`、`INCLUDE_DIRS`、`LINK_LIBRARIES` 等参数；默认会自动链接 HAL/HNU/DSP。
+4. 重新运行 `cmake --build build`，即可生成 `test_imu_calibration` 目标以及对应的下载命令。
 
-# 使用JLink下载应用程序
-make download-jlink
+### 引入新的子库或模块
 
-# 使用DAP下载测试项目
-make download-motor_test-dap
-make download-test_imu-dap
+- 如果是 HNU 框架内部库，可直接在 `lib/HNUYueLuRM/CMakeLists.txt` 中追加一个 `add_library()` 并通过 `HNUYueLuRM_Framework` 链接。
+- 若是项目级组件（如新增 `Src/foo/`），建议在 `Src/CMakeLists.txt` 中通过 `file(GLOB_RECURSE ...)` 或手动追加源文件，同时使用 `target_include_directories()` 暴露头文件。
 
-# 一键编译并烧录
-make build-and-flash
-```
+## 目标依赖 & 输出
 
-### 自定义目标
+- `app.elf` 自动依赖 `HNUYueLuRM_*` 与 `HAL_Lib/HAL_IRQ`。构建顺序由 CMake 负责，无需手工指定。
+- 主固件产物位于 `build/Src/`，测试产物位于 `build/tests/<test_name>/`，JLink 脚本位于 `build/flash_<test_name>.jlink`。
+- 全局 `clean-all` 通过 `cmake -E remove_directory` 清理 `build/`，不会误删源码。
 
-- `clean-all`：清理所有构建文件
-- `info`：显示项目信息
-- `download-dap`：使用DAP下载程序
-- `download-jlink`：使用JLink下载程序
-- `build-and-flash`：编译并使用DAP下载程序
-
-## 添加新测试项目
-
-要添加新的测试项目，请按以下步骤操作：
-
-1. 在`test`目录下创建新的测试目录，例如`test_new_module`
-2. 在新目录中创建测试源文件
-3. 复制现有测试目录的CMakeLists.txt并修改项目名称和源文件
-4. 在`test/CMakeLists.txt`中添加新测试目录到`add_subdirectory`命令
-
-## 注意事项
-
-1. 确保ARM交叉编译工具链已正确安装并配置
-2. 确保OpenOCD或JLink工具已安装，用于下载程序
-3. 根据实际硬件修改链接脚本和配置文件
-4. 新增测试项目时，确保正确链接HNUYueLuRM静态库
-
-## 技术细节
-
-### 静态库构建
-
-lib/CMakeLists.txt将HNUYueLuRM开源框架编译为静态库，包括：
-- Drivers：STM32 HAL驱动
-- Middlewares：FreeRTOS、SEGGER RTT等中间件
-- bsp：板级支持包
-- modules：功能模块（IMU、电机等）
-
-### 测试项目构建
-
-每个测试项目独立构建，但共享：
-- 相同的工具链和MCU配置
-- HNUYueLuRM静态库
-- 公共头文件和源文件
-
-### 输出文件组织
-
-构建输出文件按类型组织：
-- ELF文件：`${CMAKE_BINARY_DIR}/output/` 或 `${CMAKE_BINARY_DIR}/test_output/`
-- 静态库：`${CMAKE_BINARY_DIR}/obj/`
-- HEX/BIN文件：与ELF文件同目录
-
-## 故障排除
-
-1. **编译错误**：检查工具链是否正确安装，路径是否正确
-2. **链接错误**：确保静态库已正确构建，检查链接脚本路径
-3. **下载失败**：检查下载工具是否正确安装，硬件连接是否正常
-
-## 联系方式
-
-如有问题，请联系：YZ-Control/myself
+理解以上分层后，就可以更容易地定位编译问题或添加模块，避免在巨大单一的 CMakeLists 中迷失。若需要进一步调试，可在任意目标上调用 `print_build_info(<target>)`（来自 `cmake/Functions.cmake`）查看源文件、编译/链接选项。

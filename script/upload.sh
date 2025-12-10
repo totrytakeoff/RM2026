@@ -1,5 +1,14 @@
 #!/bin/bash
-# STM32 烧录脚本（OpenOCD），从 build/ 下的 bin/hex/elf 生成路径并烧录
+# =============================================================================
+# @file script/upload.sh
+# @brief STM32 OpenOCD 烧录脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 解析 build 目录产物路径，调用 OpenOCD 进行 flash/verify，可定制地址、格式和配置文件。
+# =============================================================================
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

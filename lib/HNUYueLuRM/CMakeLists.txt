@@ -1,11 +1,11 @@
 # =============================================================================
-# HNUYueLuRM layered libraries
-# - drivers: STM32F4 HAL drivers
-# - middlewares: USB, FreeRTOS, SEGGER RTT, etc.
-# - bsp: board support package
-# - modules: application-level modules (imu, motor, referee, ...)
-# - common: shared utilities
-# - framework: interface target aggregating all above
+# @file lib/HNUYueLuRM/CMakeLists.txt
+# @brief HNUYueLuRM 框架分层静态库配置
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 构建 drivers/middlewares/common/bsp/modules 各层库并聚合为 HNUYueLuRM_Framework 供上层链接。
 # =============================================================================
 
 set(HNU_BASE ${CMAKE_CURRENT_SOURCE_DIR})

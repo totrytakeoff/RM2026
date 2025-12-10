@@ -1,125 +1,112 @@
-# RM2026 CMake构建系统
+# RM2026 CMake构建系统指南
 
-## 项目结构
+RM2026 使用标准 CMake 构建流程，但在 `cmake/Toolchain.cmake`、`lib/`、`hal/`、`Src/` 与 `test/` 中做了分层封装。本文档用于快速了解项目中与 CMake 相关的约定、常用目标以及如何扩展。
 
-本项目采用CMake构建系统，将代码组织为以下几个主要部分：
+## 目录速览
 
-- **lib**: HNUYueLuRM开源框架，编译成静态库
-- **src**: STM32 HAL初始化函数，编译成静态库
-- **application**: 应用层代码，编译成可执行文件
-- **test**: 单元测试项目，每个测试编译成独立的可执行文件
-
-## 构建步骤
-
-### 1. 创建构建目录
-
-```bash
-mkdir build && cd build
+```
+RM2026/
+├── CMakeLists.txt          # 根配置：设置工具链、全局目标、上传命令
+├── cmake/
+│   ├── Toolchain.cmake     # ARM GCC、MCU Flags、链接脚本、DSP 库等通用配置
+│   ├── Functions.cmake     # 公共函数：递归 include、彩色输出等
+│   └── TestFunctions.cmake # create_embedded_test() & create_unit_test()
+├── lib/                    # HNUYueLuRM 框架分层静态库
+├── hal/                    # CubeMX 生成的 HAL/HAL IRQ 源码
+├── Src/                    # main.c 与 application/ 业务代码
+└── test/                   # 嵌入式测试工程（自动遍历子目录）
 ```
 
-### 2. 配置项目
+构建顺序为：`lib` → `hal` → `Src`（主固件） → `test`（按需）。所有目标共享同一套交叉编译器配置和链接脚本。
+
+## 准备环境
+
+1. **ARM GCC 工具链**：需包含 `arm-none-eabi-gcc/g++/objcopy/size`，必须可被 `cmake/Toolchain.cmake` 找到。
+2. **CMake ≥ 3.16** 与常用构建工具（`make`/`ninja`），建议直接使用 `cmake --build`。
+3. **OpenOCD 或 JLink**（可选）：用于 `upload` 或测试固件 `flash-*` 目标。
+4. 如需修改 MCU 配置，可在 `cmake/Toolchain.cmake` 或 CMake 配置阶段覆盖 `MCU_FLAGS`、`MCU_LINKER_SCRIPT`、`DSP_LIB`。
+
+## 快速构建流程
 
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Debug
+# 1. 生成构建目录
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+
+# 2. 编译主固件
+cmake --build build --target app.elf -j
+
+# 3. 使用 OpenOCD 烧录（依赖 config/openocd/openocd_dap.cfg）
+cmake --build build --target upload
 ```
 
-### 3. 编译项目
+若切换为 Release：
 
 ```bash
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
-## 常用命令
+## 常见构建目标
 
-### 构建特定组件
+- **静态库**
+  - `HNUYueLuRM_drivers` / `HNUYueLuRM_middlewares` / `HNUYueLuRM_common` / `HNUYueLuRM_bsp` / `HNUYueLuRM_modules`
+  - `HAL_Lib`（CubeMX HAL 源）与 `HAL_IRQ`（独立 OBJECT 库，避免 IRQ 被链接器回收）
+- **主固件**
+  - `app.elf`：链接上述所有库、`DSP_LIB` 与 C 标准库，生成 `app.elf/.bin/.hex`（产物位于 `build/Src/`）
+  - `upload` / `upload-verbose` / `verify`：使用 OpenOCD 下载或校验 `app.elf`
+- **清理**
+  - `clean-all`：删除整个 `build/` 目录（直接通过 CMake command 实现）
+- **测试工程**
+  - 自动生成的 `test_<name>` 目标，例如 `test_motor_test`、`test_test_imu`
+  - 下载相关目标：`flash-test_<name>`（OpenOCD）与 `build-and-flash-test_<name>`（先构建再烧录）
 
-```bash
-# 构建静态库
-make HNUYueLuRM_Lib    # 构建HNUYueLuRM静态库
-make Src_Lib           # 构建Src静态库
-
-# 构建应用程序
-make basic_framework   # 构建主应用程序
-
-# 构建测试项目
-make test_motor_test   # 构建电机测试
-make test_test_imu     # 构建IMU测试
-```
-
-### 清理项目
-
-```bash
-make clean-all         # 清理所有构建文件
-```
-
-### 查看项目信息
-
-```bash
-make info              # 显示项目信息
-```
-
-### 下载程序
-
-#### 主程序下载
-
-```bash
-make upload            # 使用DAP下载主程序
-make upload-jlink      # 使用JLink下载主程序
-```
-
-#### 应用层程序下载
-
-```bash
-make download-app-dap    # 使用DAP下载
-make download-app-jlink # 使用JLink下载
-```
-
-#### 测试程序下载
-
-```bash
-# 电机测试
-make download-motor_test-dap    # 使用DAP下载motor_test
-make download-motor_test-jlink  # 使用JLink下载motor_test
-
-# IMU测试
-make download-test_imu-dap      # 使用DAP下载test_imu
-make download-test_imu-jlink    # 使用JLink下载test_imu
-```
-
-### 一键编译并烧录
-
-```bash
-make build-and-flash    # 编译并使用DAP下载主程序到STM32
-make build-and-flash-app # 编译并下载应用层程序
-make build-and-flash-motor_test
-make build-and-flash-test_imu
-```
+> 提示：所有嵌入式测试会把 ELF/HEX/BIN 输出到 `build/tests/<测试名>/`，便于调试与烧写。
 
 ## 构建类型
 
-支持以下构建类型：
-
-- **Debug**: 最小优化，包含调试信息（默认）
-- **Release**: 最大速度优化
-- **RelWithDebInfo**: 最大速度优化，包含调试信息
-- **MinSizeRel**: 最大尺寸优化
-
-例如，使用Release模式构建：
+支持 CMake 标准的 `Debug`、`Release`、`RelWithDebInfo`、`MinSizeRel`。默认 `Debug`，对应 `-Og -g`，Release 分支会切换为 `-Ofast`。使用示例：
 
 ```bash
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build --target app.elf
 ```
 
-## 输出文件
+## 定制编译配置
 
-构建完成后，输出文件位于以下目录：
+- **覆盖 DSP 库或链接脚本**
+  ```bash
+  cmake -S . -B build \
+        -DDSP_LIB=/path/to/libarm_cortexM4lf_math.a \
+        -DMCU_LINKER_SCRIPT=/path/to/your.ld
+  ```
+- **附加编译定义/选项**
+  在对应目标上使用 `target_compile_definitions/target_compile_options` 即可，也可在命令行传入 `-DCMAKE_C_FLAGS=...`。
+- **Toolchain 自动加载**：根 CMakeLists 会在未显式设置 `CMAKE_TOOLCHAIN_FILE` 时自动包含 `cmake/Toolchain.cmake`，通常无需手动指定。
 
-- **ELF文件**: `build/output/`
-- **静态库**: `build/obj/`
-- **测试输出**: `build/test_output/`
+## 测试项目的增量构建与烧录
 
-## 注意事项
+1. 在 `test/<your_test>/` 下创建源文件与 `CMakeLists.txt`，调用 `create_embedded_test()`。
+2. 重新运行一次 `cmake --build`，根 `test/CMakeLists.txt` 会自动 `add_subdirectory` 新目录。
+3. 构建与烧录命令示例：
+   ```bash
+   cmake --build build --target test_motor_test
+   cmake --build build --target build-and-flash-test_motor_test
+   ```
+4. 输出位于 `build/tests/motor_test/`，包含 `.elf/.bin/.hex/.map`。
 
-1. 确保已安装ARM交叉编译工具链
-2. 下载程序需要安装相应的下载工具（OpenOCD或JLink）
-3. 首次构建前，确保已正确安装所有依赖项
+## 输出目录对照
+
+- `build/lib/`：HNUYueLuRM 分层静态库中间文件（由 CMake 管理）
+- `build/hal/`：HAL_Lib、HAL_IRQ 中间文件
+- `build/Src/`：`app.elf/.bin/.hex/.map`
+- `build/tests/<name>/`：各测试固件及下载脚本
+- `build/flash_<name>.jlink`：JLink 下载脚本（按需生成）
+
+## 常见问题排查
+
+1. **arm-none-eabi-* 找不到**：确认工具链已安装并在 PATH 中，或在 `cmake -S -B` 时显式传入 `-DARM_NONE_EABI_GCC=/path/...` 等变量。
+2. **DSP 库路径无效**：根据 `cmake/Toolchain.cmake` 提示更新 `DSP_LIB`，确保文件存在。
+3. **OpenOCD 没找到**：脚本会尝试在 `/home/myself/.platformio`, `/usr/bin`, `/usr/local/bin` 搜索，必要时手动安装或调整 `OPENOCD_PATH`。
+4. **链接失败**：确认所有静态库均已成功构建；`target_link_libraries` 中使用 `--start-group/--end-group`，如果仍缺符号，请检查新增源码是否正确加入对应库。
+
+按照上述指南即可快速理解 RM2026 的 CMake 构建逻辑，并在此基础上进行扩展或调试。

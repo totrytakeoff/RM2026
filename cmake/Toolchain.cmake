@@ -1,8 +1,11 @@
 # =============================================================================
-# Common ARM Cortex-M4 Toolchain configuration for RM2026
-# Centralizes compiler, flags, linker script, and DSP library paths.
-# This file is intended to be used via -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain.cmake
-# or by letting the top-level CMakeLists set it automatically.
+# @file cmake/Toolchain.cmake
+# @brief RM2026 ARM Cortex-M4 交叉编译工具链配置
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 统一设置 arm-none-eabi 编译器、MCU 编译/链接参数、链接脚本路径与 DSP 库，供所有 CMake 目标共享。
 # =============================================================================
 
 set(CMAKE_SYSTEM_NAME Generic)

@@ -1,3 +1,13 @@
+# =============================================================================
+# @file Src/CMakeLists.txt
+# @brief 主固件 app.elf 构建脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 收集 main.c 与 application 目录源码，设置包含/链接选项，并生成 ELF/HEX/BIN 及映射文件。
+# =============================================================================
+
 # 链接脚本
 if(NOT DEFINED LINKER_SCRIPT)
     set(LINKER_SCRIPT "${MCU_LINKER_SCRIPT}")

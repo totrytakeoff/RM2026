@@ -1,5 +1,14 @@
 #!/bin/bash
-# 构建/上传入口脚本，封装常用 cmake 目标，默认输出在 build/
+# =============================================================================
+# @file script/build.sh
+# @brief RM2026 构建与上传入口脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 提供 clean/configure/build/upload 等命令封装，统一调用 CMake 与 Toolchain。
+# =============================================================================
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

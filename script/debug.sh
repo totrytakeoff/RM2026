@@ -1,5 +1,14 @@
 #!/bin/bash
-# STM32 调试脚本（OpenOCD），启动OpenOCD服务器用于GDB连接
+# =============================================================================
+# @file script/debug.sh
+# @brief STM32 OpenOCD 调试服务器启动脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 封装 OpenOCD 启动流程，可自定义配置文件、端口与可执行路径供 GDB 远程连接。
+# =============================================================================
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -1,5 +1,14 @@
 #!/bin/bash
-# STM32 GDB调试脚本，自动连接到OpenOCD服务器并加载程序
+# =============================================================================
+# @file script/gdb.sh
+# @brief STM32 GDB 连接与固件加载脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 自动定位 build 目录下的 ELF、连接本地 OpenOCD 服务器并在 main 处断点运行，简化调试流程。
+# =============================================================================
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

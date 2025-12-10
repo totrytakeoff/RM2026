@@ -1,5 +1,12 @@
-# STM32 烧录脚本 (PowerShell)，从 build/ 下选择 bin/hex/elf 并通过 OpenOCD 烧录
-# 用法: .\upload.ps1 [-File <path-without-ext>] [-Format bin|hex|elf] [-Addr <0x...>] [-Cfg <openocd.cfg>] [-OpenOCD <path>] [-VerifyOnly] [-DryRun]
+# =============================================================================
+# @file script/upload.ps1
+# @brief STM32 OpenOCD PowerShell 烧录脚本
+# @project RM2026
+# @author YZ-Control/myself
+# @version 1.0.0
+# @date 2025-12-07
+# @details 供 Windows 环境选择 build 目录下的 bin/hex/elf，并以 OpenOCD 执行烧录或校验，可配置地址与验证模式。
+# =============================================================================
 
 param(
     [string]$File = "Src/app",
