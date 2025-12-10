@@ -1,14 +1,10 @@
 # 链接脚本
-set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/config/linker/STM32F407IGHx_FLASH.ld")
-
-# -----------------------------------------------------------------------------
-# 1. 定义 DSP 库路径 (请根据你实际文件位置修改这里!!)
-# -----------------------------------------------------------------------------
-# 尝试在标准位置寻找 DSP 库，如果你的库文件名不同，请修改这里
-set(DSP_LIB "${CMAKE_SOURCE_DIR}/lib/HNUYueLuRM/Middlewares/ST/ARM/DSP/Lib/libarm_cortexM4lf_math.a")
+if(NOT DEFINED LINKER_SCRIPT)
+    set(LINKER_SCRIPT "${MCU_LINKER_SCRIPT}")
+endif()
 
 if(NOT EXISTS ${DSP_LIB})
-    message(FATAL_ERROR "无法找到 DSP 库文件，请检查 Src/CMakeLists.txt 中的 DSP_LIB 路径是否正确: ${DSP_LIB}")
+    message(FATAL_ERROR "无法找到 DSP 库文件，请检查 cmake/Toolchain.cmake 中的 DSP_LIB 路径是否正确: ${DSP_LIB}")
 endif()
 
 
@@ -33,11 +29,17 @@ target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 target_link_libraries(app.elf 
     PRIVATE
     -Wl,--start-group
-    HNUYueLuRM_Framework
+    HNUYueLuRM_modules
+    HNUYueLuRM_bsp
+    HNUYueLuRM_middlewares
+    HNUYueLuRM_common
+    HNUYueLuRM_drivers
     HAL_Lib
+    $<TARGET_OBJECTS:HAL_IRQ>
     -Wl,--end-group
     ${DSP_LIB}
     m
+    c
 )
 
 # 编译选项 (确保 app.elf 的源文件使用正确的 FPU 设置)
@@ -45,14 +47,10 @@ target_compile_options(app.elf PRIVATE ${MCU_FLAGS})
 
 # 链接选项
 target_link_options(app.elf PRIVATE 
-    ${MCU_FLAGS}
-    -T${LINKER_SCRIPT} 
+    ${GENERIC_LINK_OPTIONS}
+    -T${LINKER_SCRIPT}
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/app.map 
-    -Wl,--gc-sections 
     -Wl,--print-memory-usage
-    -Wl,--no-warn-rwx-segments
-    -specs=nano.specs 
-    -specs=nosys.specs
 )
 
 # 生成 Hex 和 Bin

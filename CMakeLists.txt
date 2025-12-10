@@ -1,54 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 
 # =============================================================================
-# 项目基本设置
+# 项目基本设置（简化入口，只保留全局配置和子目录组织）
 # =============================================================================
-set(CMAKE_SYSTEM_NAME Generic)
-set(CMAKE_SYSTEM_PROCESSOR arm)
-
-# 在 project 之前强制指定编译器
-set(CMAKE_C_COMPILER_FORCED TRUE)
-set(CMAKE_CXX_COMPILER_FORCED TRUE)
-set(CMAKE_C_COMPILER arm-none-eabi-gcc)
-set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
-set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
-set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
-set(CMAKE_SIZE arm-none-eabi-size)
+if(NOT CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/cmake/Toolchain.cmake" CACHE FILEPATH "Toolchain file")
+endif()
+include(${CMAKE_TOOLCHAIN_FILE})
 
 project(RM2026 C CXX ASM)
 
-# 引入辅助函数
 include(cmake/Functions.cmake)
-
-# =============================================================================
-# 全局编译选项 (MCU Flags)
-# =============================================================================
-# 将 MCU 标志设为缓存变量，使其在子目录中可见
-# The flags must be in a semicolon-separated list to be treated as separate arguments
-set(MCU_FLAGS "-mcpu=cortex-m4;-mthumb;-mthumb-interwork;-mfloat-abi=hard;-mfpu=fpv4-sp-d16" CACHE STRING "MCU specific compiler flags")
-
-add_compile_options(
-    ${MCU_FLAGS} -pipe -Wall -Wno-unused-variable -fmessage-length=0 
-    -ffunction-sections -fdata-sections -fno-common
-)
-# C语言标准
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_CXX_STANDARD 14)
-
-# 调试/发布模式设置
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    add_compile_options(-Og -g -gdwarf-2)
-    add_definitions(-DDEBUG)
-else()
-    add_compile_options(-Ofast)
-endif()
-
-# 全局宏定义
-add_definitions(
-    -DUSE_HAL_DRIVER
-    -DSTM32F407xx
-    -DARM_MATH_CM4
-)
+include(CTest)
+enable_testing()
 
 # =============================================================================
 # 添加子模块 (顺序很重要)
@@ -63,7 +27,9 @@ add_subdirectory(hal)
 add_subdirectory(Src)
 
 # 4. 编译 Test (测试代码)
-# add_subdirectory(test)
+# 定义所有测试项目的输出根目录, 以便 TestFunctions.cmake 使用
+set(TEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests CACHE INTERNAL "Root directory for test outputs")
+add_subdirectory(test)
 
 # =============================================================================
 # 自定义全局命令 (Clean / Upload)
@@ -76,8 +42,54 @@ add_custom_target(clean-all
 # OpenOCD 下载命令 (默认下载 app.bin)
 # 注意：这里假设最终生成的目标在 Src 目录下，如果找不到需要在 Src/CMakeLists 指定输出位置
 set(OPENOCD_CFG "${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg")
+
+# 查找OpenOCD可执行文件
+find_program(OPENOCD_EXECUTABLE 
+    NAMES openocd
+    PATHS 
+        /home/myself/.platformio/packages/tool-openocd/bin
+        /usr/bin
+        /usr/local/bin
+    NO_DEFAULT_PATH
+)
+
+# 如果找不到，尝试使用系统PATH
+if(NOT OPENOCD_EXECUTABLE)
+    find_program(OPENOCD_EXECUTABLE openocd)
+endif()
+
+# 设置OpenOCD路径变量
+if(OPENOCD_EXECUTABLE)
+    set(OPENOCD_PATH ${OPENOCD_EXECUTABLE})
+    message(STATUS "Found OpenOCD: ${OPENOCD_PATH}")
+else()
+    # 设置默认路径作为备用
+    set(OPENOCD_PATH "/home/myself/.platformio/packages/tool-openocd/bin/openocd")
+    message(WARNING "OpenOCD not found, using default path: ${OPENOCD_PATH}")
+endif()
+
 add_custom_target(upload
-    COMMAND openocd -f ${OPENOCD_CFG} -c "program ${CMAKE_BINARY_DIR}/Src/app.bin verify reset exit"
+    COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD] Starting upload to STM32..."
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Uploading to STM32..."
+)
+
+# 添加一个更详细的上传命令，显示更多调试信息
+add_custom_target(upload-verbose
+    COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD-VERBOSE] Starting verbose upload to STM32..."
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
+    DEPENDS app.elf
+    COMMENT "Verbose upload to STM32..."
+)
+
+# 添加一个仅验证命令，不重新烧录
+add_custom_target(verify
+    COMMAND ${CMAKE_COMMAND} -E echo "[VERIFY] Verifying STM32 flash..."
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; shutdown"
+    COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Verification completed!"
+    DEPENDS app.elf
+    COMMENT "Verifying STM32 flash..."
 )

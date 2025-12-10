@@ -32,7 +32,11 @@
 #include "stm32f4xx_hal.h"
 #include "tim.h"
 #include "usart.h"
+#include "usb_device.h"
 
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "bsp_log.h"
 
 #include "bsp_init.h"
 #include "bsp_usart.h"
@@ -64,12 +68,24 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
+void Debug_DisableWatchdogs(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/**
+ * @brief 在调试模式下禁用看门狗
+ * @note  此函数通过DBGMCU寄存器在调试时冻结看门狗计数器
+ */
+void Debug_DisableWatchdogs(void) {
+    // 在调试模式下冻结看门狗，防止看门狗复位
+    // 当内核停止时，看门狗计数器也会停止
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_WWDG_STOP;
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
+}
 
 /* USER CODE END 0 */
 
@@ -118,6 +134,9 @@ int main(void) {
     HAL_Init();
 
     /* USER CODE BEGIN Init */
+    
+    // 在调试模式下禁用看门狗，防止看门狗复位
+    Debug_DisableWatchdogs();
 
     /* USER CODE END Init */
 
@@ -191,17 +210,16 @@ void SystemClock_Config(void) {
     __HAL_RCC_PWR_CLK_ENABLE();
     __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    /** Initializes the RCC Oscillators according to the specified parameters
-     * in the RCC_OscInitTypeDef structure.
-     */
+    /* 使用外部 12MHz HSE，保持与原工程一致的 168MHz SYSCLK / APB2 84MHz，避免串口波特率偏差 */
     RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
     RCC_OscInitStruct.HSEState = RCC_HSE_ON;
     RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
     RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM = 6;
-    RCC_OscInitStruct.PLL.PLLN = 168;
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ = 7;
+    RCC_OscInitStruct.PLL.PLLM = 6;   // 12MHz /6 = 2MHz
+    RCC_OscInitStruct.PLL.PLLN = 168; // 2MHz *168 = 336MHz
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2; // 336/2 = 168MHz SYSCLK
+    RCC_OscInitStruct.PLL.PLLQ = 7;   // 48MHz for USB
+    
     if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         Error_Handler();
     }

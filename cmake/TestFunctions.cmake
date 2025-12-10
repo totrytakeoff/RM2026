@@ -15,60 +15,62 @@ function(create_embedded_test test_name)
     
     # 设置默认链接脚本
     if(NOT ARG_LINKER_SCRIPT)
-        set(ARG_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/config/linker/STM32F407IGHx_FLASH.ld")
+        set(ARG_LINKER_SCRIPT "${MCU_LINKER_SCRIPT}")
     endif()
     
     # 测试项目名称
     set(test_target_name "test_${test_name}")
     
-    # 汇编源文件
-    set(ASM_SOURCES
-        ${CMAKE_SOURCE_DIR}/config/linker/startup_stm32f407xx.s
-    )
-    
     # 创建测试可执行文件
+    # 启动文件 (.s) 已被包含在 HAL_Lib 中，此处不再需要单独添加。
+    # 只需要添加测试本身的源文件即可。
     add_executable(${test_target_name}
         ${ARG_SOURCES}
         ${ARG_EXTRA_SOURCES}
-        ${ASM_SOURCES}
+        ${CMAKE_SOURCE_DIR}/test/error_handler_stub.c
     )
     
-    # 设置汇编文件属性
-    set_source_files_properties(${ASM_SOURCES}
-        PROPERTIES
-            LANGUAGE ASM
-            COMPILE_FLAGS "-x assembler-with-cpp"
-    )
+    # 汇编文件属性也不再需要，因为它在 HAL_Lib 中处理
     
+    if(NOT DSP_LIB OR NOT EXISTS ${DSP_LIB})
+        message(FATAL_ERROR "DSP_LIB not found: ${DSP_LIB}")
+    endif()
+
     # 包含目录
     target_include_directories(${test_target_name}
-        PRIVATE
+        PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_SOURCE_DIR}/Inc
             ${ARG_INCLUDE_DIRS}
     )
     
-    # 链接库
+    # 链接库 (mirroring the main app.elf linkage)
     target_link_libraries(${test_target_name}
-        PRIVATE
-            application
-            hal
-            HNUYueLuRM_Lib
-            rm2026_compile_options
-            rm2026_link_options
-            test_compile_options
-            ${ARG_LINK_LIBRARIES}
+        PUBLIC
+        -Wl,--start-group
+        ${ARG_LINK_LIBRARIES}
+        HAL_Lib
+        $<TARGET_OBJECTS:HAL_IRQ>
+        -Wl,--end-group
+        ${DSP_LIB}
+        m
+        c
     )
     
-    # 链接选项
-    target_link_options(${test_target_name} PRIVATE
-        -T${ARG_LINKER_SCRIPT}
+    # 链接选项 (mirroring the main app.elf options)
+    target_link_options(${test_target_name} PRIVATE 
+        ${GENERIC_LINK_OPTIONS}
+        -T${ARG_LINKER_SCRIPT} 
+        -Wl,-Map=${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.map 
+        -Wl,--print-memory-usage
     )
     
     # 设置输出目录
+    # 目标输出为 .elf，并放到 tests/<name>/ 目录，方便调试和烧录
     set_target_properties(${test_target_name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${TEST_OUTPUT_DIR}/${test_name}
         OUTPUT_NAME ${test_target_name}
+        SUFFIX ".elf"
     )
     
     # 创建输出目录
@@ -78,12 +80,13 @@ function(create_embedded_test test_name)
     add_custom_command(TARGET ${test_target_name} POST_BUILD
         COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.hex
         COMMAND ${CMAKE_OBJCOPY} -Obinary $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.elf
         COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${test_target_name}>
-        COMMENT "为测试项目 ${test_name} 生成HEX和BIN文件"
+        COMMENT "为测试项目 ${test_name} 生成 ELF / HEX / BIN 文件"
     )
     
-    # 添加到测试目标列表
-    add_test_executable(${test_target_name})
+    # 添加到测试目标列表 (此函数未定义,暂时注释掉)
+    # add_test_executable(${test_target_name})
     
     # =============================================================================
     # 下载目标
@@ -197,8 +200,8 @@ function(create_unit_test test_name)
         COMMAND ${test_target_name}
     )
     
-    # 添加到测试目标列表
-    add_test_executable(${test_target_name})
+    # 添加到测试目标列表 (此函数未定义,暂时注释掉)
+    # add_test_executable(${test_target_name})
     
     message(STATUS "创建单元测试: ${test_target_name}")
 endfunction()
