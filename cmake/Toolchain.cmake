@@ -83,7 +83,7 @@ endif()
 set(GENERIC_LINK_OPTIONS
     ${MCU_FLAGS}
     -Wl,--gc-sections
-    -Wl,--no-warn-rwx-segments
+    # -Wl,--no-warn-rwx-segments  # 不支持，已注释
     -specs=nano.specs
     -specs=nosys.specs
     CACHE STRING "Common linker options for Cortex-M4"
