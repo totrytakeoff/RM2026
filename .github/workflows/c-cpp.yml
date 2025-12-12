@@ -1,25 +1,26 @@
-name: C/C++ CI
+name: CMake-Ninja Build
 
 on:
   push:
-    branches: [ "master" ]
   pull_request:
-    branches: [ "master" ]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-      - uses: carlosperate/arm-none-eabi-gcc-action@v1
-      - run: arm-none-eabi-gcc --version
-      
-      - uses: actions/checkout@v3
-      - name: make
-        run: make -j12
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: seanmiddleditch/gha-setup-ninja@master
-      - name: ninja
-        run: cd build && cmake -G Ninja .. && ninja
+      - name: Install ARM GCC and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake
+          arm-none-eabi-gcc --version
+
+      - name: Configure (CMake + Ninja)
+        run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (app + tests)
+        run: cmake --build build --target all -- -v
       
