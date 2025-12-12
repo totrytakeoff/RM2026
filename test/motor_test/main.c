@@ -17,7 +17,8 @@
 #include "dm8009p.h"
 #include "dji_motor.h"
 
-#define M3508_CAN_ID 1U
+#define M3508_MOTOR_COUNT 4U
+static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
 #define GM6020_CAN_ID 5U
 
 #define M3508_SPEED_MAX 7200.0f   // deg/s, ~20 rps
@@ -35,9 +36,10 @@
 #define DM8009P_TARGET_SPEED_RAD_S 6.0f
 #define DM8009P_DEFAULT_DAMPING 4.0f
 
-static DJIMotorInstance *m3508_motor = NULL; // Lazily created M3508 instance
+static DJIMotorInstance *m3508_motors[M3508_MOTOR_COUNT] = {NULL}; // Lazily created M3508 instances
 static DJIMotorInstance *gm6020_motor = NULL; // Lazily created GM6020 instance
 static DM8009P_Handle *dm8009p_motor = NULL;
+static uint8_t dm8009p_speed_mode_enabled = 0;
 
 void SystemClock_Config(void);
 static void EnsureM3508MotorReady(void);
@@ -72,11 +74,16 @@ int main(void)
     BSPInit();
     LOGINFO("[motor_test] core init finished");
 
+
+
+    MotorTest_M3508_SpeedLoop(7200.0f);
+
+
     while (1)
     {
-        MotorTest_M3508_PeriodicAngleStep(60.0f, 1000U);
-        MotorTest_GM6020_PeriodicAngleStep(60.0f, 1000U);
-        MotorTest_DM8009P_SpeedLoop(DM8009P_TARGET_SPEED_RAD_S);
+        // MotorTest_M3508_PeriodicAngleStep(60.0f, 1000U);
+        // MotorTest_GM6020_PeriodicAngleStep(60.0f, 1000U);
+        // MotorTest_DM8009P_SpeedLoop(DM8009P_TARGET_SPEED_RAD_S);
         DJIMotorControl();
         DaemonTask();
         HAL_Delay(2);
@@ -89,16 +96,22 @@ int main(void)
  */
 void MotorTest_StopAll(void)
 {
-    if (m3508_motor != NULL)
+    for (uint8_t i = 0; i < M3508_MOTOR_COUNT; ++i)
     {
-        DJIMotorStop(m3508_motor);
+        if (m3508_motors[i] != NULL)
+        {
+            DJIMotorStop(m3508_motors[i]);
+        }
     }
     if (gm6020_motor != NULL)
     {
         DJIMotorStop(gm6020_motor);
     }
     if (dm8009p_motor != NULL)
-        DM8009P_Disable(dm8009p_motor);
+    {
+        DM8009P_Disable(dm8009p_motor, DM8009P_MODE_SPEED);
+        dm8009p_speed_mode_enabled = 0;
+    }
     LOGINFO("[motor_test] all motors stopped");
 }
 
@@ -112,10 +125,17 @@ void MotorTest_M3508_SpeedLoop(float target_speed_deg_s)
 {
     EnsureM3508MotorReady();
     target_speed_deg_s = ClampFloat(target_speed_deg_s, M3508_SPEED_MIN, M3508_SPEED_MAX);
-    DJIMotorOuterLoop(m3508_motor, SPEED_LOOP);
-    DJIMotorEnable(m3508_motor);
-    DJIMotorSetRef(m3508_motor, target_speed_deg_s);
-    LOGINFO("[motor_test] M3508 speed ref %d deg/s", (int)target_speed_deg_s);
+    for (uint8_t i = 0; i < M3508_MOTOR_COUNT; ++i)
+    {
+        if (m3508_motors[i] == NULL)
+        {
+            continue;
+        }
+        DJIMotorOuterLoop(m3508_motors[i], SPEED_LOOP);
+        DJIMotorEnable(m3508_motors[i]);
+        DJIMotorSetRef(m3508_motors[i], target_speed_deg_s);
+    }
+    LOGINFO("[motor_test] %u x M3508 speed ref %d deg/s", (unsigned)M3508_MOTOR_COUNT, (int)target_speed_deg_s);
 }
 
 /**
@@ -128,10 +148,17 @@ void MotorTest_M3508_PositionLoop(float target_angle_deg)
 {
     EnsureM3508MotorReady();
     target_angle_deg = ClampFloat(target_angle_deg, M3508_ANGLE_MIN, M3508_ANGLE_MAX);
-    DJIMotorOuterLoop(m3508_motor, ANGLE_LOOP);
-    DJIMotorEnable(m3508_motor);
-    DJIMotorSetRef(m3508_motor, target_angle_deg);
-    LOGINFO("[motor_test] M3508 angle ref %d deg", (int)target_angle_deg);
+    for (uint8_t i = 0; i < M3508_MOTOR_COUNT; ++i)
+    {
+        if (m3508_motors[i] == NULL)
+        {
+            continue;
+        }
+        DJIMotorOuterLoop(m3508_motors[i], ANGLE_LOOP);
+        DJIMotorEnable(m3508_motors[i]);
+        DJIMotorSetRef(m3508_motors[i], target_angle_deg);
+    }
+    LOGINFO("[motor_test] %u x M3508 angle ref %d deg", (unsigned)M3508_MOTOR_COUNT, (int)target_angle_deg);
 }
 
 /**
@@ -145,30 +172,41 @@ void MotorTest_M3508_PeriodicAngleStep(float step_deg, uint32_t interval_ms)
 {
     EnsureM3508MotorReady();
 
-    static uint8_t step_state_initialized = 0;
-    static float current_target = 0.0f;
-    static uint32_t last_step_tick = 0;
+    static uint8_t step_state_initialized[M3508_MOTOR_COUNT] = {0};
+    static float current_target[M3508_MOTOR_COUNT] = {0.0f};
+    static uint32_t last_step_tick[M3508_MOTOR_COUNT] = {0};
 
     uint32_t now = HAL_GetTick();
-    if (!step_state_initialized)
+    for (uint8_t i = 0; i < M3508_MOTOR_COUNT; ++i)
     {
-        current_target = m3508_motor->measure.total_angle;
-        last_step_tick = now;
-        step_state_initialized = 1;
-        LOGINFO("[motor_test] M3508 step demo start angle %d deg", (int)current_target);
-    }
+        DJIMotorInstance *motor = m3508_motors[i];
+        if (motor == NULL)
+        {
+            continue;
+        }
 
-    uint32_t elapsed = now - last_step_tick;
-    if (elapsed >= interval_ms && interval_ms != 0U)
-    {
-        uint32_t steps = elapsed / interval_ms;
-        last_step_tick += steps * interval_ms;
-        current_target += step_deg * (float)steps;
-        current_target = ClampFloat(current_target, M3508_ANGLE_MIN, M3508_ANGLE_MAX);
-        LOGINFO("[motor_test] M3508 step target -> %d deg", (int)current_target);
-    }
+        if (!step_state_initialized[i])
+        {
+            current_target[i] = ClampFloat(motor->measure.total_angle, M3508_ANGLE_MIN, M3508_ANGLE_MAX);
+            last_step_tick[i] = now;
+            step_state_initialized[i] = 1;
+            LOGINFO("[motor_test] M3508[%d] step demo start angle %d deg", (int)M3508_CAN_IDS[i], (int)current_target[i]);
+        }
 
-    MotorTest_M3508_PositionLoop(current_target);
+        uint32_t elapsed = now - last_step_tick[i];
+        if (interval_ms != 0U && elapsed >= interval_ms)
+        {
+            uint32_t steps = elapsed / interval_ms;
+            last_step_tick[i] += steps * interval_ms;
+            current_target[i] += step_deg * (float)steps;
+            current_target[i] = ClampFloat(current_target[i], M3508_ANGLE_MIN, M3508_ANGLE_MAX);
+            LOGINFO("[motor_test] M3508[%d] step target -> %d deg", (int)M3508_CAN_IDS[i], (int)current_target[i]);
+        }
+
+        DJIMotorOuterLoop(motor, ANGLE_LOOP);
+        DJIMotorEnable(motor);
+        DJIMotorSetRef(motor, current_target[i]);
+    }
 }
 
 /**
@@ -215,7 +253,18 @@ void MotorTest_GM6020_PeriodicAngleStep(float step_deg, uint32_t interval_ms)
 void MotorTest_DM8009P_SpeedLoop(float target_speed_rad_s)
 {
     EnsureDM8009PMotorReady();
-    DM8009P_SetSpeed(dm8009p_motor, target_speed_rad_s, DM8009P_DEFAULT_DAMPING);
+    if (!dm8009p_speed_mode_enabled)
+    {
+        DM8009P_ClearError(dm8009p_motor, DM8009P_MODE_SPEED);
+        DM8009P_Enable(dm8009p_motor, DM8009P_MODE_SPEED);
+        dm8009p_speed_mode_enabled = 1;
+    }
+    DM8009P_SendSpeedCommand(dm8009p_motor, target_speed_rad_s);
+    const DM8009P_Feedback *fb = DM8009P_GetFeedback(dm8009p_motor);
+    if (fb && fb->error_state)
+    {
+        LOGWARNING("[motor_test] DM8009P error state=0x%02x", fb->error_state);
+    }
 }
 
 
@@ -257,61 +306,64 @@ void MotorTest_GM6020_PositionLoop(float target_angle_deg)
  */
 static void EnsureM3508MotorReady(void)
 {
-    if (m3508_motor != NULL)
+    for (uint8_t i = 0; i < M3508_MOTOR_COUNT; ++i)
     {
-        return;
+        if (m3508_motors[i] != NULL)
+        {
+            continue;
+        }
+
+        Motor_Init_Config_s config = {
+            .can_init_config =
+                {
+                    .can_handle = &hcan1,
+                    .tx_id = M3508_CAN_IDS[i],
+                },
+            .controller_param_init_config =
+                {
+                    .angle_PID =
+                        {
+                            .Kp = 5.0f,
+                            .Ki = 0.0f,
+                            .Kd = 0.0f,
+                            .MaxOut = M3508_SPEED_MAX,
+                            .IntegralLimit = 500.0f,
+                            .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                        },
+                    .speed_PID =
+                        {
+                            .Kp = 10.0f,
+                            .Ki = 0.0f,
+                            .Kd = 0.0f,
+                            .IntegralLimit = 3000.0f,
+
+                            .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                            .MaxOut = 12000.0f,
+                        },
+                    .current_PID =
+                        {
+                            .Kp = 0.5f,
+                            .Ki = 0.0f,
+                            .Kd = 0.0f,
+                            .IntegralLimit = 3000.0f,
+                            .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                            .MaxOut = 15000.0f,
+                        },
+                },
+            .controller_setting_init_config =
+                {
+                    .angle_feedback_source = MOTOR_FEED,
+                    .speed_feedback_source = MOTOR_FEED,
+                    .outer_loop_type = SPEED_LOOP,
+                    .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
+                    .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+                },
+            .motor_type = M3508,
+        };
+
+        m3508_motors[i] = DJIMotorInit(&config);
+        LOGINFO("[motor_test] M3508 index %u registered on CAN1 id %d", (unsigned)i, (int)M3508_CAN_IDS[i]);
     }
-
-    Motor_Init_Config_s config = {
-        .can_init_config =
-            {
-                .can_handle = &hcan1,
-                .tx_id = M3508_CAN_ID,
-            },
-        .controller_param_init_config =
-            {
-                .angle_PID =
-                    {
-                        .Kp = 5.0f,
-                        .Ki = 0.0f,
-                        .Kd = 0.0f,
-                        .MaxOut = M3508_SPEED_MAX,
-                        .IntegralLimit = 500.0f,
-                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
-                    },
-                .speed_PID =
-                    {
-                        .Kp = 10.0f,
-                        .Ki = 0.0f,
-                        .Kd = 0.0f,
-                        .IntegralLimit = 3000.0f,
-
-                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                        .MaxOut = 12000.0f,
-                    },
-                .current_PID =
-                    {
-                        .Kp = 0.5f,
-                        .Ki = 0.0f,
-                        .Kd = 0.0f,
-                        .IntegralLimit = 3000.0f,
-                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                        .MaxOut = 15000.0f,
-                    },
-            },
-        .controller_setting_init_config =
-            {
-                .angle_feedback_source = MOTOR_FEED,
-                .speed_feedback_source = MOTOR_FEED,
-                .outer_loop_type = SPEED_LOOP,
-                .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
-                .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
-            },
-        .motor_type = M3508,
-    };
-
-    m3508_motor = DJIMotorInit(&config);
-    LOGINFO("[motor_test] M3508 registered on CAN1 id %d", (int)M3508_CAN_ID);
 }
 
 /**
@@ -375,10 +427,11 @@ static void EnsureDM8009PMotorReady(void)
 
     DM8009P_InitConfig config = {
         .can_handle = &hcan1,
-        .command_id = DM8009P_CAN_CMD_ID,
+        .motor_id = DM8009P_CAN_CMD_ID,
         .master_id = DM8009P_MASTER_ID,
-        .auto_enable = 1,
-        .auto_zero = 1,
+        .auto_clear_error = true,
+        .auto_enable_mit = false,
+        .auto_zero_position = true,
     };
 
     dm8009p_motor = DM8009P_Init(&config);
