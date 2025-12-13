@@ -24,6 +24,10 @@ include(cmake/Functions.cmake)
 include(CTest)
 enable_testing()
 
+# 统一的产物收集目录（供烧录脚本/CI使用）
+set(GLOBAL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/output CACHE INTERNAL "Directory that collects flashable artifacts")
+file(MAKE_DIRECTORY ${GLOBAL_OUTPUT_DIR})
+
 # =============================================================================
 # 添加子模块 (顺序很重要)
 # =============================================================================
@@ -80,7 +84,7 @@ endif()
 
 add_custom_target(upload
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD] Starting upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; reset; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Uploading to STM32..."
@@ -89,7 +93,7 @@ add_custom_target(upload
 # 添加一个更详细的上传命令，显示更多调试信息
 add_custom_target(upload-verbose
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD-VERBOSE] Starting verbose upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; reset; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Verbose upload to STM32..."
@@ -98,7 +102,7 @@ add_custom_target(upload-verbose
 # 添加一个仅验证命令，不重新烧录
 add_custom_target(verify
     COMMAND ${CMAKE_COMMAND} -E echo "[VERIFY] Verifying STM32 flash..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; verify_image ${CMAKE_BINARY_DIR}/Src/app.elf 0x08000000; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Verification completed!"
     DEPENDS app.elf
     COMMENT "Verifying STM32 flash..."

@@ -37,12 +37,14 @@ static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
 #define DM8009P_DEFAULT_DAMPING 4.0f
 
 static DJIMotorInstance *m3508_motors[M3508_MOTOR_COUNT] = {NULL}; // Lazily created M3508 instances
+static DJIMotorInstance *loader_motor = NULL; // M3508 loader motor on a different CAN group
 static DJIMotorInstance *gm6020_motor = NULL; // Lazily created GM6020 instance
 static DM8009P_Handle *dm8009p_motor = NULL;
 static uint8_t dm8009p_speed_mode_enabled = 0;
 
 void SystemClock_Config(void);
 static void EnsureM3508MotorReady(void);
+static void EnsureLoaderMotorReady(void);
 static void EnsureGM6020MotorReady(void);
 static void EnsureDM8009PMotorReady(void);
 static float ClampFloat(float value, float min, float max);
@@ -51,6 +53,8 @@ void MotorTest_StopAll(void);
 void MotorTest_M3508_SpeedLoop(float target_speed_deg_s);
 void MotorTest_M3508_PositionLoop(float target_angle_deg);
 void MotorTest_M3508_PeriodicAngleStep(float step_deg, uint32_t interval_ms);
+void MotorTest_Loader_SpeedLoop(float target_speed_deg_s);
+void MotorTest_Loader_PositionLoop(float target_angle_deg);
 void MotorTest_GM6020_SpeedLoop(float target_speed_deg_s);
 void MotorTest_GM6020_PositionLoop(float target_angle_deg);
 void MotorTest_GM6020_PeriodicAngleStep(float step_deg, uint32_t interval_ms);
@@ -77,7 +81,7 @@ int main(void)
 
 
     MotorTest_M3508_SpeedLoop(7200.0f);
-
+    MotorTest_Loader_SpeedLoop(7200.0f);
 
     while (1)
     {
@@ -102,6 +106,10 @@ void MotorTest_StopAll(void)
         {
             DJIMotorStop(m3508_motors[i]);
         }
+    }
+    if (loader_motor != NULL)
+    {
+        DJIMotorStop(loader_motor);
     }
     if (gm6020_motor != NULL)
     {
@@ -159,6 +167,32 @@ void MotorTest_M3508_PositionLoop(float target_angle_deg)
         DJIMotorSetRef(m3508_motors[i], target_angle_deg);
     }
     LOGINFO("[motor_test] %u x M3508 angle ref %d deg", (unsigned)M3508_MOTOR_COUNT, (int)target_angle_deg);
+}
+
+/**
+ * @brief Run the loader M3508 (id 7, different CAN group) in speed loop.
+ */
+void MotorTest_Loader_SpeedLoop(float target_speed_deg_s)
+{
+    EnsureLoaderMotorReady();
+    target_speed_deg_s = ClampFloat(target_speed_deg_s, M3508_SPEED_MIN, M3508_SPEED_MAX);
+    DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+    DJIMotorEnable(loader_motor);
+    DJIMotorSetRef(loader_motor, target_speed_deg_s);
+    LOGINFO("[motor_test] Loader M3508 speed ref %d deg/s", (int)target_speed_deg_s);
+}
+
+/**
+ * @brief Run the loader M3508 (id 7, different CAN group) in angle loop.
+ */
+void MotorTest_Loader_PositionLoop(float target_angle_deg)
+{
+    EnsureLoaderMotorReady();
+    target_angle_deg = ClampFloat(target_angle_deg, M3508_ANGLE_MIN, M3508_ANGLE_MAX);
+    DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
+    DJIMotorEnable(loader_motor);
+    DJIMotorSetRef(loader_motor, target_angle_deg);
+    LOGINFO("[motor_test] Loader M3508 angle ref %d deg", (int)target_angle_deg);
 }
 
 /**
@@ -364,6 +398,69 @@ static void EnsureM3508MotorReady(void)
         m3508_motors[i] = DJIMotorInit(&config);
         LOGINFO("[motor_test] M3508 index %u registered on CAN1 id %d", (unsigned)i, (int)M3508_CAN_IDS[i]);
     }
+}
+
+/**
+ * @brief Register the loader motor (M3508, CAN1 id 7). Its CAN sender group is
+ *        different from ids 1-4, so it is handled separately.
+ */
+static void EnsureLoaderMotorReady(void)
+{
+    if (loader_motor != NULL)
+    {
+        return;
+    }
+
+    Motor_Init_Config_s config = {
+        .can_init_config =
+            {
+                .can_handle = &hcan1,
+                .tx_id = 7U, // uses sender group 0x1ff on CAN1
+            },
+        .controller_param_init_config =
+            {
+                .angle_PID =
+                    {
+                        .Kp = 5.0f,
+                        .Ki = 0.0f,
+                        .Kd = 0.0f,
+                        .MaxOut = M3508_SPEED_MAX,
+                        .IntegralLimit = 500.0f,
+                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                    },
+                .speed_PID =
+                    {
+                        .Kp = 10.0f,
+                        .Ki = 0.0f,
+                        .Kd = 0.0f,
+                        .IntegralLimit = 3000.0f,
+
+                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                        .MaxOut = 12000.0f,
+                    },
+                .current_PID =
+                    {
+                        .Kp = 0.5f,
+                        .Ki = 0.0f,
+                        .Kd = 0.0f,
+                        .IntegralLimit = 3000.0f,
+                        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                        .MaxOut = 15000.0f,
+                    },
+            },
+        .controller_setting_init_config =
+            {
+                .angle_feedback_source = MOTOR_FEED,
+                .speed_feedback_source = MOTOR_FEED,
+                .outer_loop_type = SPEED_LOOP,
+                .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
+                .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            },
+        .motor_type = M3508,
+    };
+
+    loader_motor = DJIMotorInit(&config);
+    LOGINFO("[motor_test] Loader M3508 registered on CAN1 id 7");
 }
 
 /**

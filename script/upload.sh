@@ -13,18 +13,21 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT_DIR}/build"
-DEFAULT_FILE="Src/app"
+OUTPUT_DIR="${BUILD_DIR}/output"
+DEFAULT_FILE="app"
 DEFAULT_FORMAT="bin"
 DEFAULT_ADDR="0x08000000"
 DEFAULT_CFG="${ROOT_DIR}/config/openocd/openocd_dap.cfg"
 
 usage() {
     cat <<EOF
-用法: $(basename "$0") [--file <path-without-ext>] [--format bin|hex|elf] [--addr <0x...>] [--cfg <openocd.cfg>] [--openocd <path>] [--verify-only] [--dry-run]
+用法: $(basename "$0") [<name>] [--format bin|hex|elf] [--addr <0x...>] [--cfg <openocd.cfg>] [--openocd <path>] [--verify-only] [--dry-run]
 示例:
-  $(basename "$0")                      # 烧录 build/Src/app.bin 到 0x08000000
-  $(basename "$0") --file tests/imu/test_imu --format hex
-  $(basename "$0") --openocd /usr/bin/openocd --cfg config/openocd/openocd_dap.cfg
+  $(basename "$0")                      # 烧录 build/output/app.bin 到 0x08000000
+  $(basename "$0") test_motor --format elf
+  $(basename "$0") --format hex --verify-only  # 默认使用 app.hex
+  $(basename "$0") test_remote_control_demo    # 上传 build/output/test_remote_control_demo.bin
+  $(basename "$0") /abs/path/to/custom.elf     # 直接指定绝对路径并保持扩展名
 EOF
 }
 
@@ -35,6 +38,7 @@ CFG="$DEFAULT_CFG"
 OPENOCD_BIN=""
 VERIFY_ONLY=false
 DRY_RUN=false
+POSITIONAL_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,9 +50,20 @@ while [[ $# -gt 0 ]]; do
         --verify-only) VERIFY_ONLY=true; shift;;
         --dry-run) DRY_RUN=true; shift;;
         -h|--help) usage; exit 0;;
-        *) echo "未知参数: $1"; usage; exit 1;;
+        *)
+            if [[ -z "$POSITIONAL_FILE" ]]; then
+                POSITIONAL_FILE="$1"
+                shift
+            else
+                echo "未知参数: $1"; usage; exit 1
+            fi
+            ;;
     esac
 done
+
+if [[ -n "$POSITIONAL_FILE" ]]; then
+    FILE="$POSITIONAL_FILE"
+fi
 
 if [[ "$FORMAT" != "bin" && "$FORMAT" != "hex" && "$FORMAT" != "elf" ]]; then
     echo "格式必须为 bin|hex|elf"; exit 1
@@ -60,9 +75,22 @@ fi
 
 resolve_file() {
     local path="$1"
-    # 相对路径自动指向 build 下（不含扩展名）
-    [[ "$path" == /* || "$path" == "~/"* ]] && echo "$path" && return
-    echo "${BUILD_DIR}/${path}.${FORMAT}"
+    local expanded="$path"
+
+    if [[ "$expanded" == "~/"* ]]; then
+        expanded="${HOME}/${expanded#~/}"
+    fi
+
+    if [[ "$expanded" == /* ]]; then
+        [[ "$expanded" == *.* ]] && echo "$expanded" || echo "${expanded}.${FORMAT}"
+        return
+    fi
+
+    if [[ "$expanded" == *.* ]]; then
+        echo "${OUTPUT_DIR}/${expanded}"
+    else
+        echo "${OUTPUT_DIR}/${expanded}.${FORMAT}"
+    fi
 }
 
 TARGET_FILE="$(resolve_file "$FILE")"

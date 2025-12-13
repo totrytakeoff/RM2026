@@ -9,7 +9,7 @@
 # =============================================================================
 
 param(
-    [string]$File = "Src/app",
+    [Alias("Name")][string]$File = "app",
     [ValidateSet("bin","hex","elf")][string]$Format = "bin",
     [string]$Addr = "0x08000000",
     [string]$Cfg = "config/openocd/openocd_dap.cfg",
@@ -20,12 +20,29 @@ param(
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Build = Join-Path $Root "build"
+$OutputDir = Join-Path $Build "output"
+
+# 示例：
+#   .\upload.ps1                       # 上传 build\output\app.bin
+#   .\upload.ps1 test_motor --format elf
+#   .\upload.ps1 test_remote_control_demo --verifyOnly
+#   .\upload.ps1 C:\tmp\custom.elf     # 绝对路径会保留扩展名
 
 function Resolve-Target {
     param([string]$Path)
-    # 相对路径自动指向 build 下（不含扩展名）
-    if ([IO.Path]::IsPathRooted($Path)) { return $Path }
-    return (Join-Path $Build ("{0}.{1}" -f $Path, $Format))
+    $expanded = $Path
+    if ($expanded -eq "~") { $expanded = $HOME }
+    elseif ($expanded.StartsWith("~\")) { $expanded = Join-Path $HOME $expanded.Substring(2) }
+
+    $hasExt = [IO.Path]::HasExtension($expanded)
+
+    if ([IO.Path]::IsPathRooted($expanded)) {
+        if ($hasExt) { return $expanded }
+        return ("{0}.{1}" -f $expanded, $Format)
+    }
+
+    if ($hasExt) { return (Join-Path $OutputDir $expanded) }
+    return (Join-Path $OutputDir ("{0}.{1}" -f $expanded, $Format))
 }
 
 $Target = Resolve-Target $File

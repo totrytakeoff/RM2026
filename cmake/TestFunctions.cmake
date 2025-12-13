@@ -22,8 +22,21 @@ function(create_embedded_test test_name)
         set(ARG_LINKER_SCRIPT "${MCU_LINKER_SCRIPT}")
     endif()
     
-    # 测试项目名称
-    set(test_target_name "test_${test_name}")
+    # 规范化名称，统一输出/目标命名：去掉前缀 test_ 或后缀 _test，再加上 test_ 前缀
+    set(test_raw_name "${test_name}")
+    string(REGEX REPLACE "^test_" "" test_base "${test_raw_name}")
+    string(REGEX REPLACE "_test$" "" test_base "${test_base}")
+    if(test_base STREQUAL "")
+        set(test_base "${test_raw_name}")
+    endif()
+
+    set(test_target_name "test_${test_base}")
+    set(test_output_dir ${TEST_OUTPUT_DIR}/${test_base})
+
+    # 统一产物收集目录（由顶层定义）
+    if(NOT DEFINED GLOBAL_OUTPUT_DIR)
+        set(GLOBAL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/output)
+    endif()
     
     # 创建测试可执行文件
     # 启动文件 (.s) 已被包含在 HAL_Lib 中，此处不再需要单独添加。
@@ -65,26 +78,32 @@ function(create_embedded_test test_name)
     target_link_options(${test_target_name} PRIVATE 
         ${GENERIC_LINK_OPTIONS}
         -T${ARG_LINKER_SCRIPT} 
-        -Wl,-Map=${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.map 
+        -Wl,-Map=${test_output_dir}/${test_target_name}.map 
         -Wl,--print-memory-usage
     )
     
     # 设置输出目录
     # 目标输出为 .elf，并放到 tests/<name>/ 目录，方便调试和烧录
     set_target_properties(${test_target_name} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${TEST_OUTPUT_DIR}/${test_name}
+        RUNTIME_OUTPUT_DIRECTORY ${test_output_dir}
         OUTPUT_NAME ${test_target_name}
         SUFFIX ".elf"
     )
     
     # 创建输出目录
-    file(MAKE_DIRECTORY ${TEST_OUTPUT_DIR}/${test_name})
+    file(MAKE_DIRECTORY ${test_output_dir})
+    file(MAKE_DIRECTORY ${GLOBAL_OUTPUT_DIR})
     
     # 生成HEX和BIN文件
     add_custom_command(TARGET ${test_target_name} POST_BUILD
-        COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.hex
-        COMMAND ${CMAKE_OBJCOPY} -Obinary $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${test_target_name}> ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.elf
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${test_output_dir}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${GLOBAL_OUTPUT_DIR}
+        COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${test_target_name}> ${test_output_dir}/${test_target_name}.hex
+        COMMAND ${CMAKE_OBJCOPY} -Obinary $<TARGET_FILE:${test_target_name}> ${test_output_dir}/${test_target_name}.bin
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${test_target_name}> ${test_output_dir}/${test_target_name}.elf
+        COMMAND ${CMAKE_COMMAND} -E copy ${test_output_dir}/${test_target_name}.elf ${GLOBAL_OUTPUT_DIR}/${test_target_name}.elf
+        COMMAND ${CMAKE_COMMAND} -E copy ${test_output_dir}/${test_target_name}.hex ${GLOBAL_OUTPUT_DIR}/${test_target_name}.hex
+        COMMAND ${CMAKE_COMMAND} -E copy ${test_output_dir}/${test_target_name}.bin ${GLOBAL_OUTPUT_DIR}/${test_target_name}.bin
         COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${test_target_name}>
         COMMENT "为测试项目 ${test_name} 生成 ELF / HEX / BIN 文件"
     )
@@ -109,8 +128,8 @@ function(create_embedded_test test_name)
             COMMAND ${OPENOCD} 
                     -f ${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg 
                     -c init -c halt 
-                    -c "flash write_image erase ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin 0x08000000" 
-                    -c "verify_image ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin 0x08000000"
+                    -c "flash write_image erase ${test_output_dir}/${test_target_name}.bin 0x08000000" 
+                    -c "verify_image ${test_output_dir}/${test_target_name}.bin 0x08000000"
                     -c reset -c shutdown
             COMMENT "下载测试项目 ${test_name} 到STM32"
             DEPENDS ${test_target_name}
@@ -121,8 +140,8 @@ function(create_embedded_test test_name)
             COMMAND ${OPENOCD} 
                     -f ${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg 
                     -c init -c halt 
-                    -c "flash write_image erase ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin 0x08000000" 
-                    -c "verify_image ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.bin 0x08000000"
+                    -c "flash write_image erase ${test_output_dir}/${test_target_name}.bin 0x08000000" 
+                    -c "verify_image ${test_output_dir}/${test_target_name}.bin 0x08000000"
                     -c reset -c shutdown
             COMMENT "编译并下载测试项目 ${test_name} 到STM32"
         )
@@ -136,20 +155,21 @@ function(create_embedded_test test_name)
     )
     
     if(JLINK_EXE)
+        set(jlink_script ${CMAKE_BINARY_DIR}/flash_${test_target_name}.jlink)
         # 创建JLink脚本文件
-        file(WRITE ${CMAKE_BINARY_DIR}/flash_${test_name}.jlink
+        file(WRITE ${jlink_script}
             "device STM32F407IG\n"
             "speed 4000\n"
             "connect\n"
             "erase\n"
-            "loadfile ${TEST_OUTPUT_DIR}/${test_name}/${test_target_name}.hex\n"
+            "loadfile ${test_output_dir}/${test_target_name}.hex\n"
             "r\n"
             "go\n"
             "exit\n"
         )
         
         add_custom_target(flash-${test_target_name}-jlink
-            COMMAND ${JLINK_EXE} -CommanderScript ${CMAKE_BINARY_DIR}/flash_${test_name}.jlink
+            COMMAND ${JLINK_EXE} -CommanderScript ${jlink_script}
             COMMENT "使用JLink下载测试项目 ${test_name} 到STM32"
             DEPENDS ${test_target_name}
         )
@@ -162,7 +182,7 @@ function(create_embedded_test test_name)
     message(STATUS "  - 源文件: ${ARG_SOURCES}")
     message(STATUS "  - 额外源文件: ${ARG_EXTRA_SOURCES}")
     message(STATUS "  - 链接库: ${ARG_LINK_LIBRARIES}")
-    message(STATUS "  - 输出目录: ${TEST_OUTPUT_DIR}/${test_name}")
+    message(STATUS "  - 输出目录: ${test_output_dir}")
     
 endfunction()
 

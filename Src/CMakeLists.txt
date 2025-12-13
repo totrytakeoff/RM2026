@@ -17,6 +17,10 @@ if(NOT EXISTS ${DSP_LIB})
     message(FATAL_ERROR "无法找到 DSP 库文件，请检查 cmake/Toolchain.cmake 中的 DSP_LIB 路径是否正确: ${DSP_LIB}")
 endif()
 
+# 统一输出目录（由顶层 CMakeLists 定义，若未定义则退回到 build/output）
+if(NOT DEFINED GLOBAL_OUTPUT_DIR)
+    set(GLOBAL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/output)
+endif()
 
 # 1. 收集 main.c
 set(APP_SOURCES "main.c")
@@ -67,5 +71,9 @@ target_link_options(app.elf PRIVATE
 add_custom_command(TARGET app.elf POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.bin
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GLOBAL_OUTPUT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:app.elf> ${GLOBAL_OUTPUT_DIR}/app.elf
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/app.hex ${GLOBAL_OUTPUT_DIR}/app.hex
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/app.bin ${GLOBAL_OUTPUT_DIR}/app.bin
     COMMENT "Generating BIN and HEX files..."
 )
