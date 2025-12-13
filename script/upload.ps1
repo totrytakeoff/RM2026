@@ -1,3 +1,4 @@
+#!/usr/bin/env pwsh
 # =============================================================================
 # @file script/upload.ps1
 # @brief STM32 OpenOCD PowerShell 烧录脚本
@@ -5,93 +6,218 @@
 # @author YZ-Control/myself
 # @version 1.0.0
 # @date 2025-12-07
-# @details 供 Windows 环境选择 build 目录下的 bin/hex/elf，并以 OpenOCD 执行烧录或校验，可配置地址与验证模式。
+# @details 解析 build 目录产物路径，调用 OpenOCD 进行 flash/verify，可定制地址、格式和配置文件。
 # =============================================================================
 
-param(
-    [Alias("Name")][string]$File = "app",
-    [ValidateSet("bin","hex","elf")][string]$Format = "bin",
-    [string]$Addr = "0x08000000",
-    [string]$Cfg = "config/openocd/openocd_dap.cfg",
-    [string]$OpenOCD = "",
-    [switch]$VerifyOnly = $false,
-    [switch]$DryRun = $false
-)
+# 设置严格模式
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$Build = Join-Path $Root "build"
-$OutputDir = Join-Path $Build "output"
+# 设置控制台编码为UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
-# 示例：
-#   .\upload.ps1                       # 上传 build\output\app.bin
-#   .\upload.ps1 test_motor --format elf
-#   .\upload.ps1 test_remote_control_demo --verifyOnly
-#   .\upload.ps1 C:\tmp\custom.elf     # 绝对路径会保留扩展名
+# 定义常量
+$RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$BuildDir = Join-Path $RootDir "build"
+$OutputDir = Join-Path $BuildDir "output"
+$DefaultFile = "app"
+$DefaultFormat = "bin"
+$DefaultAddr = "0x08000000"
+$DefaultCfg = Join-Path $RootDir "config/openocd/openocd_dap_1.cfg"
 
-function Resolve-Target {
-    param([string]$Path)
-    $expanded = $Path
-    if ($expanded -eq "~") { $expanded = $HOME }
-    elseif ($expanded.StartsWith("~\")) { $expanded = Join-Path $HOME $expanded.Substring(2) }
-
-    $hasExt = [IO.Path]::HasExtension($expanded)
-
-    if ([IO.Path]::IsPathRooted($expanded)) {
-        if ($hasExt) { return $expanded }
-        return ("{0}.{1}" -f $expanded, $Format)
-    }
-
-    if ($hasExt) { return (Join-Path $OutputDir $expanded) }
-    return (Join-Path $OutputDir ("{0}.{1}" -f $expanded, $Format))
-}
-
-$Target = Resolve-Target $File
-if (-not (Test-Path $Target)) {
-    Write-Error "未找到文件: $Target"
-    exit 1
-}
-
-if (-not ([IO.Path]::IsPathRooted($Cfg))) {
-    $Cfg = Join-Path $Root $Cfg
-}
-
-if (-not $OpenOCD) {
-    $OpenOCD = (Get-Command openocd -ErrorAction SilentlyContinue)?.Source
-    if (-not $OpenOCD) {
-        $OpenOCD = Join-Path $env:USERPROFILE ".platformio\packages\tool-openocd\bin\openocd.exe"
-    }
-}
-if (-not (Test-Path $OpenOCD)) {
-    Write-Error "OpenOCD 不可用: $OpenOCD"
-    exit 1
-}
-if (-not (Test-Path $Cfg)) {
-    Write-Error "OpenOCD 配置不存在: $Cfg"
-    exit 1
-}
-
-$cmd = @(
-    $OpenOCD, "-f", $Cfg,
-    "-c", "init; halt;"
-)
-if ($VerifyOnly) {
-    $cmd += @("-c", "verify_image $Target $Addr; reset; shutdown")
-} else {
-    $cmd += @("-c", "flash write_image erase $Target $Addr; verify_image $Target $Addr; reset; shutdown")
-}
-
-Write-Host "OpenOCD: $OpenOCD"
-Write-Host "Config : $Cfg"
-Write-Host "File   : $Target"
-Write-Host "Addr   : $Addr"
-Write-Host "Mode   : $(if ($VerifyOnly) { 'verify' } else { 'flash+verify' })"
-if ($DryRun) {
-    Write-Host "Command:" ($cmd -join ' ')
+# 帮助信息
+function Show-Usage {
+    Write-Host "用法: $((Split-Path -Leaf $MyInvocation.ScriptName)) [<name>] [--format bin|hex|elf] [--addr <0x...>] [--cfg <openocd.cfg>] [--openocd <path>] [--verify-only] [--dry-run]"
+    Write-Host "示例:"
+    Write-Host "  $((Split-Path -Leaf $MyInvocation.ScriptName))                      # 烧录 build/output/app.bin 到 0x08000000"
+    Write-Host "  $((Split-Path -Leaf $MyInvocation.ScriptName)) test_motor --format elf"
+    Write-Host "  $((Split-Path -Leaf $MyInvocation.ScriptName)) --format hex --verify-only  # 默认使用 app.hex"
+    Write-Host "  $((Split-Path -Leaf $MyInvocation.ScriptName)) test_remote_control_demo    # 上传 build/output/test_remote_control_demo.bin"
+    Write-Host "  $((Split-Path -Leaf $MyInvocation.ScriptName)) /abs/path/to/custom.elf     # 直接指定绝对路径并保持扩展名"
     exit 0
 }
 
-& $cmd
+# 初始化变量
+$File = $DefaultFile
+$Format = $DefaultFormat
+$Addr = $DefaultAddr
+$Cfg = $DefaultCfg
+$OpenOcdBin = ""
+$VerifyOnly = $false
+$DryRun = $false
+$PositionalFile = ""
+
+# 解析命令行参数
+$i = 0
+while ($i -lt $args.Length) {
+    switch ($args[$i]) {
+        "--file" {
+            $File = $args[$i+1]
+            $i += 2
+        }
+        "--format" {
+            $Format = $args[$i+1]
+            $i += 2
+        }
+        "--addr" {
+            $Addr = $args[$i+1]
+            $i += 2
+        }
+        "--address" {
+            $Addr = $args[$i+1]
+            $i += 2
+        }
+        "--cfg" {
+            $Cfg = $args[$i+1]
+            $i += 2
+        }
+        "--config" {
+            $Cfg = $args[$i+1]
+            $i += 2
+        }
+        "--openocd" {
+            $OpenOcdBin = $args[$i+1]
+            $i += 2
+        }
+        "--verify-only" {
+            $VerifyOnly = $true
+            $i += 1
+        }
+        "--dry-run" {
+            $DryRun = $true
+            $i += 1
+        }
+        "-h" {
+            Show-Usage
+        }
+        "--help" {
+            Show-Usage
+        }
+        default {
+            if ([string]::IsNullOrEmpty($PositionalFile)) {
+                $PositionalFile = $args[$i]
+                $i += 1
+            } else {
+                Write-Host "未知参数: $($args[$i])" -ForegroundColor Red
+                Show-Usage
+            }
+        }
+    }
+}
+
+# 处理位置参数
+if (-not [string]::IsNullOrEmpty($PositionalFile)) {
+    $File = $PositionalFile
+}
+
+# 验证格式
+if ($Format -notin ("bin", "hex", "elf")) {
+    Write-Host "格式必须为 bin|hex|elf" -ForegroundColor Red
+    exit 1
+}
+
+# 解析配置文件路径
+if (-not ([IO.Path]::IsPathRooted($Cfg)) -and -not ($Cfg -like "~/*")) {
+    $Cfg = Join-Path $RootDir $Cfg
+}
+
+# 解析目标文件路径
+function Resolve-TargetFile {
+    param([string]$Path)
+    $expanded = $Path
+    
+    # 处理 ~ 路径
+    if ($expanded -like "~/*") {
+        $expanded = Join-Path $HOME $expanded.Substring(2)
+    } elseif ($expanded -eq "~") {
+        $expanded = $HOME
+    }
+    
+    # 处理绝对路径
+    if ([IO.Path]::IsPathRooted($expanded)) {
+        if ([IO.Path]::HasExtension($expanded)) {
+            return $expanded
+        } else {
+            return "$expanded.$Format"
+        }
+    }
+    
+    # 处理相对路径
+    if ([IO.Path]::HasExtension($expanded)) {
+        return Join-Path $OutputDir $expanded
+    } else {
+        return Join-Path $OutputDir "$expanded.$Format"
+    }
+}
+
+$TargetFile = Resolve-TargetFile $File
+if (-not (Test-Path $TargetFile)) {
+    Write-Host "未找到文件: $TargetFile" -ForegroundColor Red
+    exit 1
+}
+
+# 查找 OpenOCD 可执行文件
+if ([string]::IsNullOrEmpty($OpenOcdBin)) {
+    $openocdCommand = Get-Command openocd -ErrorAction SilentlyContinue
+    if ($openocdCommand -ne $null) {
+        $OpenOcdBin = $openocdCommand.Source
+    } else {
+        $OpenOcdBin = Join-Path $env:USERPROFILE ".platformio\packages\tool-openocd\bin\openocd.exe"
+    }
+}
+
+if (-not (Test-Path $OpenOcdBin)) {
+    Write-Host "OpenOCD 不可用: $OpenOcdBin" -ForegroundColor Red
+    exit 1
+}
+
+if (-not (Test-Path $Cfg)) {
+    Write-Host "OpenOCD 配置不存在: $Cfg" -ForegroundColor Red
+    exit 1
+}
+
+# 构建命令参数数组
+$cmdArgs = @(
+    "-f", $Cfg,
+    "-f", "config/openocd/upload.cfg"
+)
+
+# 确保路径使用正斜杠，避免PowerShell路径解析问题
+$TargetFileForOpenOCD = $TargetFile.Replace('\', '/')
+
+if ($VerifyOnly) {
+    $cmdArgs += @("-c", "verify_image $TargetFileForOpenOCD $Addr; reset; shutdown")
+} else {
+    $cmdArgs += @("-c", "flash write_image erase $TargetFileForOpenOCD $Addr; verify_image $TargetFileForOpenOCD $Addr; reset; shutdown")
+}
+
+# 调试输出参数
+Write-Host "参数列表: $(($cmdArgs | ForEach-Object { '"' + $_ + '"' }) -join ' ')" -ForegroundColor Cyan
+
+# 输出信息
+Write-Host "OpenOCD: $OpenOcdBin"
+Write-Host "Config : $Cfg"
+Write-Host "File   : $TargetFile"
+Write-Host "Addr   : $Addr"
+Write-Host "Mode   : $(if ($VerifyOnly) { 'verify-only' } else { 'flash+verify' })"
+
+# 执行命令
+if ($DryRun) {
+    Write-Host "Command: $OpenOcdBin $($cmdArgs -join ' ' )"
+    exit 0
+}
+
+# 执行 OpenOCD 命令
+Write-Host "正在执行 OpenOCD 命令..." -ForegroundColor Yellow
+
+# 直接使用调用操作符执行命令，确保参数数组正确传递
+& $OpenOcdBin $cmdArgs
+
+# 检查执行结果
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "OpenOCD 失败, code=$LASTEXITCODE"
+    Write-Host "OpenOCD failed, code=$LASTEXITCODE" -ForegroundColor Red
     exit $LASTEXITCODE
+} else {
+    Write-Host "OpenOCD executed successfully!" -ForegroundColor Green
 }
