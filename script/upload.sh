@@ -116,7 +116,7 @@ fi
 
 CMD=(
     "$OPENOCD_BIN" -f "$CFG"
-    -c "init; halt;"
+    -c "init; reset halt;"
 )
 if $VERIFY_ONLY; then
     CMD+=(-c "verify_image $TARGET_FILE $ADDR; reset; shutdown")

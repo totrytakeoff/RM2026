@@ -1,76 +1,111 @@
-#ifndef DMMOTOR_H
-#define DMMOTOR_H
-#include <stdint.h>
+#ifndef HNUYUELURM_DMMOTOR_H
+#define HNUYUELURM_DMMOTOR_H
+
 #include "bsp_can.h"
-#include "controller.h"
-#include "motor_def.h"
-#include "daemon.h"
+#include <stdbool.h>
+#include <stdint.h>
 
-#define DM_MOTOR_CNT 4
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define DM_P_MIN  (-12.5f)
-#define DM_P_MAX  12.5f
-#define DM_V_MIN  (-45.0f)
-#define DM_V_MAX  45.0f
-#define DM_T_MIN  (-18.0f)
-#define DM_T_MAX   18.0f
-
-typedef struct 
+/**
+ * @brief DM 电机通用控制模式（与官方协议一致）
+ * @note 这些值会直接参与 CAN 标准帧 ID 组帧：StdId = motor_id + mode
+ */
+typedef enum
 {
-    uint8_t id;
-    uint8_t state;
-    float velocity;
-    float last_position;
-    float position;
-    float torque;
-    float T_Mos;
-    float T_Rotor;
-    int32_t total_round;
-}DM_Motor_Measure_s;
+    DM_MODE_MIT = 0x000,
+    DM_MODE_POSITION = 0x100,
+    DM_MODE_SPEED = 0x200,
+    DM_MODE_MIXED = 0x300,
+} DMMotor_Mode;
+
+/**
+ * @brief DM 电机通用初始化配置
+ *
+ * @note
+ * - motor_id：电机拨码设定的 CAN ID（用于发送控制帧/使能帧）
+ * - master_id：上位机显示的 Master ID（4bit），或“完整反馈 StdId”
+ *   - 若 <= 0x0F：视为 Master ID(4bit)，反馈 StdId 自动计算为 (master<<4)|(motor&0x0F)
+ *   - 否则：视为你已给出完整反馈 StdId（用于适配框架严格 CAN 过滤器）
+ */
+typedef struct
+{
+    CAN_HandleTypeDef *can_handle;
+    uint16_t motor_id;
+    uint16_t master_id;
+
+    float position_range; /* PMAX */
+    float velocity_range; /* VMAX */
+    float torque_range;   /* TMAX */
+    float kp_max;
+    float kd_max;
+
+    bool auto_clear_error;
+    bool auto_enable_mit;
+    bool auto_zero_position;
+} DMMotor_InitConfig;
 
 typedef struct
 {
-    uint16_t position_des;
-    uint16_t velocity_des;
-    uint16_t torque_des;
-    uint16_t Kp;
-    uint16_t Kd;
-}DMMotor_Send_s;
-typedef struct 
+    uint8_t motor_id;
+    uint8_t error_state;
+    float position_rad;
+    float velocity_rad_s;
+    float torque;
+    float mos_temp;
+    float rotor_temp;
+} DMMotor_Feedback;
+
+typedef struct DMMotor_Handle DMMotor_Handle;
+
+/* -------------------- 工具函数：角度/弧度互转 -------------------- */
+static inline float DM_DegToRad(float deg)
 {
-    DM_Motor_Measure_s measure;
-    Motor_Control_Setting_s motor_settings;
-    PIDInstance current_PID;
-    PIDInstance speed_PID;
-    PIDInstance angle_PID;
-    float *other_angle_feedback_ptr;
-    float *other_speed_feedback_ptr;
-    float *speed_feedforward_ptr;
-    float *current_feedforward_ptr;
-    float pid_ref;
-    Motor_Working_Type_e stop_flag;
-    CANInstance *motor_can_instace;
-    DaemonInstance* motor_daemon;
-    uint32_t lost_cnt;
-}DMMotorInstance;
-
-typedef enum
+    return deg * 0.01745329251994329576923690768489f;
+}
+static inline float DM_RadToDeg(float rad)
 {
-    DM_CMD_MOTOR_MODE = 0xfc,   // 使能,会响应指令
-    DM_CMD_RESET_MODE = 0xfd,   // 停止
-    DM_CMD_ZERO_POSITION = 0xfe, // 将当前的位置设置为编码器零位
-    DM_CMD_CLEAR_ERROR = 0xfb // 清除电机过热错误
-}DMMotor_Mode_e;
+    return rad * 57.295779513082320876798154814105f;
+}
 
-DMMotorInstance *DMMotorInit(Motor_Init_Config_s *config);
+/* -------------------- 生命周期 -------------------- */
+DMMotor_Handle *DMMotor_Init(const DMMotor_InitConfig *config);
+void DMMotor_DeInit(DMMotor_Handle *motor);
 
-void DMMotorSetRef(DMMotorInstance *motor, float ref);
+/* -------------------- 反馈 -------------------- */
+const DMMotor_Feedback *DMMotor_GetFeedback(const DMMotor_Handle *motor);
 
-void DMMotorOuterLoop(DMMotorInstance *motor,Closeloop_Type_e closeloop_type);
+/* -------------------- 模式控制/指令 -------------------- */
+void DMMotor_ClearError(DMMotor_Handle *motor, DMMotor_Mode mode);
+void DMMotor_Enable(DMMotor_Handle *motor, DMMotor_Mode mode);
+void DMMotor_Disable(DMMotor_Handle *motor, DMMotor_Mode mode);
+void DMMotor_SaveZero(DMMotor_Handle *motor, DMMotor_Mode mode);
 
-void DMMotorEnable(DMMotorInstance *motor);
+/**
+ * @brief 发送 MIT 标准控制帧（p, v, kp, kd, t）
+ * @note 这是“协议直通接口”，不包含任何控制策略/环路；调参时外部 1kHz 调用即可。
+ */
+void DMMotor_SendMIT(DMMotor_Handle *motor,
+                     float position_rad,
+                     float velocity_rad_s,
+                     float kp,
+                     float kd,
+                     float torque);
 
-void DMMotorStop(DMMotorInstance *motor);
-void DMMotorCaliEncoder(DMMotorInstance *motor);
-void DMMotorControlInit();
-#endif // !DMMOTOR
+void DMMotor_SendPosition(DMMotor_Handle *motor, float position_rad, float max_speed_rad_s);
+void DMMotor_SendSpeed(DMMotor_Handle *motor, float speed_rad_s);
+void DMMotor_SendMixed(DMMotor_Handle *motor, float position_rad, float velocity_rad_s, float current);
+
+/* -------------------- 寄存器（上位机同款 0x7FF 通道） -------------------- */
+void DMMotor_RequestRegister(DMMotor_Handle *motor, uint8_t reg);
+void DMMotor_WriteRegister(DMMotor_Handle *motor, uint8_t reg, const uint8_t value[4]);
+void DMMotor_SaveRegisters(DMMotor_Handle *motor);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+

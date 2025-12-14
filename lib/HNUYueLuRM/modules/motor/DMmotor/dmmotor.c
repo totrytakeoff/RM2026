@@ -1,175 +1,302 @@
 #include "dmmotor.h"
-#include "memory.h"
-#include "general_def.h"
-#include "user_lib.h"
-#include "cmsis_os.h"
-#include "string.h"
-#include "daemon.h"
-#include "stdlib.h"
-#include "bsp_log.h"
 
-static uint8_t idx;
-static DMMotorInstance *dm_motor_instance[DM_MOTOR_CNT];
-static osThreadId dm_task_handle[DM_MOTOR_CNT];
-/* 两个用于将uint值和float值进行映射的函数,在设定发送值和解析反馈值时使用 */
+#include "bsp_dwt.h"
+#include "general_def.h"
+#include <stdlib.h>
+#include <string.h>
+
+#define DM_DEFAULT_P_MAX 12.5f
+#define DM_DEFAULT_V_MAX 45.0f
+#define DM_DEFAULT_T_MAX 54.0f
+#define DM_DEFAULT_KP_MAX 500.0f
+#define DM_DEFAULT_KD_MAX 5.0f
+
+static float clampf(float value, float min, float max)
+{
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
+
 static uint16_t float_to_uint(float x, float x_min, float x_max, uint8_t bits)
 {
     float span = x_max - x_min;
     float offset = x_min;
-    return (uint16_t)((x - offset) * ((float)((1 << bits) - 1)) / span);
+    float scaled = (x - offset) * ((float)((1U << bits) - 1U)) / span;
+    if (scaled < 0.0f)
+        scaled = 0.0f;
+    float max_val = (float)((1U << bits) - 1U);
+    if (scaled > max_val)
+        scaled = max_val;
+    return (uint16_t)scaled;
 }
-static float uint_to_float(int x_int, float x_min, float x_max, int bits)
+
+static float uint_to_float(int value, float x_min, float x_max, uint8_t bits)
 {
     float span = x_max - x_min;
-    float offset = x_min;
-    return ((float)x_int) * span / ((float)((1 << bits) - 1)) + offset;
+    return ((float)value) * span / ((float)((1U << bits) - 1U)) + x_min;
 }
 
-static void DMMotorSetMode(DMMotor_Mode_e cmd, DMMotorInstance *motor)
+struct DMMotor_Handle
 {
-    memset(motor->motor_can_instace->tx_buff, 0xff, 7);  // 发送电机指令的时候前面7bytes都是0xff
-    motor->motor_can_instace->tx_buff[7] = (uint8_t)cmd; // 最后一位是命令id
-    CANTransmit(motor->motor_can_instace, 1);
+    CANInstance *command_can;
+    DMMotor_InitConfig config;
+    DMMotor_Feedback feedback;
+    uint8_t mode_enabled[4];
+};
+
+static void DMMotor_SendFrame(DMMotor_Handle *motor, uint32_t id, const uint8_t *payload, uint8_t len)
+{
+    uint8_t backup_dlc = motor->command_can->txconf.DLC;
+    uint32_t backup_id = motor->command_can->txconf.StdId;
+
+    CANSetDLC(motor->command_can, len);
+    motor->command_can->txconf.StdId = id;
+    memcpy(motor->command_can->tx_buff, payload, len);
+    CANTransmit(motor->command_can, 1);
+
+    motor->command_can->txconf.StdId = backup_id;
+    CANSetDLC(motor->command_can, backup_dlc);
 }
 
-static void DMMotorDecode(CANInstance *motor_can)
+static void DMMotor_SendModeCommand(DMMotor_Handle *motor, DMMotor_Mode mode, uint8_t command_byte)
 {
-    uint16_t tmp; // 用于暂存解析值,稍后转换成float数据,避免多次创建临时变量
-    uint8_t *rxbuff = motor_can->rx_buff;
-    DMMotorInstance *motor = (DMMotorInstance *)motor_can->id;
-    DM_Motor_Measure_s *measure = &(motor->measure); // 将can实例中保存的id转换成电机实例的指针
-
-    DaemonReload(motor->motor_daemon);
-
-    measure->last_position = measure->position;
-    tmp = (uint16_t)((rxbuff[1] << 8) | rxbuff[2]);
-    measure->position = uint_to_float(tmp, DM_P_MIN, DM_P_MAX, 16);
-
-    tmp = (uint16_t)((rxbuff[3] << 4) | rxbuff[4] >> 4);
-    measure->velocity = uint_to_float(tmp, DM_V_MIN, DM_V_MAX, 12);
-
-    tmp = (uint16_t)(((rxbuff[4] & 0x0f) << 8) | rxbuff[5]);
-    measure->torque = uint_to_float(tmp, DM_T_MIN, DM_T_MAX, 12);
-
-    measure->T_Mos = (float)rxbuff[6];
-    measure->T_Rotor = (float)rxbuff[7];
+    uint8_t frame[8];
+    memset(frame, 0xFF, sizeof(frame));
+    frame[7] = command_byte;
+    DMMotor_SendFrame(motor, motor->config.motor_id + mode, frame, sizeof(frame));
 }
 
-static void DMMotorLostCallback(void *motor_ptr)
+static void DMMotor_Decode(CANInstance *instance)
 {
-}
-void DMMotorCaliEncoder(DMMotorInstance *motor)
-{
-    DMMotorSetMode(DM_CMD_ZERO_POSITION, motor);
-    DWT_Delay(0.1);
-}
-DMMotorInstance *DMMotorInit(Motor_Init_Config_s *config)
-{
-    DMMotorInstance *motor = (DMMotorInstance *)malloc(sizeof(DMMotorInstance));
-    memset(motor, 0, sizeof(DMMotorInstance));
-    
-    motor->motor_settings = config->controller_setting_init_config;
-    PIDInit(&motor->current_PID, &config->controller_param_init_config.current_PID);
-    PIDInit(&motor->speed_PID, &config->controller_param_init_config.speed_PID);
-    PIDInit(&motor->angle_PID, &config->controller_param_init_config.angle_PID);
-    motor->other_angle_feedback_ptr = config->controller_param_init_config.other_angle_feedback_ptr;
-    motor->other_speed_feedback_ptr = config->controller_param_init_config.other_speed_feedback_ptr;
+    DMMotor_Handle *motor = (DMMotor_Handle *)instance->id;
+    uint8_t *rx = instance->rx_buff;
 
-    config->can_init_config.can_module_callback = DMMotorDecode;
-    config->can_init_config.id = motor;
-    motor->motor_can_instace = CANRegister(&config->can_init_config);
+    /**
+     * 反馈帧格式（与上位机抓到的表一致）：
+     *   D0[7:4] ERR/STATE, D0[3:0] ID
+     *   D1:D2   POS (16bit)
+     *   D3:D4   VEL (12bit，D3=VEL[11:4], D4[7:4]=VEL[3:0])
+     *   D4:D5   T   (12bit，D4[3:0]=T[11:8], D5=T[7:0])
+     *   D6      T_MOS
+     *   D7      T_Rotor
+     */
+    motor->feedback.motor_id = (uint8_t)(rx[0] & 0x0F);
+    motor->feedback.error_state = (uint8_t)(rx[0] >> 4);
 
-    Daemon_Init_Config_s conf = {
-        .callback = DMMotorLostCallback,
-        .owner_id = motor,
-        .reload_count = 10,
+    uint16_t pos_raw = ((uint16_t)rx[1] << 8) | rx[2];
+    uint16_t vel_raw = ((uint16_t)rx[3] << 4) | (rx[4] >> 4);
+    uint16_t tor_raw = ((uint16_t)(rx[4] & 0x0F) << 8) | rx[5];
+
+    motor->feedback.position_rad =
+        uint_to_float(pos_raw, -motor->config.position_range, motor->config.position_range, 16);
+    motor->feedback.velocity_rad_s =
+        uint_to_float(vel_raw, -motor->config.velocity_range, motor->config.velocity_range, 12);
+    motor->feedback.torque =
+        uint_to_float(tor_raw, -motor->config.torque_range, motor->config.torque_range, 12);
+    motor->feedback.mos_temp = (float)rx[6];
+    motor->feedback.rotor_temp = (float)rx[7];
+}
+
+static uint16_t DMMotor_CalcFeedbackStdId(uint16_t motor_id, uint16_t master_id)
+{
+    if (master_id <= 0x0Fu) {
+        return (uint16_t)((master_id << 4) | (motor_id & 0x0Fu));
+    }
+    return master_id;
+}
+
+DMMotor_Handle *DMMotor_Init(const DMMotor_InitConfig *config)
+{
+    if (config == NULL || config->can_handle == NULL) {
+        return NULL;
+    }
+
+    DMMotor_Handle *motor = (DMMotor_Handle *)malloc(sizeof(DMMotor_Handle));
+    memset(motor, 0, sizeof(DMMotor_Handle));
+    motor->config = *config;
+
+    if (motor->config.position_range <= 0.0f)
+        motor->config.position_range = DM_DEFAULT_P_MAX;
+    if (motor->config.velocity_range <= 0.0f)
+        motor->config.velocity_range = DM_DEFAULT_V_MAX;
+    if (motor->config.torque_range <= 0.0f)
+        motor->config.torque_range = DM_DEFAULT_T_MAX;
+    if (motor->config.kp_max <= 0.0f)
+        motor->config.kp_max = DM_DEFAULT_KP_MAX;
+    if (motor->config.kd_max <= 0.0f)
+        motor->config.kd_max = DM_DEFAULT_KD_MAX;
+
+    const uint16_t feedback_std_id = DMMotor_CalcFeedbackStdId(motor->config.motor_id, motor->config.master_id);
+    CAN_Init_Config_s can_cfg = {
+        .can_handle = motor->config.can_handle,
+        .tx_id = motor->config.motor_id,
+        .rx_id = feedback_std_id,
+        .can_module_callback = DMMotor_Decode,
+        .id = motor,
     };
-    motor->motor_daemon = DaemonRegister(&conf);
+    motor->command_can = CANRegister(&can_cfg);
 
-    DMMotorEnable(motor);
-    DMMotorSetMode(DM_CMD_MOTOR_MODE, motor);
-    DWT_Delay(0.1);
-    DMMotorCaliEncoder(motor);
-    DWT_Delay(0.1);
-    dm_motor_instance[idx++] = motor;
+    if (motor->config.auto_clear_error) {
+        DMMotor_ClearError(motor, DM_MODE_MIT);
+        DWT_Delay(0.01f);
+    }
+    if (motor->config.auto_zero_position) {
+        DMMotor_SaveZero(motor, DM_MODE_MIT);
+        DWT_Delay(0.01f);
+    }
+    if (motor->config.auto_enable_mit) {
+        DMMotor_Enable(motor, DM_MODE_MIT);
+    }
+
     return motor;
 }
 
-void DMMotorSetRef(DMMotorInstance *motor, float ref)
+void DMMotor_DeInit(DMMotor_Handle *motor)
 {
-    motor->pid_ref = ref;
-}
-
-void DMMotorEnable(DMMotorInstance *motor)
-{
-    motor->stop_flag = MOTOR_ENALBED;
-}
-
-void DMMotorStop(DMMotorInstance *motor)//不使用使能模式是因为需要收到反馈
-{
-    motor->stop_flag = MOTOR_STOP;
-}
-
-void DMMotorOuterLoop(DMMotorInstance *motor, Closeloop_Type_e type)
-{
-    motor->motor_settings.outer_loop_type = type;
-}
-
-
-//@Todo: 目前只实现了力控，更多位控PID等请自行添加
-void DMMotorTask(void const *argument)
-{
-    float  pid_ref, set;
-    DMMotorInstance *motor = (DMMotorInstance *)argument;
-   //DM_Motor_Measure_s *measure = &motor->measure;
-    Motor_Control_Setting_s *setting = &motor->motor_settings;
-    //CANInstance *motor_can = motor->motor_can_instace;
-    //uint16_t tmp;
-    DMMotor_Send_s motor_send_mailbox;
-    while (1)
-    {
-        pid_ref = motor->pid_ref;
-        
-        set = pid_ref;
-        if (setting->motor_reverse_flag == MOTOR_DIRECTION_REVERSE)
-            set *= -1;
-       
-        LIMIT_MIN_MAX(set, DM_T_MIN, DM_T_MAX);
-        motor_send_mailbox.position_des = float_to_uint(0, DM_P_MIN, DM_P_MAX, 16);
-        motor_send_mailbox.velocity_des = float_to_uint(0, DM_V_MIN, DM_V_MAX, 12);
-        motor_send_mailbox.torque_des = float_to_uint(pid_ref, DM_T_MIN, DM_T_MAX, 12);
-        motor_send_mailbox.Kp = 0;
-        motor_send_mailbox.Kd = 0;
-
-        if(motor->stop_flag == MOTOR_STOP)
-            motor_send_mailbox.torque_des = float_to_uint(0, DM_T_MIN, DM_T_MAX, 12);
-
-        motor->motor_can_instace->tx_buff[0] = (uint8_t)(motor_send_mailbox.position_des >> 8);
-        motor->motor_can_instace->tx_buff[1] = (uint8_t)(motor_send_mailbox.position_des);
-        motor->motor_can_instace->tx_buff[2] = (uint8_t)(motor_send_mailbox.velocity_des >> 4);
-        motor->motor_can_instace->tx_buff[3] = (uint8_t)(((motor_send_mailbox.velocity_des & 0xF) << 4) | (motor_send_mailbox.Kp >> 8));
-        motor->motor_can_instace->tx_buff[4] = (uint8_t)(motor_send_mailbox.Kp);
-        motor->motor_can_instace->tx_buff[5] = (uint8_t)(motor_send_mailbox.Kd >> 4);
-        motor->motor_can_instace->tx_buff[6] = (uint8_t)(((motor_send_mailbox.Kd & 0xF) << 4) | (motor_send_mailbox.torque_des >> 8));
-        motor->motor_can_instace->tx_buff[7] = (uint8_t)(motor_send_mailbox.torque_des);
-
-        CANTransmit(motor->motor_can_instace, 1);
-
-        osDelay(2);
-    }
-}
-void DMMotorControlInit()
-{
-    char dm_task_name[5] = "dm";
-    // 遍历所有电机实例,创建任务
-    if (!idx)
+    if (!motor)
         return;
-    for (size_t i = 0; i < idx; i++)
-    {
-        char dm_id_buff[2] = {0};
-        __itoa(i, dm_id_buff, 10);
-        strcat(dm_task_name, dm_id_buff);
-        osThreadDef(dm_task_name, DMMotorTask, osPriorityNormal, 0, 128);
-        dm_task_handle[i] = osThreadCreate(osThread(dm_task_name), dm_motor_instance[i]);
-    }
+    free(motor);
 }
+
+const DMMotor_Feedback *DMMotor_GetFeedback(const DMMotor_Handle *motor)
+{
+    if (!motor)
+        return NULL;
+    return &motor->feedback;
+}
+
+void DMMotor_ClearError(DMMotor_Handle *motor, DMMotor_Mode mode)
+{
+    if (!motor)
+        return;
+    DMMotor_SendModeCommand(motor, mode, 0xFB);
+}
+
+void DMMotor_Enable(DMMotor_Handle *motor, DMMotor_Mode mode)
+{
+    if (!motor)
+        return;
+    DMMotor_SendModeCommand(motor, mode, 0xFC);
+    motor->mode_enabled[mode >> 8] = 1;
+}
+
+void DMMotor_Disable(DMMotor_Handle *motor, DMMotor_Mode mode)
+{
+    if (!motor)
+        return;
+    DMMotor_SendModeCommand(motor, mode, 0xFD);
+    motor->mode_enabled[mode >> 8] = 0;
+}
+
+void DMMotor_SaveZero(DMMotor_Handle *motor, DMMotor_Mode mode)
+{
+    if (!motor)
+        return;
+    DMMotor_SendModeCommand(motor, mode, 0xFE);
+}
+
+void DMMotor_SendMIT(DMMotor_Handle *motor,
+                     float position_rad,
+                     float velocity_rad_s,
+                     float kp,
+                     float kd,
+                     float torque)
+{
+    if (!motor)
+        return;
+
+    position_rad = clampf(position_rad, -motor->config.position_range, motor->config.position_range);
+    velocity_rad_s = clampf(velocity_rad_s, -motor->config.velocity_range, motor->config.velocity_range);
+    torque = clampf(torque, -motor->config.torque_range, motor->config.torque_range);
+    kp = clampf(kp, 0.0f, motor->config.kp_max);
+    kd = clampf(kd, 0.0f, motor->config.kd_max);
+
+    uint16_t pos_uint = float_to_uint(position_rad, -motor->config.position_range, motor->config.position_range, 16);
+    uint16_t vel_uint = float_to_uint(velocity_rad_s, -motor->config.velocity_range, motor->config.velocity_range, 12);
+    uint16_t torque_uint = float_to_uint(torque, -motor->config.torque_range, motor->config.torque_range, 12);
+    uint16_t kp_uint = float_to_uint(kp, 0.0f, motor->config.kp_max, 12);
+    uint16_t kd_uint = float_to_uint(kd, 0.0f, motor->config.kd_max, 12);
+
+    uint8_t frame[8];
+    frame[0] = (uint8_t)(pos_uint >> 8);
+    frame[1] = (uint8_t)(pos_uint);
+    frame[2] = (uint8_t)(vel_uint >> 4);
+    frame[3] = (uint8_t)(((vel_uint & 0x0F) << 4) | (kp_uint >> 8));
+    frame[4] = (uint8_t)(kp_uint);
+    frame[5] = (uint8_t)(kd_uint >> 4);
+    frame[6] = (uint8_t)(((kd_uint & 0x0F) << 4) | (torque_uint >> 8));
+    frame[7] = (uint8_t)(torque_uint);
+
+    DMMotor_SendFrame(motor, motor->config.motor_id + DM_MODE_MIT, frame, sizeof(frame));
+}
+
+void DMMotor_SendSpeed(DMMotor_Handle *motor, float speed_rad_s)
+{
+    if (!motor)
+        return;
+    speed_rad_s = clampf(speed_rad_s, -motor->config.velocity_range, motor->config.velocity_range);
+    uint8_t frame[4];
+    memcpy(frame, &speed_rad_s, sizeof(float));
+    DMMotor_SendFrame(motor, motor->config.motor_id + DM_MODE_SPEED, frame, sizeof(frame));
+}
+
+void DMMotor_SendPosition(DMMotor_Handle *motor, float position_rad, float max_speed_rad_s)
+{
+    if (!motor)
+        return;
+    uint8_t frame[8];
+    memcpy(frame, &position_rad, sizeof(float));
+    memcpy(frame + 4, &max_speed_rad_s, sizeof(float));
+    DMMotor_SendFrame(motor, motor->config.motor_id + DM_MODE_POSITION, frame, sizeof(frame));
+}
+
+void DMMotor_SendMixed(DMMotor_Handle *motor, float position_rad, float velocity_rad_s, float current)
+{
+    if (!motor)
+        return;
+
+    uint8_t frame[8];
+    memcpy(frame, &position_rad, sizeof(float));
+    uint16_t vel_u16 = (uint16_t)(velocity_rad_s * 100.0f);
+    uint16_t cur_u16 = (uint16_t)(current * 10000.0f);
+    frame[4] = (uint8_t)(vel_u16 & 0xFF);
+    frame[5] = (uint8_t)(vel_u16 >> 8);
+    frame[6] = (uint8_t)(cur_u16 & 0xFF);
+    frame[7] = (uint8_t)(cur_u16 >> 8);
+
+    DMMotor_SendFrame(motor, motor->config.motor_id + DM_MODE_MIXED, frame, sizeof(frame));
+}
+
+void DMMotor_RequestRegister(DMMotor_Handle *motor, uint8_t reg)
+{
+    if (!motor)
+        return;
+    uint8_t can_id_l = motor->config.motor_id & 0xFF;
+    uint8_t can_id_h = (motor->config.motor_id >> 8) & 0x07;
+    uint8_t frame[4] = {can_id_l, can_id_h, 0x33, reg};
+    DMMotor_SendFrame(motor, 0x7FF, frame, sizeof(frame));
+}
+
+void DMMotor_WriteRegister(DMMotor_Handle *motor, uint8_t reg, const uint8_t value[4])
+{
+    if (!motor || value == NULL)
+        return;
+    uint8_t can_id_l = motor->config.motor_id & 0x0F;
+    uint8_t can_id_h = (motor->config.motor_id >> 4) & 0x0F;
+    uint8_t frame[8] = {can_id_l, can_id_h, 0x55, reg, value[0], value[1], value[2], value[3]};
+    DMMotor_SendFrame(motor, 0x7FF, frame, sizeof(frame));
+}
+
+void DMMotor_SaveRegisters(DMMotor_Handle *motor)
+{
+    if (!motor)
+        return;
+    uint8_t can_id_l = motor->config.motor_id & 0xFF;
+    uint8_t can_id_h = (motor->config.motor_id >> 8) & 0x07;
+    uint8_t frame[4] = {can_id_l, can_id_h, 0xAA, 0x01};
+    DMMotor_SendFrame(motor, 0x7FF, frame, sizeof(frame));
+}
+
