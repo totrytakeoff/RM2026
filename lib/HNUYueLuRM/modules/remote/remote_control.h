@@ -115,8 +115,15 @@ typedef struct
 
 /* ------------------------- Internal Data ----------------------------------- */
 
+typedef enum
+{
+    RC_SOURCE_NONE = 0,
+    RC_SOURCE_DT7 = 1,
+    RC_SOURCE_VIRTUAL = 2,
+} RC_Source_t;
+
 /**
- * @brief 初始化遥控器,该函数会将遥控器注册到串口
+ * @brief 初始化DT7/DR16遥控器,该函数会将遥控器注册到串口
  *
  * @attention 注意分配正确的串口硬件,遥控器在C板上使用USART3
  *
@@ -124,10 +131,42 @@ typedef struct
 RC_ctrl_t *RemoteControlInit(UART_HandleTypeDef *rc_usart_handle);
 
 /**
+ * @brief 初始化虚拟DBUS输入(上位机键鼠),串口参数需与DT7一致
+ *
+ * @note 不会改变DT7链路,仅作为次级输入源
+ */
+RC_ctrl_t *RemoteControlInitVirtual(UART_HandleTypeDef *virtual_usart_handle);
+
+/**
  * @brief 检查遥控器是否在线,若尚未初始化也视为离线
  *
  * @return uint8_t 1:在线 0:离线
  */
 uint8_t RemoteControlIsOnline();
+
+/**
+ * @brief 查询DT7/DR16链路是否在线
+ */
+uint8_t RemoteControlIsDt7Online();
+
+/**
+ * @brief 查询虚拟DBUS链路是否在线
+ */
+uint8_t RemoteControlIsVirtualOnline();
+
+/**
+ * @brief 当前输出使用的数据源
+ */
+RC_Source_t RemoteControlGetActiveSource();
+
+/**
+ * @brief 使能/关闭虚拟DBUS输入
+ */
+void RemoteControlSetVirtualEnabled(uint8_t enabled);
+
+/**
+ * @brief 查询虚拟DBUS是否启用
+ */
+uint8_t RemoteControlIsVirtualEnabled();
 
 #endif

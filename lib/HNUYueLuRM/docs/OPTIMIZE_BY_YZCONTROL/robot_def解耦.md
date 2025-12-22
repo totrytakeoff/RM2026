@@ -1,0 +1,1 @@
+- 新增common/robot_types.h , 将modules中的依赖的一些共用参数存在此处,实现与application/robot_def.h 解耦

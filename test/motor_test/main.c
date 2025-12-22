@@ -155,7 +155,7 @@ int main(void) {
     LOGINFO("[motor_test] core init finished");
     HAL_UART_Transmit(&huart6, (uint8_t*)"---\n", 3, 1000);
 
-    //   MotorTest_M3508_SpeedLoop(7200.0f);
+      MotorTest_M3508_SpeedLoop(7200.0f);
     //   MotorTest_Loader_SpeedLoop(7200.0f);
 
     while (1) {
@@ -166,7 +166,7 @@ int main(void) {
             MotorTest_DM_MIT_PeriodicAngleStep(g_dm_step_deg, g_dm_step_interval_ms);
         }
 
-
+        MotorTest_GM6020_SpeedLoop(7200.0f);
         // MotorTest_M3508_PeriodicAngleStep(60.0f, 1000U);
         // MotorTest_GM6020_PeriodicAngleStep(60.0f, 1000U);
 

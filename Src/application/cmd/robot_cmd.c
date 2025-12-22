@@ -17,6 +17,14 @@
 #define YAW_ALIGN_ANGLE (YAW_CHASSIS_ALIGN_ECD * ECD_ANGLE_COEF_DJI) // 对齐时的角度,0-360
 #define PTICH_HORIZON_ANGLE (PITCH_HORIZON_ECD * ECD_ANGLE_COEF_DJI) // pitch水平时电机的角度,0-360
 
+#ifndef VIRTUAL_DBUS_ENABLE
+#define VIRTUAL_DBUS_ENABLE 0
+#endif
+
+#ifndef VIRTUAL_DBUS_UART_HANDLE
+#define VIRTUAL_DBUS_UART_HANDLE huart6
+#endif
+
 /* cmd应用包含的模块实例指针和交互信息存储*/
 #ifdef GIMBAL_BOARD // 对双板的兼容,条件编译
 #include "can_comm.h"
@@ -91,7 +99,10 @@ void RobotCMDInit()
     //     },
     // };
     //bmi088_test = BMI088Register(&bmi088_config);
-   rc_data = RemoteControlInit(&huart3);   // 修改为对应串口,注意如果是自研板dbus协议串口需选用添加了反相器的那个
+    rc_data = RemoteControlInit(&huart3); // 修改为对应串口,注意如果是自研板dbus协议串口需选用添加了反相器的那个
+#if VIRTUAL_DBUS_ENABLE
+    (void)RemoteControlInitVirtual(&VIRTUAL_DBUS_UART_HANDLE);
+#endif
     vision_recv_data = VisionInit(&huart1); // 视觉通信串口
 
     gimbal_cmd_pub = PubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
