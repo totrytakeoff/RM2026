@@ -56,6 +56,11 @@ typedef struct
 
     dm_imu_data_t data;
     bool data_ready;
+    uint32_t last_update_ms;
+
+    uint8_t last_ack_rid;
+    uint8_t last_ack_code;
+    uint32_t last_ack_ms;
 
     uint8_t uart_rx_buf[DM_IMU_UART_RX_BUFFER_LEN];
     uint16_t uart_rx_len;
@@ -66,6 +71,8 @@ void dm_imu_init_can(dm_imu_t *imu, const dm_imu_can_config_t *cfg);
 
 bool dm_imu_get_data(dm_imu_t *imu, dm_imu_data_t *out);
 const dm_imu_data_t *dm_imu_peek_data(const dm_imu_t *imu);
+bool dm_imu_is_alive(const dm_imu_t *imu, uint32_t timeout_ms);
+bool dm_imu_get_last_ack(const dm_imu_t *imu, uint8_t *rid, uint8_t *ack);
 
 // UART quick commands (USB/485)
 void dm_imu_uart_enter_settings(dm_imu_t *imu);
@@ -88,6 +95,8 @@ void dm_imu_can_request_accel(dm_imu_t *imu);
 void dm_imu_can_request_gyro(dm_imu_t *imu);
 void dm_imu_can_request_euler(dm_imu_t *imu);
 void dm_imu_can_request_quat(dm_imu_t *imu);
+void dm_imu_can_set_active(dm_imu_t *imu, bool active);
+void dm_imu_can_set_interval_ms(dm_imu_t *imu, uint16_t interval_ms);
 
 // CAN config (register write)
 void dm_imu_can_write_reg(dm_imu_t *imu, uint8_t rid, uint32_t data);

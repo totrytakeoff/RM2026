@@ -59,6 +59,8 @@ static void dm_imu_init(void)
         .mst_id = 0x11,
     };
     dm_imu_init_can(&dm_imu, &can_cfg);
+    dm_imu_can_set_active(&dm_imu, true);
+    dm_imu_can_set_interval_ms(&dm_imu, 1);
     // 如果使用请求模式，可在主循环中定时请求
 #else
     dm_imu_uart_config_t uart_cfg = {

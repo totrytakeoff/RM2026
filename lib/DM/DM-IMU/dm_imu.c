@@ -82,6 +82,7 @@ static void dm_imu_mark_ready(dm_imu_t *imu, uint8_t mask)
 {
     imu->data.valid_mask |= mask;
     imu->data.timestamp_ms = HAL_GetTick();
+    imu->last_update_ms = imu->data.timestamp_ms;
     imu->data_ready = true;
 }
 
@@ -194,11 +195,20 @@ static void dm_imu_can_rx_callback(CANInstance *instance)
     if (!imu)
         return;
 
+    if (instance->rx_len < 8)
+        return;
+
     const uint8_t *data = instance->rx_buff;
     uint8_t type = data[0];
 
     if (type == 0xCC)
     {
+        if (data[2] == 0xDD)
+        {
+            imu->last_ack_rid = data[1];
+            imu->last_ack_code = data[3];
+            imu->last_ack_ms = HAL_GetTick();
+        }
         return;
     }
 
@@ -307,6 +317,22 @@ const dm_imu_data_t *dm_imu_peek_data(const dm_imu_t *imu)
     if (!imu)
         return NULL;
     return &imu->data;
+}
+
+bool dm_imu_is_alive(const dm_imu_t *imu, uint32_t timeout_ms)
+{
+    if (!imu)
+        return false;
+    return (HAL_GetTick() - imu->last_update_ms) <= timeout_ms;
+}
+
+bool dm_imu_get_last_ack(const dm_imu_t *imu, uint8_t *rid, uint8_t *ack)
+{
+    if (!imu || !rid || !ack)
+        return false;
+    *rid = imu->last_ack_rid;
+    *ack = imu->last_ack_code;
+    return true;
 }
 
 void dm_imu_uart_enter_settings(dm_imu_t *imu)
@@ -431,4 +457,14 @@ void dm_imu_can_request_euler(dm_imu_t *imu)
 void dm_imu_can_request_quat(dm_imu_t *imu)
 {
     dm_imu_can_read_reg(imu, 0x04);
+}
+
+void dm_imu_can_set_active(dm_imu_t *imu, bool active)
+{
+    dm_imu_can_write_reg(imu, 0x0B, active ? 1U : 0U);
+}
+
+void dm_imu_can_set_interval_ms(dm_imu_t *imu, uint16_t interval_ms)
+{
+    dm_imu_can_write_reg(imu, 0x0A, interval_ms);
 }
