@@ -298,9 +298,9 @@ void DJIMotorControl()
         sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);         // 低八位
         sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff); // 高八位
 
-        // 若该电机处于停止状态,直接将buff置零
+        // 若该电机处于停止状态,直接将该电机对应的2字节清零
         if (motor->stop_flag == MOTOR_STOP)
-            memset(sender_assignment[group].tx_buff + 2 * num, 0, 16u);
+            memset(sender_assignment[group].tx_buff + 2 * num, 0, 2u);
     }
 
     // 遍历flag,检查是否要发送这一帧报文
