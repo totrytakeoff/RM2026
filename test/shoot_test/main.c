@@ -44,7 +44,7 @@ static DJIMotorInstance *loader_motor = NULL;
 volatile uint8_t g_friction_enable = 1;
 volatile float g_friction_speed_deg_s = 10000.0f;
 
-volatile uint8_t g_loader_mode = 0;  // 0 stop, 1 speed, 2 periodic angle step
+volatile uint8_t g_loader_mode = 1;  // 0 stop, 1 speed, 2 periodic angle step
 volatile float g_loader_speed_deg_s = 3000.0f;
 volatile float g_loader_step_deg = 36.0f;
 volatile uint32_t g_loader_step_interval_ms = 300U;

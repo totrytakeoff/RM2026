@@ -319,7 +319,6 @@ static void UpdateChassisKinematics(void)
  * 摇杆控制映射：
  * - 左摇杆：前后左右控制底盘平动（上下为前进后退，左右为左右平移）
  * - 右摇杆左右：控制底盘旋转
- * - 右摇杆上下：控制冲刺和刹车
  */
 static void ProcessRemoteControl(void)
 {
@@ -380,31 +379,21 @@ static void ProcessRemoteControl(void)
     // 修正方向：左推左移，右推右移
     chassis_vx = rc->rc.rocker_l_ / 660.0f * CHASSIS_MAX_VEL;
     
-    // 前后：rocker_l1，范围-660~660，映射到-CHASSIS_MAX_VEL~CHASSIS_MAX_VEL（控制vy前进后退）
+    // 前后：根据实机通道映射，使用rocker_r_作为左摇杆上下
+    // 范围-660~660，映射到-CHASSIS_MAX_VEL~CHASSIS_MAX_VEL（控制vy前进后退）
     // 修正方向：上推前进，下推后退
-    chassis_vy = -rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_VEL;
+    chassis_vy = rc->rc.rocker_r_ / 660.0f * CHASSIS_MAX_VEL;
     
     // 右摇杆左右控制底盘旋转
-    // 旋转：rocker_r_，范围-660~660，映射到-CHASSIS_MAX_ROTATE~CHASSIS_MAX_ROTATE
+    // 旋转：根据实机通道映射，使用rocker_l1作为右摇杆左右
+    // 范围-660~660，映射到-CHASSIS_MAX_ROTATE~CHASSIS_MAX_ROTATE
     // 根据README：wz为旋转角速度 (顺时针为正，逆时针为负)
     // 右推是顺时针（正），左推是逆时针（负）
-    chassis_wz = -rc->rc.rocker_r_ / 660.0f * CHASSIS_MAX_ROTATE;
+    chassis_wz = rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;
     
-    // 右摇杆上下控制冲刺和刹车
-    // rocker_r1范围-660~660，正值向上推（冲刺），负值向下推（刹车）
-    if (rc->rc.rocker_r1 > 50) {  // 向上推，冲刺 - 减小阈值
-        // 计算冲刺因子，从1.0到(CHASSIS_BOOST_VEL/CHASSIS_MAX_VEL)
-        boost_factor = 1.0f + (rc->rc.rocker_r1 / 660.0f) * (CHASSIS_BOOST_VEL/CHASSIS_MAX_VEL - 1.0f);
-        brake_factor = 1.0f;  // 不刹车
-    } else if (rc->rc.rocker_r1 < -50) {  // 向下推，刹车 - 减小阈值
-        // 计算刹车因子，从1.0到CHASSIS_BRAKE_FACTOR
-        brake_factor = 1.0f + (rc->rc.rocker_r1 / 660.0f) * (1.0f - CHASSIS_BRAKE_FACTOR);
-        boost_factor = 1.0f;  // 不冲刺
-    } else {
-        // 中间位置，不冲刺不刹车
-        boost_factor = 1.0f;
-        brake_factor = 1.0f;
-    }
+    // 右摇杆上下不参与控制，保持正常速度
+    boost_factor = 1.0f;
+    brake_factor = 1.0f;
     
     // 如果按键按下，可以执行特定动作（可选）
     if (rc->key[KEY_PRESS].w) {
