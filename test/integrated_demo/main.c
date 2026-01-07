@@ -100,8 +100,8 @@ static uint8_t IsRCValueReasonable(int16_t value);
 #define GM6020_SPEED_DEADZONE 30.0f
 #define RC_DEADZONE 50
 
-#define YAW_MOTOR_ID 4U   // CAN2
-#define PITCH_MOTOR_ID 3U // CAN2
+#define YAW_MOTOR_ID 2U   // CAN1
+#define PITCH_MOTOR_ID 5U // CAN2
 
 static DJIMotorInstance *yaw_motor = NULL;
 static DJIMotorInstance *pitch_motor = NULL;
@@ -345,7 +345,7 @@ static void GimbalMotorsInit(void)
 {
     Motor_Init_Config_s config = {
         .can_init_config = {
-            .can_handle = &hcan2,
+            .can_handle = &hcan1,
             .tx_id = YAW_MOTOR_ID,
         },
         .controller_param_init_config = {
@@ -359,12 +359,12 @@ static void GimbalMotorsInit(void)
                 .MaxOut = 500.0f,
             },
             .speed_PID = {
-                .Kp = 10.0f,
-                .Ki = 40.0f,
+                .Kp = 4.0f,
+                .Ki = 0.0f,
                 .Kd = 0.0f,
                 .IntegralLimit = 3000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = 20000.0f,
+                .MaxOut = 15000.0f,
             },
         },
         .controller_setting_init_config = {
@@ -379,6 +379,7 @@ static void GimbalMotorsInit(void)
 
     yaw_motor = DJIMotorInit(&config);
 
+    config.can_init_config.can_handle = &hcan2;
     config.can_init_config.tx_id = PITCH_MOTOR_ID;
     pitch_motor = DJIMotorInit(&config);
 
@@ -447,7 +448,7 @@ static void GimbalUpdate(void)
             DJIMotorSetRef(yaw_motor, 0.0f);
         }
         if (pitch_motor != NULL) {
-            DJIMotorSetRef(pitch_motor, 0.0f);
+            DJIMotorSetRef(pitch_motor, 2000.0f);
         }
         return;
     }
@@ -637,12 +638,7 @@ static void UpdateFrictionControl(void)
         DJIMotorOuterLoop(motor, SPEED_LOOP);
         DJIMotorEnable(motor);
         /* CAN2 ID1（索引0）用左摇杆前后手动控制，ID2保持固定目标 */
-        if (i == 0U) {
-            float manual = ClampFloat(friction_manual_speed, FRICTION_SPEED_MIN, FRICTION_SPEED_MAX);
-            DJIMotorSetRef(motor, manual);
-        } else {
-            DJIMotorSetRef(motor, target_speed);
-        }
+        DJIMotorSetRef(motor, target_speed);
     }
 }
 
@@ -759,7 +755,7 @@ int main(void)
     rc_data = RemoteControlInit(&huart3);
 
     LOGINFO("[integrated] demo initialized");
-    LOGINFO("[integrated] CAN1: chassis 1-4, loader 5; CAN2: friction 1/2, pitch 3, yaw 4");
+    LOGINFO("[integrated] CAN1: chassis 1-4, loader 5, yaw 2; CAN2: friction 1/2, pitch 5");
 
     uint32_t last_chassis = 0;
     uint32_t last_gimbal = 0;
