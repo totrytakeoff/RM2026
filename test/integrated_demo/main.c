@@ -1,0 +1,831 @@
+/**
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Integrated demo (mecanum chassis + gimbal + hero shooter)
+ ******************************************************************************
+ * @attention
+ *
+ * 统一遥控映射：
+ * - 底盘：左摇杆前后/左右平动，右摇杆左右旋转（摩擦轮关闭时右摇杆负责车体旋转；摩擦轮开启时右摇杆给云台，旋转回到左摇杆）
+ * - 云台：右摇杆左右控制 yaw，右摇杆上下控制 pitch（同 gimbal_demo）
+ * - 射击：左拨杆上开摩擦轮；右拨杆 下/中/上 = 单发/双发/连发；拨轮向上触发拨弹（同 hero_shoot_test）
+ *
+ * 统一 CAN 与电机 ID（避免冲突）：
+ * - CAN1: 麦轮底盘 M3508 → ID1 左前, ID2 右前, ID3 右后, ID4 左后
+ * - CAN1: 拨弹 M3508 → ID5
+ * - CAN2: 摩擦轮 M3508 → ID1 / ID2（ID2 反向）
+ * - CAN2: Pitch GM6020 → ID365E6 12
+ * - CAN2: Yaw   GM6020 → ID4
+ ******************************************************************************
+ */
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "adc.h"
+#include "can.h"
+#include "cmsis_os.h"
+#include "crc.h"
+#include "dac.h"
+#include "dma.h"
+#include "gpio.h"
+#include "i2c.h"
+#include "rng.h"
+#include "rtc.h"
+#include "spi.h"
+#include "tim.h"
+#include "usart.h"
+#include "usb_device.h"
+
+/* Private includes ----------------------------------------------------------*/
+#include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "bsp_init.h"
+#include "bsp_log.h"
+#include "daemon.h"
+#include "dji_motor.h"
+#include "remote_control.h"
+#include "user_lib.h"
+
+/* Common --------------------------------------------------------------------*/
+void SystemClock_Config(void);
+static void Debug_DisableWatchdogs(void);
+static RC_ctrl_t *rc_data = NULL;
+
+/* ============================== 底盘 ============================== */
+#define CHASSIS_MOTOR_COUNT 4U
+#define CHASSIS_UPDATE_INTERVAL_MS 20U
+#define CHASSIS_WHEEL_RADIUS 0.075f
+#define CHASSIS_WHEEL_BASE 0.34f
+#define CHASSIS_MAX_VEL 20.0f
+#define CHASSIS_MAX_ROTATE 47.0f
+#define M3508_SPEED_MAX 30000.0f
+#define M3508_SPEED_MIN (-M3508_SPEED_MAX)
+#define CHASSIS_SPEED_DEADZONE 120.0f
+#define CHASSIS_DEADZONE_VX 0.15f
+#define CHASSIS_DEADZONE_VY 0.15f
+#define CHASSIS_DEADZONE_WZ 0.2f
+#define SPEED_FILTER_COEF 0.65f
+#define MOTOR_STABILIZE_TIME_MS 2000U
+
+#define MOTOR_FRONT_LEFT 1U
+#define MOTOR_FRONT_RIGHT 2U
+#define MOTOR_BACK_RIGHT 3U
+#define MOTOR_BACK_LEFT 4U
+
+static DJIMotorInstance *chassis_motors[CHASSIS_MOTOR_COUNT] = {NULL};
+static float chassis_vx = 0.0f;
+static float chassis_vy = 0.0f;
+static float chassis_wz = 0.0f;
+static float wheel_speeds[CHASSIS_MOTOR_COUNT] = {0.0f};
+static uint8_t chassis_zero_speed = 1;
+static uint8_t chassis_stabilized = 0;
+static uint32_t system_start_time = 0;
+static float filtered_vx = 0.0f;
+static float filtered_vy = 0.0f;
+static float filtered_wz = 0.0f;
+
+static void ChassisMotorsInit(void);
+static void ChassisForceZero(void);
+static void ChassisProcessRC(void);
+static void ChassisUpdateKinematics(void);
+static uint8_t IsRCValueReasonable(int16_t value);
+
+/* ============================== 云台 ============================== */
+#define GIMBAL_UPDATE_INTERVAL_MS 20U
+#define GM6020_SPEED_MAX 3600.0f
+#define GM6020_SPEED_MIN (-GM6020_SPEED_MAX)
+#define GM6020_SPEED_DEADZONE 30.0f
+#define RC_DEADZONE 50
+
+#define YAW_MOTOR_ID 4U   // CAN2
+#define PITCH_MOTOR_ID 3U // CAN2
+
+static DJIMotorInstance *yaw_motor = NULL;
+static DJIMotorInstance *pitch_motor = NULL;
+static float yaw_speed_ref = 0.0f;
+static float pitch_speed_ref = 0.0f;
+static uint8_t gimbal_zero_speed = 1;
+
+static void GimbalMotorsInit(void);
+static void GimbalProcessRC(void);
+static void GimbalUpdate(void);
+
+/* ============================== 射击 ============================== */
+#define SHOOT_UPDATE_INTERVAL_MS 20U
+
+#define FRICTION_MOTOR_COUNT 2U
+static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
+#define LOADER_CAN_ID 5U                                               // CAN1
+
+#define FRICTION_SPEED_MAX 30000.0f
+#define FRICTION_SPEED_MIN (-FRICTION_SPEED_MAX)
+#define FRICTION_SPEED_TARGET 15000.0f
+#define FRICTION_RC_DEADZONE 50
+
+#define LOADER_SPEED_MAX 12000.0f
+#define LOADER_SPEED_MIN (-LOADER_SPEED_MAX)
+#define LOADER_ANGLE_MAX 36000.0f
+#define LOADER_ANGLE_MIN (-LOADER_ANGLE_MAX)
+#define LOADER_GEAR_RATIO 19.0f
+#define LOADER_OUTPUT_STEP_DEG 90.0f
+#define LOADER_ANGLE_STEP_DEG (LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
+#define LOADER_STEP_DIR (1.0f)  // Align single/double step direction with continuous speed
+#define LOADER_DIAL_ENABLE_THRESH 100  // 拨轮下拨超过此值才允许拨弹
+#define SHOOT_INTERVAL_MS 2000U
+#define LOADER_CONTINUOUS_SPEED 12000.0f
+
+static DJIMotorInstance *friction_motors[FRICTION_MOTOR_COUNT] = {NULL};
+static DJIMotorInstance *loader_motor = NULL;
+static uint8_t friction_enabled = 0;
+static uint8_t fire_mode = 0; // 0 single, 1 double, 2 continuous
+static uint8_t pending_shots = 0;
+static uint8_t loader_initialized = 0;
+static uint8_t loader_trigger_allowed = 0;
+static float friction_manual_speed = 0.0f;
+static float loader_target_angle = 0.0f;
+static uint32_t last_shot_tick = 0;
+static uint32_t last_step_tick = 0;
+
+static void EnsureFrictionMotorsReady(void);
+static void EnsureLoaderMotorReady(void);
+static void ShootProcessRC(void);
+static void UpdateFrictionControl(void);
+static void UpdateLoaderControl(void);
+static float ClampFloat(float value, float min, float max);
+
+/* ============================== Common Helpers ============================== */
+static void Debug_DisableWatchdogs(void)
+{
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_WWDG_STOP;
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
+}
+
+/* ============================== 底盘实现 ============================== */
+static void ChassisMotorsInit(void)
+{
+    const uint8_t motor_ids[CHASSIS_MOTOR_COUNT] = {
+        MOTOR_FRONT_LEFT, MOTOR_FRONT_RIGHT, MOTOR_BACK_RIGHT, MOTOR_BACK_LEFT
+    };
+
+    for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+        Motor_Init_Config_s config = {
+            .can_init_config = {
+                .can_handle = &hcan1,
+                .tx_id = motor_ids[i],
+            },
+            .controller_param_init_config = {
+                .angle_PID = {
+                    .Kp = 5.0f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .MaxOut = M3508_SPEED_MAX,
+                    .IntegralLimit = 500.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                },
+                .speed_PID = {
+                    .Kp = 4.0f,
+                    .Ki = 0.04f,
+                    .Kd = 0.0f,
+                    .IntegralLimit = 1000.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                    .MaxOut = 10000.0f,
+                },
+                .current_PID = {
+                    .Kp = 0.35f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .IntegralLimit = 1000.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                    .MaxOut = 8000.0f,
+                },
+            },
+            .controller_setting_init_config = {
+                .angle_feedback_source = MOTOR_FEED,
+                .speed_feedback_source = MOTOR_FEED,
+                .outer_loop_type = SPEED_LOOP,
+                .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
+                .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            },
+            .motor_type = M3508,
+        };
+
+        chassis_motors[i] = DJIMotorInit(&config);
+        if (chassis_motors[i] != NULL) {
+            DJIMotorOuterLoop(chassis_motors[i], SPEED_LOOP);
+            DJIMotorStop(chassis_motors[i]);
+        }
+    }
+}
+
+static void ChassisForceZero(void)
+{
+    for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+        if (chassis_motors[i] != NULL) {
+            DJIMotorStop(chassis_motors[i]);
+            DJIMotorSetRef(chassis_motors[i], 0.0f);
+            HAL_Delay(10);
+            DJIMotorEnable(chassis_motors[i]);
+            DJIMotorSetRef(chassis_motors[i], 0.0f);
+        }
+    }
+    chassis_vx = chassis_vy = chassis_wz = 0.0f;
+    filtered_vx = filtered_vy = filtered_wz = 0.0f;
+    chassis_zero_speed = 1;
+}
+
+static void ChassisProcessRC(void)
+{
+    if (rc_data == NULL || !RemoteControlIsOnline()) {
+        chassis_vx = chassis_vy = chassis_wz = 0.0f;
+        chassis_zero_speed = 1;
+        return;
+    }
+
+    const RC_ctrl_t *rc = &rc_data[TEMP];
+    /* Validate channels used by chassis or gimbal (right rocker no longer gated by right switch) */
+    uint8_t use_gimbal = switch_is_up(rc->rc.switch_left);
+    if (!IsRCValueReasonable(rc->rc.rocker_l_) ||
+        !IsRCValueReasonable(rc->rc.rocker_l1) ||
+        (!use_gimbal && !IsRCValueReasonable(rc->rc.rocker_r_))) {
+        chassis_vx = chassis_vy = chassis_wz = 0.0f;
+        chassis_zero_speed = 1;
+        return;
+    }
+
+    uint8_t all_in_deadzone = (fabs(rc->rc.rocker_l_) < 50) &&
+                              (fabs(rc->rc.rocker_l1) < 50) &&
+                              (use_gimbal ? 1 : (fabs(rc->rc.rocker_r_) < 50));
+
+    if (all_in_deadzone) {
+        chassis_vx = chassis_vy = chassis_wz = 0.0f;
+        chassis_zero_speed = 1;
+        return;
+    }
+
+    chassis_zero_speed = 0;
+    chassis_vx = rc->rc.rocker_l_ / 660.0f * CHASSIS_MAX_VEL;   // 左摇杆左右 -> 平移
+    if (use_gimbal) {
+        // 摩擦轮开启时，右摇杆交给云台，底盘旋转关闭（左摇杆逻辑保持原始映射）
+       chassis_wz = rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;
+    } else {
+        // 摩擦轮未开时，交换功能：左摇杆上下 -> 旋转，右摇杆左右 -> 前后
+        chassis_vy = rc->rc.rocker_r_ / 660.0f * CHASSIS_MAX_VEL;
+        chassis_wz = rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;
+    }
+
+    chassis_vx = float_deadband(chassis_vx, -CHASSIS_DEADZONE_VX, CHASSIS_DEADZONE_VX);
+    chassis_vy = float_deadband(chassis_vy, -CHASSIS_DEADZONE_VY, CHASSIS_DEADZONE_VY);
+    chassis_wz = float_deadband(chassis_wz, -CHASSIS_DEADZONE_WZ, CHASSIS_DEADZONE_WZ);
+}
+
+static void ChassisUpdateKinematics(void)
+{
+    if (!chassis_stabilized) {
+        uint32_t now = HAL_GetTick();
+        if (now - system_start_time >= MOTOR_STABILIZE_TIME_MS) {
+            for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+                if (chassis_motors[i] != NULL) {
+                    DJIMotorEnable(chassis_motors[i]);
+                }
+            }
+            chassis_stabilized = 1;
+            filtered_vx = filtered_vy = filtered_wz = 0.0f;
+        } else {
+            for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+                if (chassis_motors[i] != NULL) {
+                    DJIMotorSetRef(chassis_motors[i], 0.0f);
+                }
+            }
+            return;
+        }
+    }
+
+    if (chassis_zero_speed) {
+        for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+            if (chassis_motors[i] != NULL) {
+                DJIMotorSetRef(chassis_motors[i], 0.0f);
+            }
+        }
+        filtered_vx = filtered_vy = filtered_wz = 0.0f;
+        return;
+    }
+
+    filtered_vx = filtered_vx * SPEED_FILTER_COEF + chassis_vx * (1.0f - SPEED_FILTER_COEF);
+    filtered_vy = filtered_vy * SPEED_FILTER_COEF + chassis_vy * (1.0f - SPEED_FILTER_COEF);
+    filtered_wz = filtered_wz * SPEED_FILTER_COEF + chassis_wz * (1.0f - SPEED_FILTER_COEF);
+
+    float L = CHASSIS_WHEEL_BASE / 2.0f;
+    float v1 = filtered_vy + filtered_vx + (L * filtered_wz);
+    float v2 = filtered_vy + filtered_vx - (L * filtered_wz);
+    float v3 = filtered_vy - filtered_vx - (L * filtered_wz);
+    float v4 = filtered_vy - filtered_vx + (L * filtered_wz);
+
+    wheel_speeds[0] = v1 / CHASSIS_WHEEL_RADIUS;
+    wheel_speeds[1] = v2 / CHASSIS_WHEEL_RADIUS;
+    wheel_speeds[2] = v3 / CHASSIS_WHEEL_RADIUS;
+    wheel_speeds[3] = v4 / CHASSIS_WHEEL_RADIUS;
+
+    for (int i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+        wheel_speeds[i] = wheel_speeds[i] * 180.0f / PI;
+        if (fabs(wheel_speeds[i]) < CHASSIS_SPEED_DEADZONE) {
+            wheel_speeds[i] = 0.0f;
+        }
+        wheel_speeds[i] = float_constrain(wheel_speeds[i], M3508_SPEED_MIN, M3508_SPEED_MAX);
+        if (chassis_motors[i] != NULL) {
+            DJIMotorSetRef(chassis_motors[i], wheel_speeds[i]);
+        }
+    }
+}
+
+/* ============================== 云台实现 ============================== */
+static void GimbalMotorsInit(void)
+{
+    Motor_Init_Config_s config = {
+        .can_init_config = {
+            .can_handle = &hcan2,
+            .tx_id = YAW_MOTOR_ID,
+        },
+        .controller_param_init_config = {
+            .angle_PID = {
+                .Kp = 8.0f,
+                .Ki = 0.0f,
+                .Kd = 0.0f,
+                .DeadBand = 0.1f,
+                .IntegralLimit = 100.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                .MaxOut = 500.0f,
+            },
+            .speed_PID = {
+                .Kp = 10.0f,
+                .Ki = 40.0f,
+                .Kd = 0.0f,
+                .IntegralLimit = 3000.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                .MaxOut = 20000.0f,
+            },
+        },
+        .controller_setting_init_config = {
+            .angle_feedback_source = MOTOR_FEED,
+            .speed_feedback_source = MOTOR_FEED,
+            .outer_loop_type = SPEED_LOOP,
+            .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
+            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+        },
+        .motor_type = GM6020,
+    };
+
+    yaw_motor = DJIMotorInit(&config);
+
+    config.can_init_config.tx_id = PITCH_MOTOR_ID;
+    pitch_motor = DJIMotorInit(&config);
+
+    if (yaw_motor != NULL) {
+        DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
+        DJIMotorStop(yaw_motor);
+    }
+    if (pitch_motor != NULL) {
+        DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
+        DJIMotorStop(pitch_motor);
+    }
+}
+
+static void GimbalProcessRC(void)
+{
+    if (rc_data == NULL || !RemoteControlIsOnline()) {
+        yaw_speed_ref = 0.0f;
+        pitch_speed_ref = 0.0f;
+        gimbal_zero_speed = 1;
+        return;
+    }
+
+    const RC_ctrl_t *rc = &rc_data[TEMP];
+
+    /* Only allow gimbal when friction (left switch) is ON */
+    if (!switch_is_up(rc->rc.switch_left)) {
+        yaw_speed_ref = 0.0f;
+        pitch_speed_ref = 0.0f;
+        gimbal_zero_speed = 1;
+        return;
+    }
+
+    if (!IsRCValueReasonable(rc->rc.rocker_r_) ||
+        !IsRCValueReasonable(rc->rc.rocker_r1)) {
+        yaw_speed_ref = 0.0f;
+        pitch_speed_ref = 0.0f;
+        gimbal_zero_speed = 1;
+        return;
+    }
+
+    uint8_t all_in_deadzone = (fabs(rc->rc.rocker_r_) < RC_DEADZONE) &&
+                              (fabs(rc->rc.rocker_r1) < RC_DEADZONE);
+
+    if (all_in_deadzone) {
+        yaw_speed_ref = 0.0f;
+        pitch_speed_ref = 0.0f;
+        gimbal_zero_speed = 1;
+        return;
+    }
+
+    gimbal_zero_speed = 0;
+
+    // 右摇杆左右控制yaw，右摇杆上下控制pitch
+    yaw_speed_ref = rc->rc.rocker_r_ / 660.0f * GM6020_SPEED_MAX;
+    // 默认上推为俯仰上抬，如方向不符可调整正负号
+    pitch_speed_ref = -rc->rc.rocker_r1 / 660.0f * GM6020_SPEED_MAX;
+
+    yaw_speed_ref = float_deadband(yaw_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
+    pitch_speed_ref = float_deadband(pitch_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
+}
+
+static void GimbalUpdate(void)
+{
+    if (gimbal_zero_speed) {
+        if (yaw_motor != NULL) {
+            DJIMotorSetRef(yaw_motor, 0.0f);
+        }
+        if (pitch_motor != NULL) {
+            DJIMotorSetRef(pitch_motor, 0.0f);
+        }
+        return;
+    }
+
+    yaw_speed_ref = float_constrain(yaw_speed_ref, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
+    pitch_speed_ref = float_constrain(pitch_speed_ref, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
+
+    if (yaw_motor != NULL) {
+        DJIMotorEnable(yaw_motor);
+        DJIMotorSetRef(yaw_motor, yaw_speed_ref);
+    }
+    if (pitch_motor != NULL) {
+        DJIMotorEnable(pitch_motor);
+        DJIMotorSetRef(pitch_motor, pitch_speed_ref);
+    }
+}
+
+/* ============================== 射击实现 ============================== */
+static void EnsureFrictionMotorsReady(void)
+{
+    for (uint8_t i = 0; i < FRICTION_MOTOR_COUNT; ++i) {
+        if (friction_motors[i] != NULL) {
+            continue;
+        }
+
+        Motor_Init_Config_s config = {
+            .can_init_config = {
+                .can_handle = &hcan2,
+                .tx_id = FRICTION_CAN_IDS[i],
+            },
+            .controller_param_init_config = {
+                .angle_PID = {
+                    .Kp = 5.0f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .MaxOut = FRICTION_SPEED_MAX,
+                    .IntegralLimit = 500.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                },
+                .speed_PID = {
+                    .Kp = 10.0f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .IntegralLimit = 3000.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                    .MaxOut = 12000.0f,
+                },
+                .current_PID = {
+                    .Kp = 0.5f,
+                    .Ki = 0.0f,
+                    .Kd = 0.0f,
+                    .IntegralLimit = 3000.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                    .MaxOut = 15000.0f,
+                },
+            },
+            .controller_setting_init_config = {
+                .angle_feedback_source = MOTOR_FEED,
+                .speed_feedback_source = MOTOR_FEED,
+                .outer_loop_type = SPEED_LOOP,
+                .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
+                .motor_reverse_flag = (i == 1U) ? MOTOR_DIRECTION_REVERSE : MOTOR_DIRECTION_NORMAL,
+            },
+            .motor_type = M3508,
+        };
+
+        friction_motors[i] = DJIMotorInit(&config);
+    }
+}
+
+static void EnsureLoaderMotorReady(void)
+{
+    if (loader_motor != NULL) {
+        return;
+    }
+
+    Motor_Init_Config_s config = {
+        .can_init_config = {
+            .can_handle = &hcan1,
+            .tx_id = LOADER_CAN_ID,
+        },
+        .controller_param_init_config = {
+            .angle_PID = {
+                .Kp = 5.0f,
+                .Ki = 0.0f,
+                .Kd = 0.0f,
+                .MaxOut = LOADER_SPEED_MAX,
+                .IntegralLimit = 500.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+            },
+            .speed_PID = {
+                .Kp = 12.0f,
+                .Ki = 0.0f,
+                .Kd = 0.0f,
+                .IntegralLimit = 3000.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                .MaxOut = 16000.0f,
+            },
+            .current_PID = {
+                .Kp = 0.6f,
+                .Ki = 0.0f,
+                .Kd = 0.0f,
+                .IntegralLimit = 3000.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                .MaxOut = 20000.0f,
+            },
+        },
+        .controller_setting_init_config = {
+            .angle_feedback_source = MOTOR_FEED,
+            .speed_feedback_source = MOTOR_FEED,
+            .outer_loop_type = SPEED_LOOP,
+            .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
+            // Loader installed opposite to logical forward; reverse direction to match trigger intent.
+            .motor_reverse_flag = MOTOR_DIRECTION_REVERSE,
+        },
+        .motor_type = M3508,
+    };
+
+    loader_motor = DJIMotorInit(&config);
+}
+
+static void ShootProcessRC(void)
+{
+    if (rc_data == NULL || !RemoteControlIsOnline()) {
+        friction_enabled = 0;
+        return;
+    }
+
+    const RC_ctrl_t *rc = &rc_data[TEMP];
+    friction_enabled = switch_is_up(rc->rc.switch_left);
+    loader_trigger_allowed = friction_enabled && (rc->rc.dial > LOADER_DIAL_ENABLE_THRESH);
+    if (friction_enabled) {
+        friction_manual_speed = rc->rc.rocker_l1 / 660.0f * FRICTION_SPEED_MAX;
+        friction_manual_speed = float_deadband(friction_manual_speed, -FRICTION_RC_DEADZONE, FRICTION_RC_DEADZONE);
+    } else {
+        friction_manual_speed = 0.0f;
+    }
+
+    if (switch_is_down(rc->rc.switch_right)) {
+        fire_mode = 0;
+    } else if (switch_is_mid(rc->rc.switch_right)) {
+        fire_mode = 1;
+    } else {
+        fire_mode = 2;
+    }
+
+    if (!friction_enabled || !loader_trigger_allowed) {
+        pending_shots = 0;
+        loader_initialized = 0;
+        return;
+    }
+
+    if (fire_mode == 2) {
+        pending_shots = 0;
+        return;
+    }
+
+    if (pending_shots == 0) {
+        uint32_t now = HAL_GetTick();
+        if (now - last_shot_tick >= SHOOT_INTERVAL_MS) {
+            pending_shots = (fire_mode == 0) ? 1 : 2;
+            last_shot_tick = now;
+            last_step_tick = now - SHOOT_INTERVAL_MS;
+        }
+    }
+}
+
+static void UpdateFrictionControl(void)
+{
+    EnsureFrictionMotorsReady();
+
+    if (!friction_enabled) {
+        for (uint8_t i = 0; i < FRICTION_MOTOR_COUNT; ++i) {
+            if (friction_motors[i] != NULL) {
+                DJIMotorStop(friction_motors[i]);
+            }
+        }
+        return;
+    }
+
+    float target_speed = ClampFloat(FRICTION_SPEED_TARGET, FRICTION_SPEED_MIN, FRICTION_SPEED_MAX);
+    for (uint8_t i = 0; i < FRICTION_MOTOR_COUNT; ++i) {
+        DJIMotorInstance *motor = friction_motors[i];
+        if (motor == NULL) {
+            continue;
+        }
+        DJIMotorOuterLoop(motor, SPEED_LOOP);
+        DJIMotorEnable(motor);
+        /* CAN2 ID1（索引0）用左摇杆前后手动控制，ID2保持固定目标 */
+        if (i == 0U) {
+            float manual = ClampFloat(friction_manual_speed, FRICTION_SPEED_MIN, FRICTION_SPEED_MAX);
+            DJIMotorSetRef(motor, manual);
+        } else {
+            DJIMotorSetRef(motor, target_speed);
+        }
+    }
+}
+
+static void UpdateLoaderControl(void)
+{
+    EnsureLoaderMotorReady();
+
+    if (!friction_enabled || !loader_trigger_allowed || loader_motor == NULL) {
+        if (loader_motor != NULL) {
+            DJIMotorStop(loader_motor);
+        }
+        pending_shots = 0;
+        loader_initialized = 0;
+        return;
+    }
+
+    uint32_t now = HAL_GetTick();
+    if (fire_mode == 2) {
+        pending_shots = 0;
+        loader_initialized = 0;
+        float speed_ref = ClampFloat(LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
+        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+        DJIMotorEnable(loader_motor);
+        DJIMotorSetRef(loader_motor, speed_ref);
+        return;
+    }
+
+    if (!loader_initialized) {
+        loader_target_angle = ClampFloat(loader_motor->measure.total_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
+        if (pending_shots > 0) {
+            last_step_tick = now - SHOOT_INTERVAL_MS;
+        } else {
+            last_step_tick = now;
+        }
+        loader_initialized = 1;
+    }
+
+    if (pending_shots > 0) {
+        uint32_t elapsed = now - last_step_tick;
+        if (elapsed >= SHOOT_INTERVAL_MS) {
+            uint32_t steps = elapsed / SHOOT_INTERVAL_MS;
+            if (steps > pending_shots) {
+                steps = pending_shots;
+            }
+            last_step_tick += steps * SHOOT_INTERVAL_MS;
+            loader_target_angle += LOADER_STEP_DIR * LOADER_ANGLE_STEP_DEG * (float)steps;
+            loader_target_angle = ClampFloat(loader_target_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
+            pending_shots -= (uint8_t)steps;
+        }
+    } else {
+        DJIMotorStop(loader_motor);
+        return;
+    }
+
+    DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
+    DJIMotorEnable(loader_motor);
+    DJIMotorSetRef(loader_motor, loader_target_angle);
+}
+
+static float ClampFloat(float value, float min, float max)
+{
+    if (value < min) {
+        return min;
+    }
+    if (value > max) {
+        return max;
+    }
+    return value;
+}
+
+/* ============================== 公共工具 ============================== */
+static uint8_t IsRCValueReasonable(int16_t value)
+{
+    return (value >= -660 && value <= 660);
+}
+
+/* ============================== 主函数 ============================== */
+int main(void)
+{
+    HAL_Init();
+    Debug_DisableWatchdogs();
+    SystemClock_Config();
+
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_ADC1_Init();
+    MX_CAN1_Init();
+    MX_CAN2_Init();
+    MX_SPI1_Init();
+    MX_TIM4_Init();
+    MX_TIM5_Init();
+    MX_USART3_UART_Init();
+    MX_RNG_Init();
+    MX_RTC_Init();
+    MX_TIM1_Init();
+    MX_TIM10_Init();
+    MX_USART1_UART_Init();
+    MX_USART6_UART_Init();
+    MX_TIM8_Init();
+    MX_I2C2_Init();
+    MX_I2C3_Init();
+    MX_SPI2_Init();
+    MX_CRC_Init();
+    MX_DAC_Init();
+
+    BSPInit();
+
+    ChassisMotorsInit();
+    ChassisForceZero();
+    system_start_time = HAL_GetTick();
+
+    GimbalMotorsInit();
+
+    rc_data = RemoteControlInit(&huart3);
+
+    LOGINFO("[integrated] demo initialized");
+    LOGINFO("[integrated] CAN1: chassis 1-4, loader 5; CAN2: friction 1/2, pitch 3, yaw 4");
+
+    uint32_t last_chassis = 0;
+    uint32_t last_gimbal = 0;
+    uint32_t last_shoot = 0;
+
+    while (1) {
+        DaemonTask();
+        DJIMotorControl();
+
+        uint32_t now = HAL_GetTick();
+        if (now - last_chassis >= CHASSIS_UPDATE_INTERVAL_MS) {
+            last_chassis = now;
+            ChassisProcessRC();
+            ChassisUpdateKinematics();
+        }
+        if (now - last_gimbal >= GIMBAL_UPDATE_INTERVAL_MS) {
+            last_gimbal = now;
+            GimbalProcessRC();
+            GimbalUpdate();
+        }
+        if (now - last_shoot >= SHOOT_UPDATE_INTERVAL_MS) {
+            last_shoot = now;
+            ShootProcessRC();
+            UpdateFrictionControl();
+            UpdateLoaderControl();
+        }
+
+        HAL_Delay(5);
+    }
+}
+
+void SystemClock_Config(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+    RCC_OscInitStruct.PLL.PLLM = 6;
+    RCC_OscInitStruct.PLL.PLLN = 168;
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+    RCC_OscInitStruct.PLL.PLLQ = 7;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+        Error_Handler();
+    }
+
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
+                                  RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM14) {
+        HAL_IncTick();
+    }
+}
