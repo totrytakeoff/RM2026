@@ -79,27 +79,30 @@ static void ET08_FillCtrl(const uint16_t *ch, uint8_t flags, ET08_Ctrl_t *ctrl)
 {
     memset(ctrl, 0, sizeof(*ctrl));
 
-    for (uint8_t i = 0; i < ET08_CHANNEL_COUNT; ++i)
-    {
-        ctrl->raw[i] = ch[i];
-        ctrl->centered[i] = (int16_t)ch[i] - ET08_CHANNEL_CENTER;
+    for (uint8_t i = 0; i < ET08_CHANNEL_COUNT_FULL; ++i) {
+        ctrl->raw_full[i] = ch[i];
+        ctrl->centered_full[i] = (int16_t)ch[i] - ET08_CHANNEL_CENTER;
+        if (i < ET08_CHANNEL_COUNT) {
+            ctrl->raw[i] = ch[i];
+            ctrl->centered[i] = (int16_t)ch[i] - ET08_CHANNEL_CENTER;
+        }
     }
 
-    ctrl->right.x = ctrl->centered[ET08_CH1];
-    ctrl->right.y = ctrl->centered[ET08_CH2];
-    ctrl->left.y = ctrl->centered[ET08_CH3];
-    ctrl->left.x = ctrl->centered[ET08_CH4];
+    ctrl->right.x = ctrl->centered[ET08_MAP_RIGHT_X_CH];
+    ctrl->right.y = ctrl->centered[ET08_MAP_RIGHT_Y_CH];
+    ctrl->left.y = ctrl->centered[ET08_MAP_LEFT_Y_CH];
+    ctrl->left.x = ctrl->centered[ET08_MAP_LEFT_X_CH];
 
-    ctrl->switch_sa_sb_raw = ctrl->raw[ET08_CH5];
-    ctrl->switch_sa_sb_centered = ctrl->centered[ET08_CH5];
+    ctrl->switch_sa_sb_raw = ctrl->raw[ET08_MAP_SA_SB_CH];
+    ctrl->switch_sa_sb_centered = ctrl->centered[ET08_MAP_SA_SB_CH];
     ctrl->switch_sa_sb_state = ET08_MapSwitchState(ctrl->switch_sa_sb_raw);
 
-    ctrl->switch_sd_sc_raw = ctrl->raw[ET08_CH6];
-    ctrl->switch_sd_sc_centered = ctrl->centered[ET08_CH6];
+    ctrl->switch_sd_sc_raw = ctrl->raw[ET08_MAP_SD_SC_CH];
+    ctrl->switch_sd_sc_centered = ctrl->centered[ET08_MAP_SD_SC_CH];
     ctrl->switch_sd_sc_state = ET08_MapSwitchState(ctrl->switch_sd_sc_raw);
 
-    ctrl->knob_left = ctrl->centered[ET08_CH7];
-    ctrl->knob_right = ctrl->centered[ET08_CH8];
+    ctrl->knob_left = ctrl->centered[ET08_MAP_KNOB_LEFT_CH];
+    ctrl->knob_right = ctrl->centered[ET08_MAP_KNOB_RIGHT_CH];
 
     ctrl->frame_lost = (flags & 0x04u) ? 1u : 0u;
     ctrl->failsafe = (flags & 0x08u) ? 1u : 0u;

@@ -5,6 +5,7 @@
 #include "main.h"
 
 #define ET08_CHANNEL_COUNT 8
+#define ET08_CHANNEL_COUNT_FULL 16
 #define ET08_CHANNEL_CENTER 1024
 #define ET08_SWITCH_LEVEL_COUNT 6
 
@@ -30,6 +31,39 @@ typedef enum
     ET08_CH8 = 7,
 } ET08_Channel_t;
 
+// ---------------- Channel Mapping (tunable) ----------------
+// If your transmitter/receiver channel assignment differs, adjust these macros.
+// Default mapping follows the original implementation:
+// - Right stick: CH1/CH2
+// - Left stick : CH4/CH3
+// - SA/SB      : CH5
+// - SD/SC      : CH6
+// - Knobs      : CH7/CH8
+#ifndef ET08_MAP_RIGHT_X_CH
+#define ET08_MAP_RIGHT_X_CH ET08_CH1
+#endif
+#ifndef ET08_MAP_RIGHT_Y_CH
+#define ET08_MAP_RIGHT_Y_CH ET08_CH2
+#endif
+#ifndef ET08_MAP_LEFT_Y_CH
+#define ET08_MAP_LEFT_Y_CH ET08_CH3
+#endif
+#ifndef ET08_MAP_LEFT_X_CH
+#define ET08_MAP_LEFT_X_CH ET08_CH4
+#endif
+#ifndef ET08_MAP_SA_SB_CH
+#define ET08_MAP_SA_SB_CH ET08_CH5
+#endif
+#ifndef ET08_MAP_SD_SC_CH
+#define ET08_MAP_SD_SC_CH ET08_CH6
+#endif
+#ifndef ET08_MAP_KNOB_LEFT_CH
+#define ET08_MAP_KNOB_LEFT_CH ET08_CH7
+#endif
+#ifndef ET08_MAP_KNOB_RIGHT_CH
+#define ET08_MAP_KNOB_RIGHT_CH ET08_CH8
+#endif
+
 typedef struct
 {
     int16_t x;
@@ -40,6 +74,10 @@ typedef struct
 {
     uint16_t raw[ET08_CHANNEL_COUNT];
     int16_t centered[ET08_CHANNEL_COUNT];
+
+    // Full 16 SBUS channels (for debugging / remapping).
+    uint16_t raw_full[ET08_CHANNEL_COUNT_FULL];
+    int16_t centered_full[ET08_CHANNEL_COUNT_FULL];
 
     ET08_Stick_t right;
     ET08_Stick_t left;
