@@ -59,7 +59,7 @@
 #define CHASSIS_BOOST_VEL 30.0f        // 提高冲刺速度(m/s)
 #define CHASSIS_BRAKE_FACTOR 0.2f      // 刹车因子，0表示完全停止，1表示不刹车
 
-#define M3508_SPEED_MAX 30000.0f    // deg/s, ~83.3 rps
+#define M3508_SPEED_MAX 10000.0f    // deg/s, ~83.3 rps
 #define M3508_SPEED_MIN (-M3508_SPEED_MAX)
 
 // 速度倍增因子，用于提高整体响应速度

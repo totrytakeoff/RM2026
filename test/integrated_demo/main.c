@@ -60,8 +60,8 @@ static RC_ctrl_t *rc_data = NULL;
 #define CHASSIS_WHEEL_RADIUS 0.075f
 #define CHASSIS_WHEEL_BASE 0.34f
 #define CHASSIS_MAX_VEL 20.0f
-#define CHASSIS_MAX_ROTATE 47.0f
-#define M3508_SPEED_MAX 30000.0f
+#define CHASSIS_MAX_ROTATE 120.0f
+#define M3508_SPEED_MAX 50000.0f
 #define M3508_SPEED_MIN (-M3508_SPEED_MAX)
 #define CHASSIS_SPEED_DEADZONE 120.0f
 #define CHASSIS_DEADZONE_VX 0.15f
@@ -99,6 +99,7 @@ static uint8_t IsRCValueReasonable(int16_t value);
 #define GM6020_SPEED_MIN (-GM6020_SPEED_MAX)
 #define GM6020_SPEED_DEADZONE 30.0f
 #define RC_DEADZONE 50
+#define PITCH_GRAVITY_COMP 2500.0f
 
 #define YAW_MOTOR_ID 2U   // CAN1
 #define PITCH_MOTOR_ID 5U // CAN2
@@ -122,7 +123,7 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 
 #define FRICTION_SPEED_MAX 30000.0f
 #define FRICTION_SPEED_MIN (-FRICTION_SPEED_MAX)
-#define FRICTION_SPEED_TARGET 15000.0f
+#define FRICTION_SPEED_TARGET 30000.0f  // 提高摩擦轮转速
 #define FRICTION_RC_DEADZONE 50
 
 #define LOADER_SPEED_MAX 12000.0f
@@ -387,6 +388,8 @@ static void GimbalMotorsInit(void)
 
     config.can_init_config.can_handle = &hcan2;
     config.can_init_config.tx_id = PITCH_MOTOR_ID;
+    config.controller_param_init_config.speed_PID.Ki = 0.02f;
+    config.controller_param_init_config.speed_PID.MaxOut = 20000.0f;
     pitch_motor = DJIMotorInit(&config);
 
     if (yaw_motor != NULL) {
@@ -454,7 +457,7 @@ static void GimbalUpdate(void)
             DJIMotorSetRef(yaw_motor, 0.0f);
         }
         if (pitch_motor != NULL) {
-            DJIMotorSetRef(pitch_motor, 2000.0f);
+            DJIMotorSetRef(pitch_motor, PITCH_GRAVITY_COMP);
         }
         return;
     }
