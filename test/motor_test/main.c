@@ -667,6 +667,7 @@ static void EnsureDM8009PMotorReady(void) {
             /* Demo 建议不要每次上电都“保存零位”（可能会影响标定）；需要时手动调用
                DMMotor_SaveZero() */
             .auto_zero_position = false,
+            .use_shared_feedback_id = true,
             .position_range = DM_P_RANGE,
             .velocity_range = DM_V_RANGE,
             .torque_range = DM_T_RANGE,

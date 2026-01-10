@@ -25,13 +25,26 @@
 #define IMU_REQUEST_INTERVAL_MS 20U
 #define IMU_PRINT_INTERVAL_MS 50U
 #define IMU_HEARTBEAT_INTERVAL_MS 1000U
+#define IMU_SCAN_PRINT_INTERVAL_MS 1000U
+
+#define IMU_SCAN_ENABLE 0
+/* CAN2 filter banks allow 14 IDs; adjust if you want to scan other ranges. */
+#define IMU_SCAN_ID_START 0x00
+#define IMU_SCAN_ID_COUNT 14U
 
 #define IMU_ID 0x01
 #define IMU_MASTER_ID 0x00
-#define IMU_RX_ID ((IMU_MASTER_ID << 4) | (IMU_ID & 0x0F))
+#define IMU_RX_ID (IMU_MASTER_ID)
 
 static USARTInstance *usart6_ = NULL;
 static dm_imu_t dm_imu;
+#if IMU_SCAN_ENABLE
+static CANInstance *imu_scan_can[IMU_SCAN_ID_COUNT] = {0};
+static CANInstance *imu_tx_can = NULL;
+static uint32_t imu_scan_count[IMU_SCAN_ID_COUNT] = {0};
+static uint8_t imu_scan_last_type[IMU_SCAN_ID_COUNT] = {0};
+static uint32_t imu_scan_last_ms[IMU_SCAN_ID_COUNT] = {0};
+#endif
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -62,6 +75,7 @@ static void TelemetrySend(const char *msg)
     }
 }
 
+#if !IMU_SCAN_ENABLE
 static void ImuInit(void)
 {
     dm_imu_can_config_t can_cfg = {
@@ -80,7 +94,80 @@ static void ImuRequestOnce(void)
     dm_imu_can_request_euler(&dm_imu);
     dm_imu_can_request_quat(&dm_imu);
 }
+#endif
 
+#if IMU_SCAN_ENABLE
+static void ImuScanRxCallback(CANInstance *instance)
+{
+    if (!instance || instance->rx_len < 1)
+        return;
+    uint16_t rx_id = (uint16_t)instance->rx_id;
+    if (rx_id < IMU_SCAN_ID_START || rx_id >= (IMU_SCAN_ID_START + IMU_SCAN_ID_COUNT))
+        return;
+    uint8_t idx = (uint8_t)(rx_id - IMU_SCAN_ID_START);
+    imu_scan_count[idx]++;
+    imu_scan_last_type[idx] = instance->rx_buff[0];
+    imu_scan_last_ms[idx] = HAL_GetTick();
+}
+
+static void ImuScanInit(void)
+{
+    for (uint8_t i = 0; i < IMU_SCAN_ID_COUNT; ++i)
+    {
+        uint16_t rx_id = (uint16_t)(IMU_SCAN_ID_START + i);
+        CAN_Init_Config_s can_cfg = {
+            .can_handle = &hcan2,
+            .tx_id = IMU_ID,
+            .rx_id = rx_id,
+            .can_module_callback = ImuScanRxCallback,
+            .id = NULL,
+        };
+        imu_scan_can[i] = CANRegister(&can_cfg);
+    }
+    imu_tx_can = imu_scan_can[0];
+}
+
+static void ImuScanRequest(uint8_t rid)
+{
+    if (!imu_tx_can)
+        return;
+    imu_tx_can->tx_buff[0] = 0xCC;
+    imu_tx_can->tx_buff[1] = rid;
+    imu_tx_can->tx_buff[2] = 0x00;
+    imu_tx_can->tx_buff[3] = 0xDD;
+    memset(&imu_tx_can->tx_buff[4], 0, 4);
+    CANSetDLC(imu_tx_can, 8);
+    CANTransmit(imu_tx_can, 1);
+}
+
+static void ImuScanRequestOnce(void)
+{
+    ImuScanRequest(0x01);
+    ImuScanRequest(0x02);
+    ImuScanRequest(0x03);
+    ImuScanRequest(0x04);
+}
+
+static void ImuScanPrint(void)
+{
+    for (uint8_t i = 0; i < IMU_SCAN_ID_COUNT; ++i)
+    {
+        if (imu_scan_count[i] == 0)
+            continue;
+        uint16_t rx_id = (uint16_t)(IMU_SCAN_ID_START + i);
+        char buffer[120];
+        safe_snprintf(buffer, sizeof(buffer),
+                      "imu_scan: rx=0x%02X cnt=%lu last_type=0x%02X age=%lu\r\n",
+                      (unsigned)rx_id,
+                      (unsigned long)imu_scan_count[i],
+                      (unsigned)imu_scan_last_type[i],
+                      (unsigned long)(HAL_GetTick() - imu_scan_last_ms[i]));
+        TelemetrySend(buffer);
+    }
+}
+#endif
+
+#if !IMU_SCAN_ENABLE
 static void ImuPrintIfReady(void)
 {
     dm_imu_data_t data;
@@ -97,6 +184,7 @@ static void ImuPrintIfReady(void)
                   (unsigned)data.valid_mask);
     TelemetrySend(buffer);
 }
+#endif
 
 int main(void)
 {
@@ -111,7 +199,11 @@ int main(void)
     BSPInit();
 
     Usart6Init();
+#if IMU_SCAN_ENABLE
+    ImuScanInit();
+#else
     ImuInit();
+#endif
 
     TelemetrySend("wheelleg_imu: start\r\n");
 
@@ -125,9 +217,20 @@ int main(void)
         if (now - last_request_tick >= IMU_REQUEST_INTERVAL_MS)
         {
             last_request_tick = now;
+#if IMU_SCAN_ENABLE
+            ImuScanRequestOnce();
+#else
             ImuRequestOnce();
+#endif
         }
 
+#if IMU_SCAN_ENABLE
+        if (now - last_print_tick >= IMU_SCAN_PRINT_INTERVAL_MS)
+        {
+            last_print_tick = now;
+            ImuScanPrint();
+        }
+#else
         if (now - last_print_tick >= IMU_PRINT_INTERVAL_MS)
         {
             last_print_tick = now;
@@ -147,6 +250,7 @@ int main(void)
                           (unsigned)dm_imu_is_alive(&dm_imu, 500));
             TelemetrySend(buffer);
         }
+#endif
 
         HAL_Delay(2);
     }

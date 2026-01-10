@@ -27,8 +27,9 @@ typedef enum
  * @note
  * - motor_id：电机拨码设定的 CAN ID（用于发送控制帧/使能帧）
  * - master_id：上位机显示的 Master ID（4bit），或“完整反馈 StdId”
- *   - 若 <= 0x0F：视为 Master ID(4bit)，反馈 StdId 自动计算为 (master<<4)|(motor&0x0F)
- *   - 否则：视为你已给出完整反馈 StdId（用于适配框架严格 CAN 过滤器）
+ *   - 若 use_shared_feedback_id = false 且 master_id <= 0x0F：反馈 StdId 计算为 (master<<4)|(motor&0x0F)
+ *   - 若 use_shared_feedback_id = true：反馈 StdId 使用 master_id（多电机共用同一反馈 ID）
+ *   - 若 master_id > 0x0F：视为你已给出完整反馈 StdId（用于适配框架严格 CAN 过滤器）
  */
 typedef struct
 {
@@ -45,6 +46,7 @@ typedef struct
     bool auto_clear_error;
     bool auto_enable_mit;
     bool auto_zero_position;
+    bool use_shared_feedback_id;
 } DMMotor_InitConfig;
 
 typedef struct
@@ -108,4 +110,3 @@ void DMMotor_SaveRegisters(DMMotor_Handle *motor);
 #endif
 
 #endif
-

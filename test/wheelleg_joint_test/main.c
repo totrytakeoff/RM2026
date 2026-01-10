@@ -15,6 +15,7 @@
 #include "tim.h"
 #include "usart.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,6 +32,8 @@
 #define ENABLE_INTERVAL_MS 100U
 #define TELEMETRY_INTERVAL_MS 100U
 #define CMD_BUFFER_LEN 64U
+#define VOFA_MAX_FLOATS 24U
+#define TELEMETRY_VOFA_DEFAULT 1U
 
 #define FRONT_LEFT_ID 1U
 #define REAR_LEFT_ID 2U
@@ -108,6 +111,7 @@ static float knee_right_offset = 0.0f;
 static char cmd_buffer[CMD_BUFFER_LEN];
 static uint8_t cmd_index = 0;
 static uint8_t cmd_active = 0;
+static uint8_t vofa_enabled = TELEMETRY_VOFA_DEFAULT;
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -168,6 +172,7 @@ static void JointInit(JointState *joint, uint8_t motor_id, float kp, float kd, f
         .auto_clear_error = true,
         .auto_enable_mit = false,
         .auto_zero_position = false,
+        .use_shared_feedback_id = true,
         .position_range = DM_P_RANGE,
         .velocity_range = DM_V_RANGE,
         .torque_range = DM_T_RANGE,
@@ -358,12 +363,16 @@ static void ProcessCommand(const char *cmd)
         rear_left.t_ff = value;
         rear_right.t_ff = value;
     }
+    else if (strcmp(key, "VOFA") == 0)
+    {
+        vofa_enabled = (value != 0.0f) ? 1U : 0U;
+    }
     else
     {
         return;
     }
 
-    if (telemetry_usart)
+    if (telemetry_usart && !vofa_enabled)
     {
         char buffer[80];
         safe_snprintf(buffer, sizeof(buffer), "cmd ok: %s=%.3f\r\n", key, value);
@@ -406,6 +415,34 @@ static void TelemetryRxCallback(void)
             cmd_buffer[cmd_index++] = c;
         }
     }
+}
+
+static void TelemetrySendVofaFrame(const float *values, size_t count)
+{
+    if (!telemetry_usart || !values || count == 0)
+        return;
+
+    uint8_t buffer[4 * VOFA_MAX_FLOATS + 4];
+    if (count > VOFA_MAX_FLOATS)
+        count = VOFA_MAX_FLOATS;
+
+    size_t offset = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        memcpy(&buffer[offset], &values[i], sizeof(float));
+        offset += sizeof(float);
+    }
+
+    union
+    {
+        uint32_t u;
+        float f;
+    } inf_marker;
+    inf_marker.u = 0x7F800000u;
+    memcpy(&buffer[offset], &inf_marker.f, sizeof(float));
+    offset += sizeof(float);
+
+    USARTSend(telemetry_usart, buffer, (uint16_t)offset, USART_TRANSFER_BLOCKING);
 }
 
 static uint8_t IsSaDown(const ET08_Ctrl_t *ctrl)
@@ -501,11 +538,9 @@ static void ProcessRemoteControl(float dt_sec)
     knee_left_target += KNEE_LEFT_SIGN * knee_left_step;
     knee_right_target += KNEE_RIGHT_SIGN * knee_right_step;
 
-    // Hip joints can rotate freely: wrap within DM_P_RANGE
-    while (hip_left_target > DM_P_RANGE) hip_left_target -= 2.0f * DM_P_RANGE;
-    while (hip_left_target < -DM_P_RANGE) hip_left_target += 2.0f * DM_P_RANGE;
-    while (hip_right_target > DM_P_RANGE) hip_right_target -= 2.0f * DM_P_RANGE;
-    while (hip_right_target < -DM_P_RANGE) hip_right_target += 2.0f * DM_P_RANGE;
+    // Hip joints: clamp to avoid wrap-around reversal near +/-P_RANGE.
+    hip_left_target = ClampFloat(hip_left_target, -DM_P_RANGE, DM_P_RANGE);
+    hip_right_target = ClampFloat(hip_right_target, -DM_P_RANGE, DM_P_RANGE);
 
     // Knee limits relative to the front limit block (zero).
     float knee_min = DM_DegToRad(KNEE_MIN_DEG);
@@ -528,10 +563,8 @@ static void ProcessRemoteControl(float dt_sec)
     rear_left.target_p = hip_left_cmd + knee_left_cmd;
     rear_right.target_p = hip_right_cmd + knee_right_cmd;
 
-    while (rear_left.target_p > DM_P_RANGE) rear_left.target_p -= 2.0f * DM_P_RANGE;
-    while (rear_left.target_p < -DM_P_RANGE) rear_left.target_p += 2.0f * DM_P_RANGE;
-    while (rear_right.target_p > DM_P_RANGE) rear_right.target_p -= 2.0f * DM_P_RANGE;
-    while (rear_right.target_p < -DM_P_RANGE) rear_right.target_p += 2.0f * DM_P_RANGE;
+    rear_left.target_p = ClampFloat(rear_left.target_p, -DM_P_RANGE, DM_P_RANGE);
+    rear_right.target_p = ClampFloat(rear_right.target_p, -DM_P_RANGE, DM_P_RANGE);
 }
 
 static void TelemetryTick(void)
@@ -548,11 +581,37 @@ static void TelemetryTick(void)
     float rear_l_pos = rear_l ? rear_l->position_rad : 0.0f;
     float front_r_pos = front_r ? front_r->position_rad : 0.0f;
     float rear_r_pos = rear_r ? rear_r->position_rad : 0.0f;
+    float front_l_tq = front_l ? front_l->torque : 0.0f;
+    float rear_l_tq = rear_l ? rear_l->torque : 0.0f;
+    float front_r_tq = front_r ? front_r->torque : 0.0f;
+    float rear_r_tq = rear_r ? rear_r->torque : 0.0f;
+    float front_l_temp = front_l ? front_l->mos_temp : 0.0f;
+    float rear_l_temp = rear_l ? rear_l->mos_temp : 0.0f;
+    float front_r_temp = front_r ? front_r->mos_temp : 0.0f;
+    float rear_r_temp = rear_r ? rear_r->mos_temp : 0.0f;
+
+    if (vofa_enabled)
+    {
+        float values[] = {
+            front_l_pos, rear_l_pos, front_r_pos, rear_r_pos,
+            hip_left_target, hip_right_target, knee_left_target, knee_right_target,
+            front_l_tq, rear_l_tq, front_r_tq, rear_r_tq,
+            front_l_temp, rear_l_temp, front_r_temp, rear_r_temp,
+            (float)(front_l ? front_l->error_state : 0xFF),
+            (float)(rear_l ? rear_l->error_state : 0xFF),
+            (float)(front_r ? front_r->error_state : 0xFF),
+            (float)(rear_r ? rear_r->error_state : 0xFF),
+        };
+        TelemetrySendVofaFrame(values, sizeof(values) / sizeof(values[0]));
+        return;
+    }
 
     char buffer[160];
     safe_snprintf(buffer, sizeof(buffer),
-                  "pos(rad) FL:%.3f RL:%.3f FR:%.3f RR:%.3f | hip[%.3f %.3f] knee[%.3f %.3f] | err[%02X %02X %02X %02X]\r\n",
+                  "pos FL:%.3f RL:%.3f FR:%.3f RR:%.3f | tq FL:%.1f RL:%.1f FR:%.1f RR:%.1f | tM FL:%.1f RL:%.1f FR:%.1f RR:%.1f | hip[%.3f %.3f] knee[%.3f %.3f] | err[%02X %02X %02X %02X]\r\n",
                   front_l_pos, rear_l_pos, front_r_pos, rear_r_pos,
+                  front_l_tq, rear_l_tq, front_r_tq, rear_r_tq,
+                  front_l_temp, rear_l_temp, front_r_temp, rear_r_temp,
                   hip_left_target, hip_right_target, knee_left_target, knee_right_target,
                   (unsigned)(front_l ? front_l->error_state : 0xFF),
                   (unsigned)(rear_l ? rear_l->error_state : 0xFF),

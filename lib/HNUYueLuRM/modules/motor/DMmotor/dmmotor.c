@@ -10,6 +10,8 @@
 #define DM_DEFAULT_T_MAX 54.0f
 #define DM_DEFAULT_KP_MAX 500.0f
 #define DM_DEFAULT_KD_MAX 5.0f
+#define DM_SHARED_BUS_MAX 4U
+#define DM_SHARED_MOTOR_MAX 16U
 
 static float clampf(float value, float min, float max)
 {
@@ -39,13 +41,27 @@ static float uint_to_float(int value, float x_min, float x_max, uint8_t bits)
     return ((float)value) * span / ((float)((1U << bits) - 1U)) + x_min;
 }
 
+typedef struct DMMotor_Handle DMMotor_Handle;
+
+typedef struct
+{
+    CAN_HandleTypeDef *can_handle;
+    uint16_t rx_id;
+    CANInstance *can_instance;
+    DMMotor_Handle *motor_map[DM_SHARED_MOTOR_MAX];
+} DMMotor_SharedBus;
+
 struct DMMotor_Handle
 {
     CANInstance *command_can;
     DMMotor_InitConfig config;
     DMMotor_Feedback feedback;
+    DMMotor_SharedBus *shared_bus;
     uint8_t mode_enabled[4];
 };
+
+static DMMotor_SharedBus dm_shared_bus[DM_SHARED_BUS_MAX];
+static uint8_t dm_shared_bus_count = 0;
 
 static void DMMotor_SendFrame(DMMotor_Handle *motor, uint32_t id, const uint8_t *payload, uint8_t len)
 {
@@ -69,11 +85,8 @@ static void DMMotor_SendModeCommand(DMMotor_Handle *motor, DMMotor_Mode mode, ui
     DMMotor_SendFrame(motor, motor->config.motor_id + mode, frame, sizeof(frame));
 }
 
-static void DMMotor_Decode(CANInstance *instance)
+static void DMMotor_ParseFeedback(DMMotor_Handle *motor, const uint8_t *rx)
 {
-    DMMotor_Handle *motor = (DMMotor_Handle *)instance->id;
-    uint8_t *rx = instance->rx_buff;
-
     /**
      * 反馈帧格式（与上位机抓到的表一致）：
      *   D0[7:4] ERR/STATE, D0[3:0] ID
@@ -100,12 +113,82 @@ static void DMMotor_Decode(CANInstance *instance)
     motor->feedback.rotor_temp = (float)rx[7];
 }
 
-static uint16_t DMMotor_CalcFeedbackStdId(uint16_t motor_id, uint16_t master_id)
+static void DMMotor_Decode(CANInstance *instance)
 {
-    if (master_id <= 0x0Fu) {
-        return (uint16_t)((master_id << 4) | (motor_id & 0x0Fu));
+    if (!instance || instance->rx_len < 8)
+        return;
+    DMMotor_Handle *motor = (DMMotor_Handle *)instance->id;
+    if (!motor)
+        return;
+    DMMotor_ParseFeedback(motor, instance->rx_buff);
+}
+
+static void DMMotor_SharedDecode(CANInstance *instance)
+{
+    if (!instance || instance->rx_len < 8)
+        return;
+    DMMotor_SharedBus *bus = (DMMotor_SharedBus *)instance->id;
+    if (!bus)
+        return;
+
+    const uint8_t *rx = instance->rx_buff;
+    uint8_t motor_id = (uint8_t)(rx[0] & 0x0F);
+    if (motor_id == 0 || motor_id >= DM_SHARED_MOTOR_MAX)
+        return;
+    DMMotor_Handle *motor = bus->motor_map[motor_id];
+    if (!motor)
+        return;
+    DMMotor_ParseFeedback(motor, rx);
+}
+
+static DMMotor_SharedBus *DMMotor_FindSharedBus(CAN_HandleTypeDef *can_handle, uint16_t rx_id)
+{
+    for (uint8_t i = 0; i < dm_shared_bus_count; ++i) {
+        if (dm_shared_bus[i].can_handle == can_handle && dm_shared_bus[i].rx_id == rx_id)
+            return &dm_shared_bus[i];
     }
-    return master_id;
+    return NULL;
+}
+
+static DMMotor_SharedBus *DMMotor_EnsureSharedBus(CAN_HandleTypeDef *can_handle, uint16_t rx_id)
+{
+    DMMotor_SharedBus *bus = DMMotor_FindSharedBus(can_handle, rx_id);
+    if (bus)
+        return bus;
+    if (dm_shared_bus_count >= DM_SHARED_BUS_MAX)
+        return NULL;
+
+    bus = &dm_shared_bus[dm_shared_bus_count++];
+    memset(bus, 0, sizeof(*bus));
+    bus->can_handle = can_handle;
+    bus->rx_id = rx_id;
+
+    CAN_Init_Config_s can_cfg = {
+        .can_handle = can_handle,
+        .tx_id = rx_id,
+        .rx_id = rx_id,
+        .can_module_callback = DMMotor_SharedDecode,
+        .id = bus,
+    };
+    bus->can_instance = CANRegister(&can_cfg);
+    return bus;
+}
+
+static uint16_t DMMotor_CalcFeedbackStdId(const DMMotor_InitConfig *config, bool *use_shared)
+{
+    if (use_shared)
+        *use_shared = false;
+    if (!config)
+        return 0;
+    if (config->use_shared_feedback_id) {
+        if (use_shared)
+            *use_shared = true;
+        return config->master_id;
+    }
+    if (config->master_id <= 0x0Fu) {
+        return (uint16_t)((config->master_id << 4) | (config->motor_id & 0x0Fu));
+    }
+    return config->master_id;
 }
 
 DMMotor_Handle *DMMotor_Init(const DMMotor_InitConfig *config)
@@ -129,12 +212,27 @@ DMMotor_Handle *DMMotor_Init(const DMMotor_InitConfig *config)
     if (motor->config.kd_max <= 0.0f)
         motor->config.kd_max = DM_DEFAULT_KD_MAX;
 
-    const uint16_t feedback_std_id = DMMotor_CalcFeedbackStdId(motor->config.motor_id, motor->config.master_id);
+    bool use_shared_feedback = false;
+    const uint16_t feedback_std_id = DMMotor_CalcFeedbackStdId(&motor->config, &use_shared_feedback);
+    motor->shared_bus = NULL;
+
+    if (use_shared_feedback) {
+        DMMotor_SharedBus *bus = DMMotor_EnsureSharedBus(motor->config.can_handle, feedback_std_id);
+        if (!bus) {
+            free(motor);
+            return NULL;
+        }
+        uint8_t map_id = (uint8_t)(motor->config.motor_id & 0x0F);
+        if (map_id < DM_SHARED_MOTOR_MAX)
+            bus->motor_map[map_id] = motor;
+        motor->shared_bus = bus;
+    }
+
     CAN_Init_Config_s can_cfg = {
         .can_handle = motor->config.can_handle,
         .tx_id = motor->config.motor_id,
-        .rx_id = feedback_std_id,
-        .can_module_callback = DMMotor_Decode,
+        .rx_id = use_shared_feedback ? motor->config.motor_id : feedback_std_id,
+        .can_module_callback = use_shared_feedback ? NULL : DMMotor_Decode,
         .id = motor,
     };
     motor->command_can = CANRegister(&can_cfg);
@@ -158,6 +256,11 @@ void DMMotor_DeInit(DMMotor_Handle *motor)
 {
     if (!motor)
         return;
+    if (motor->shared_bus) {
+        uint8_t map_id = (uint8_t)(motor->config.motor_id & 0x0F);
+        if (map_id < DM_SHARED_MOTOR_MAX && motor->shared_bus->motor_map[map_id] == motor)
+            motor->shared_bus->motor_map[map_id] = NULL;
+    }
     free(motor);
 }
 
@@ -299,4 +402,3 @@ void DMMotor_SaveRegisters(DMMotor_Handle *motor)
     uint8_t frame[4] = {can_id_l, can_id_h, 0xAA, 0x01};
     DMMotor_SendFrame(motor, 0x7FF, frame, sizeof(frame));
 }
-
