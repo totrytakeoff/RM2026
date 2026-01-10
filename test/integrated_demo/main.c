@@ -130,17 +130,23 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define LOADER_ANGLE_MAX 36000.0f
 #define LOADER_ANGLE_MIN (-LOADER_ANGLE_MAX)
 #define LOADER_GEAR_RATIO 19.0f
-#define LOADER_OUTPUT_STEP_DEG 90.0f
+#define LOADER_OUTPUT_STEP_DEG 60.0f
 #define LOADER_ANGLE_STEP_DEG (LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
-#define LOADER_STEP_DIR (1.0f)  // Align single/double step direction with continuous speed
+#define LOADER_STEP_DIR (1.0f)  // 单射方向与连射方向一致
 #define LOADER_DIAL_ENABLE_THRESH 100  // 拨轮下拨超过此值才允许拨弹
-#define SHOOT_INTERVAL_MS 2000U
 #define LOADER_CONTINUOUS_SPEED 12000.0f
+
+// 基于连射模式角速度计算的时间间隔
+#define LOADER_ANGULAR_SPEED (LOADER_CONTINUOUS_SPEED)  // 连射角速度（度/秒）
+#define SINGLE_SHOT_ANGLE_DEG 60.0f                     // 单射转动角度（60度）
+#define DOUBLE_SHOT_ANGLE_DEG 120.0f                    // 双射转动角度（120度）
+#define SINGLE_SHOT_INTERVAL_MS 1U  // 单射时间间隔（缩短中断时间）
+#define DOUBLE_SHOT_INTERVAL_MS 2U  // 双射时间间隔（缩短中断时间）
 
 static DJIMotorInstance *friction_motors[FRICTION_MOTOR_COUNT] = {NULL};
 static DJIMotorInstance *loader_motor = NULL;
 static uint8_t friction_enabled = 0;
-static uint8_t fire_mode = 0; // 0 single, 1 double, 2 continuous
+static uint8_t fire_mode = 0; // 0 single, 2 continuous
 static uint8_t pending_shots = 0;
 static uint8_t loader_initialized = 0;
 static uint8_t loader_trigger_allowed = 0;
@@ -207,7 +213,7 @@ static void ChassisMotorsInit(void)
                 .speed_feedback_source = MOTOR_FEED,
                 .outer_loop_type = SPEED_LOOP,
                 .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
-                .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+                .motor_reverse_flag = MOTOR_DIRECTION_REVERSE,
             },
             .motor_type = M3508,
         };
@@ -266,14 +272,14 @@ static void ChassisProcessRC(void)
     }
 
     chassis_zero_speed = 0;
-    chassis_vx = rc->rc.rocker_l_ / 660.0f * CHASSIS_MAX_VEL;   // 左摇杆左右 -> 平移
+    chassis_vx = -rc->rc.rocker_l_ / 660.0f * CHASSIS_MAX_VEL;   // 左摇杆左右 -> 平移（修复左右平移方向）
     if (use_gimbal) {
         // 摩擦轮开启时，右摇杆交给云台，底盘旋转关闭（左摇杆逻辑保持原始映射）
-       chassis_wz = rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;
+       chassis_wz = -rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;  // 修复左右旋转方向
     } else {
         // 摩擦轮未开时，交换功能：左摇杆上下 -> 旋转，右摇杆左右 -> 前后
-        chassis_vy = rc->rc.rocker_r_ / 660.0f * CHASSIS_MAX_VEL;
-        chassis_wz = rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;
+        chassis_vy = -rc->rc.rocker_r_ / 660.0f * CHASSIS_MAX_VEL;  // 修复前进后退方向
+        chassis_wz = -rc->rc.rocker_l1 / 660.0f * CHASSIS_MAX_ROTATE;  // 修复左右旋转方向
     }
 
     chassis_vx = float_deadband(chassis_vx, -CHASSIS_DEADZONE_VX, CHASSIS_DEADZONE_VX);
@@ -481,7 +487,7 @@ static void EnsureFrictionMotorsReady(void)
             },
             .controller_param_init_config = {
                 .angle_PID = {
-                    .Kp = 5.0f,
+                    .Kp = 10.0f,
                     .Ki = 0.0f,
                     .Kd = 0.0f,
                     .MaxOut = FRICTION_SPEED_MAX,
@@ -531,22 +537,22 @@ static void EnsureLoaderMotorReady(void)
             .tx_id = LOADER_CAN_ID,
         },
         .controller_param_init_config = {
-            .angle_PID = {
-                .Kp = 5.0f,
-                .Ki = 0.0f,
-                .Kd = 0.0f,
-                .MaxOut = LOADER_SPEED_MAX,
-                .IntegralLimit = 500.0f,
-                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
-            },
-            .speed_PID = {
-                .Kp = 12.0f,
-                .Ki = 0.0f,
-                .Kd = 0.0f,
-                .IntegralLimit = 3000.0f,
-                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = 16000.0f,
-            },
+                .angle_PID = {
+                    .Kp = 2.0f,
+                    .Ki = 0.005f,
+                    .Kd = 0.05f,
+                    .MaxOut = LOADER_SPEED_MAX,
+                    .IntegralLimit = 800.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                },
+                .speed_PID = {
+                    .Kp = 5.0f,
+                    .Ki = 0.01f,
+                    .Kd = 0.05f,
+                    .IntegralLimit = 2000.0f,
+                    .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                    .MaxOut = 10000.0f,
+                },
             .current_PID = {
                 .Kp = 0.6f,
                 .Ki = 0.0f,
@@ -559,10 +565,10 @@ static void EnsureLoaderMotorReady(void)
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = MOTOR_FEED,
-            .outer_loop_type = SPEED_LOOP,
+            .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
             // Loader installed opposite to logical forward; reverse direction to match trigger intent.
-            .motor_reverse_flag = MOTOR_DIRECTION_REVERSE,
+            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
         },
         .motor_type = M3508,
     };
@@ -608,10 +614,11 @@ static void ShootProcessRC(void)
 
     if (pending_shots == 0) {
         uint32_t now = HAL_GetTick();
-        if (now - last_shot_tick >= SHOOT_INTERVAL_MS) {
+        uint32_t interval = (fire_mode == 0) ? SINGLE_SHOT_INTERVAL_MS : DOUBLE_SHOT_INTERVAL_MS;
+        if (now - last_shot_tick >= interval) {
             pending_shots = (fire_mode == 0) ? 1 : 2;
             last_shot_tick = now;
-            last_step_tick = now - SHOOT_INTERVAL_MS;
+            last_step_tick = now;  // 设置当前时间为时间基准
         }
     }
 }
@@ -655,47 +662,54 @@ static void UpdateLoaderControl(void)
         return;
     }
 
-    uint32_t now = HAL_GetTick();
+    // 连射模式：拨弹盘持续转动
     if (fire_mode == 2) {
-        pending_shots = 0;
-        loader_initialized = 0;
-        float speed_ref = ClampFloat(LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
         DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
         DJIMotorEnable(loader_motor);
+        float speed_ref = ClampFloat(-LOADER_STEP_DIR * LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
         DJIMotorSetRef(loader_motor, speed_ref);
+        pending_shots = 0;
+        loader_initialized = 0;
         return;
     }
 
-    if (!loader_initialized) {
-        loader_target_angle = ClampFloat(loader_motor->measure.total_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
-        if (pending_shots > 0) {
-            last_step_tick = now - SHOOT_INTERVAL_MS;
-        } else {
-            last_step_tick = now;
-        }
-        loader_initialized = 1;
-    }
-
+    // 单射/双射模式：完全停止后停顿再继续
     if (pending_shots > 0) {
-        uint32_t elapsed = now - last_step_tick;
-        if (elapsed >= SHOOT_INTERVAL_MS) {
-            uint32_t steps = elapsed / SHOOT_INTERVAL_MS;
-            if (steps > pending_shots) {
-                steps = pending_shots;
+        uint32_t now = HAL_GetTick();
+        uint32_t interval = (fire_mode == 0) ? SINGLE_SHOT_INTERVAL_MS : DOUBLE_SHOT_INTERVAL_MS;
+        
+        // 检查是否达到时间间隔
+        if (now - last_step_tick >= interval) {
+            // 发射子弹：先转动一段时间
+            if (loader_initialized == 0) {
+                // 开始转动
+                DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+                DJIMotorEnable(loader_motor);
+                float speed_ref = ClampFloat(-LOADER_STEP_DIR * LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
+                DJIMotorSetRef(loader_motor, speed_ref);
+                loader_initialized = 1;
+                last_step_tick = now;
+            } else if (now - last_step_tick >= 20) { // 转动20ms后停止
+                // 停止电机
+                DJIMotorStop(loader_motor);
+                loader_initialized = 0;
+                pending_shots--;
+                last_step_tick = now;
+                
+                // 如果所有子弹发射完成，完全停止
+                if (pending_shots == 0) {
+                    loader_initialized = 0;
+                }
             }
-            last_step_tick += steps * SHOOT_INTERVAL_MS;
-            loader_target_angle += LOADER_STEP_DIR * LOADER_ANGLE_STEP_DEG * (float)steps;
-            loader_target_angle = ClampFloat(loader_target_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
-            pending_shots -= (uint8_t)steps;
+        } else {
+            // 在间隔时间内保持停止状态
+            DJIMotorStop(loader_motor);
         }
     } else {
+        // 没有子弹要发射，拨弹盘停止
         DJIMotorStop(loader_motor);
-        return;
+        loader_initialized = 0;
     }
-
-    DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
-    DJIMotorEnable(loader_motor);
-    DJIMotorSetRef(loader_motor, loader_target_angle);
 }
 
 static float ClampFloat(float value, float min, float max)
@@ -708,6 +722,9 @@ static float ClampFloat(float value, float min, float max)
     }
     return value;
 }
+
+/* ============================== 定时器中断处理 ============================== */
+
 
 /* ============================== 公共工具 ============================== */
 static uint8_t IsRCValueReasonable(int16_t value)
@@ -753,6 +770,8 @@ int main(void)
     GimbalMotorsInit();
 
     rc_data = RemoteControlInit(&huart3);
+
+
 
     LOGINFO("[integrated] demo initialized");
     LOGINFO("[integrated] CAN1: chassis 1-4, loader 5, yaw 2; CAN2: friction 1/2, pitch 5");
