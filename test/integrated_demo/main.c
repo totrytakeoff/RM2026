@@ -95,11 +95,16 @@ static uint8_t IsRCValueReasonable(int16_t value);
 
 /* ============================== 云台 ============================== */
 #define GIMBAL_UPDATE_INTERVAL_MS 20U
-#define GM6020_SPEED_MAX 3600.0f
-#define GM6020_SPEED_MIN (-GM6020_SPEED_MAX)
+#define YAW_SPEED_MAX 3600.0f
+#define YAW_SPEED_MIN (-YAW_SPEED_MAX)
+#define PITCH_SPEED_MAX_UP 3600.0f
+#define PITCH_SPEED_MAX_DOWN 6000.0f
 #define GM6020_SPEED_DEADZONE 30.0f
 #define RC_DEADZONE 50
-#define PITCH_GRAVITY_COMP 2500.0f
+#define PITCH_GRAVITY_COMP_BASE 2000.0f
+#define PITCH_GRAVITY_COMP_DOWN_BONUS 1000000000.0f
+#define YAW_SPEED_PID_MAXOUT 15000.0f
+#define PITCH_SPEED_PID_MAXOUT 30000.0f
 
 #define YAW_MOTOR_ID 2U   // CAN1
 #define PITCH_MOTOR_ID 5U // CAN2
@@ -371,7 +376,7 @@ static void GimbalMotorsInit(void)
                 .Kd = 0.0f,
                 .IntegralLimit = 3000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = 15000.0f,
+                .MaxOut = YAW_SPEED_PID_MAXOUT,
             },
         },
         .controller_setting_init_config = {
@@ -388,8 +393,7 @@ static void GimbalMotorsInit(void)
 
     config.can_init_config.can_handle = &hcan2;
     config.can_init_config.tx_id = PITCH_MOTOR_ID;
-    config.controller_param_init_config.speed_PID.Ki = 0.02f;
-    config.controller_param_init_config.speed_PID.MaxOut = 20000.0f;
+    config.controller_param_init_config.speed_PID.MaxOut = PITCH_SPEED_PID_MAXOUT;
     pitch_motor = DJIMotorInit(&config);
 
     if (yaw_motor != NULL) {
@@ -442,9 +446,9 @@ static void GimbalProcessRC(void)
     gimbal_zero_speed = 0;
 
     // 右摇杆左右控制yaw，右摇杆上下控制pitch
-    yaw_speed_ref = rc->rc.rocker_r_ / 660.0f * GM6020_SPEED_MAX;
+    yaw_speed_ref = rc->rc.rocker_r_ / 660.0f * YAW_SPEED_MAX;
     // 默认上推为俯仰上抬，如方向不符可调整正负号
-    pitch_speed_ref = -rc->rc.rocker_r1 / 660.0f * GM6020_SPEED_MAX;
+    pitch_speed_ref = -rc->rc.rocker_r1 / 660.0f * PITCH_SPEED_MAX_UP;
 
     yaw_speed_ref = float_deadband(yaw_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
     pitch_speed_ref = float_deadband(pitch_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
@@ -457,13 +461,16 @@ static void GimbalUpdate(void)
             DJIMotorSetRef(yaw_motor, 0.0f);
         }
         if (pitch_motor != NULL) {
-            DJIMotorSetRef(pitch_motor, PITCH_GRAVITY_COMP);
+            DJIMotorSetRef(pitch_motor, PITCH_GRAVITY_COMP_BASE);
         }
         return;
     }
 
-    yaw_speed_ref = float_constrain(yaw_speed_ref, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
-    pitch_speed_ref = float_constrain(pitch_speed_ref, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
+    yaw_speed_ref = float_constrain(yaw_speed_ref, YAW_SPEED_MIN, YAW_SPEED_MAX);
+    if (pitch_speed_ref > 0.0f) {
+        pitch_speed_ref += PITCH_GRAVITY_COMP_DOWN_BONUS;
+    }
+    pitch_speed_ref = float_constrain(pitch_speed_ref, -PITCH_SPEED_MAX_UP, PITCH_SPEED_MAX_DOWN);
 
     if (yaw_motor != NULL) {
         DJIMotorEnable(yaw_motor);
