@@ -360,7 +360,7 @@ int main(void)
             SendHeartbeat(heartbeat_seq++);
         }
 
-        HAL_Delay(5);
+        HAL_Delay(500);
     }
 }
 

@@ -1,36 +1,36 @@
 /**
  * @file main.c
- * @brief 电机测试固件（test/motor_test）
+ * @brief 电机测试固件（test/motor_test�?
  *
  * 你可以把它当成“电机调试专用程序”：
- * - 主循环里持续跑 `DJIMotorControl()` / `DaemonTask()` / `HAL_Delay()`，保证底层任务在运行；
- * - 具体要让电机怎么动，由你选择调用哪个 `MotorTest_*()` 函数；
- * - 为了方便“在线改参 + 观察效果”，这里额外提供了一组 `volatile` 全局变量，
- *   你可以在 GDB 里 `set variable` 动态切换 demo 和调整 MIT 参数。
+ * - 主循环里持续�?`DJIMotorControl()` / `DaemonTask()` / `HAL_Delay()`，保证底层任务在运行�?
+ * - 具体要让电机怎么动，由你选择调用哪个 `MotorTest_*()` 函数�?
+ * - 为了方便“在线改�?+ 观察效果”，这里额外提供了一�?`volatile` 全局变量�?
+ *   你可以在 GDB �?`set variable` 动态切�?demo 和调�?MIT 参数�?
  *
- * ---------------------------- 如何在 main 中调用 ----------------------------
- * 1) 选择 DM MIT demo（推荐）：
- *    - 将 `g_dm_demo_select` 设为 1（定速）或 2（定时 60° 阶跃），主循环会自动持续发送 MIT 帧。
+ * ---------------------------- 如何�?main 中调�?----------------------------
+ * 1) 选择 DM MIT demo（推荐）�?
+ *    - �?`g_dm_demo_select` 设为 1（定速）�?2（定�?60° 阶跃），主循环会自动持续发�?MIT 帧�?
  * 2) 也可以直接在 while(1) 里调用：
  *    - 例如：`MotorTest_DM_MIT_PeriodicAngleStep(60.0f, 1000);`
  *
- * ---------------------------- 如何在 GDB 中调用/调参 ----------------------------
- * 注意：DM 电机 MIT 模式需要“持续发送”（通常 1kHz，至少几百 Hz）才能维持控制。
- * 所以不建议在 GDB 里只 `call MotorTest_*()` 一次，因为那只会发一帧，电机很快超时失能。
+ * ---------------------------- 如何�?GDB 中调�?调参 ----------------------------
+ * 注意：DM 电机 MIT 模式需要“持续发送”（通常 1kHz，至少几�?Hz）才能维持控制�?
+ * 所以不建议�?GDB 里只 `call MotorTest_*()` 一次，因为那只会发一帧，电机很快超时失能�?
  *
  * 推荐做法（在 GDB 里“改变量”，让主循环持续调用）：
  *   (gdb) set variable g_dm_demo_select = 1
  *   (gdb) set variable g_dm_target_speed_rad_s = 10
  *   (gdb) set variable g_dm_kd_speed = 0.6
  *
- * 切换到“每隔 1s 转 60°”：
+ * 切换到“每�?1s �?60°”：
  *   (gdb) set variable g_dm_demo_select = 2
  *   (gdb) set variable g_dm_step_deg = 60
  *   (gdb) set variable g_dm_step_interval_ms = 1000
  *   (gdb) set variable g_dm_kp_step = 1
  *   (gdb) set variable g_dm_kd_step = 0.2
  *
- * 关闭输出/停转：
+ * 关闭输出/停转�?
  *   (gdb) set variable g_dm_demo_select = 0
  *   (gdb) call MotorTest_StopAll()
  */
@@ -48,8 +48,8 @@
 #include "dji_motor.h"
 #include "dmmotor.h"
 
-#define M3508_MOTOR_COUNT 4U
-static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
+#define M3508_MOTOR_COUNT 1U
+static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U};
 #define GM6020_CAN_ID 5U
 
 #define M3508_SPEED_MAX 7200.0f  // deg/s, ~20 rps
@@ -63,13 +63,13 @@ static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
 #define GM6020_ANGLE_MIN (-GM6020_ANGLE_MAX)
 
 /* ---------------- DM8009P (MIT) demo config ----------------
- * 上位机读到的通信参数：
+ * 上位机读到的通信参数�?
  * - Motor CAN ID = 0x01
  * - Master ID = 0x00
  *
- * 说明：框架 CAN 底层是“严格过滤器”，实际接收过滤的 StdId 为：
+ * 说明：框�?CAN 底层是“严格过滤器”，实际接收过滤�?StdId 为：
  *   feedback_std_id = (master_id<<4) | (motor_id & 0x0F)
- * 所以本配置下反馈 StdId=0x01（与 dm_demo_pio 的结论一致）。
+ * 所以本配置下反�?StdId=0x01（与 dm_demo_pio 的结论一致）�?
  */
 #define DM_MOTOR_ID 0x01U
 #define DM_MASTER_ID 0x00U
@@ -79,7 +79,7 @@ static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
 #define DM_V_RANGE 45.0f
 #define DM_T_RANGE 54.0f
 
-/* Demo 1：定速旋转（MIT：kp=0，仅用 kd 让 v_des 生效） */
+/* Demo 1：定速旋转（MIT：kp=0，仅�?kd �?v_des 生效�?*/
 #define DM_DEMO_SPEED_RAD_S 6.0f
 #define DM_DEMO_SPEED_KP 0.0f
 #define DM_DEMO_SPEED_KD 0.5f
@@ -100,13 +100,13 @@ static DMMotor_Handle* dm_motor = NULL;
 static uint8_t dm_mit_enabled = 0;
 static uint32_t dm_last_enable_tick = 0;
 
-/* ---------------- DM demo 运行时参数（GDB 可直接改） ----------------
+/* ---------------- DM demo 运行时参数（GDB 可直接改�?----------------
  * g_dm_demo_select:
- *   0 = 不输出（默认）
- *   1 = MIT 定速（p=0, v=target_speed, kp=0, kd 可调）
- *   2 = MIT 位置阶跃（每隔 interval 加 step_deg，kp/kd 可调）
+ *   0 = 不输出（默认�?
+ *   1 = MIT 定速（p=0, v=target_speed, kp=0, kd 可调�?
+ *   2 = MIT 位置阶跃（每�?interval �?step_deg，kp/kd 可调�?
  */
-volatile uint8_t g_dm_demo_select = 2;
+volatile uint8_t g_dm_demo_select = 0;
 volatile float g_dm_target_speed_rad_s = DM_DEMO_SPEED_RAD_S;
 volatile float g_dm_kp_speed = DM_DEMO_SPEED_KP;
 volatile float g_dm_kd_speed = DM_DEMO_SPEED_KD;
@@ -159,20 +159,11 @@ int main(void) {
     //   MotorTest_Loader_SpeedLoop(7200.0f);
 
     while (1) {
-        /* 通过 g_dm_demo_select 选择 demo（推荐 GDB 改变量方式） */
-        if (g_dm_demo_select == 1) {
-            MotorTest_DM_MIT_ConstantSpeed(g_dm_target_speed_rad_s);
-        } else if (g_dm_demo_select == 2) {
-            MotorTest_DM_MIT_PeriodicAngleStep(g_dm_step_deg, g_dm_step_interval_ms);
-        }
-
-        MotorTest_GM6020_SpeedLoop(7200.0f);
-        // MotorTest_M3508_PeriodicAngleStep(60.0f, 1000U);
-        // MotorTest_GM6020_PeriodicAngleStep(60.0f, 1000U);
+        MotorTest_M3508_SpeedLoop(7200.0f);
 
         DJIMotorControl();
         DaemonTask();
-        /* 2ms ≈ 500Hz：足够让 MIT “持续发送”维持使能；如需更顺滑可改小（注意 CPU 占用） */
+        /* 2ms �?500Hz：足够让 MIT “持续发送”维持使能；如需更顺滑可改小（注�?CPU 占用�?*/
         HAL_Delay(2);
     }
 }
@@ -268,7 +259,7 @@ void MotorTest_Loader_PositionLoop(float target_angle_deg) {
 
 /**
  * @brief Demo helper: periodically increase the M3508角度参考值，每隔 interval_ms 毫秒累加
- * step_deg。 用于验证减速箱电机按恒定角速度(例如1s 60°)运行时的表现。
+ * step_deg�?用于验证减速箱电机按恒定角速度(例如1s 60°)运行时的表现�?
  *
  * @param step_deg    Angle increment (deg) applied every period. Positive values rotate forward.
  * @param interval_ms Interval between increments in milliseconds.
@@ -313,10 +304,10 @@ void MotorTest_M3508_PeriodicAngleStep(float step_deg, uint32_t interval_ms) {
 }
 
 /**
- * @brief GM6020 角度阶跃：类似于 3508 的 demo，每隔 interval_ms ms 将位置参考累加 step_deg。
+ * @brief GM6020 角度阶跃：类似于 3508 �?demo，每�?interval_ms ms 将位置参考累�?step_deg�?
  *
- * @param step_deg    每次递增角度（deg）。
- * @param interval_ms 每次递增之间的间隔（ms）。
+ * @param step_deg    每次递增角度（deg）�?
+ * @param interval_ms 每次递增之间的间隔（ms）�?
  */
 void MotorTest_GM6020_PeriodicAngleStep(float step_deg, uint32_t interval_ms) {
     EnsureGM6020MotorReady();
@@ -346,12 +337,12 @@ void MotorTest_GM6020_PeriodicAngleStep(float step_deg, uint32_t interval_ms) {
 }
 
 /**
- * @brief DM8009P MIT 定速旋转 Demo（不做任何外部环路）
+ * @brief DM8009P MIT 定速旋�?Demo（不做任何外部环路）
  *
- * 做法：
- * - kp=0：不做位置刚度
+ * 做法�?
+ * - kp=0：不做位置刚�?
  * - v_des=目标速度
- * - kd>0：提供速度误差“阻尼”，使 v_des 生效（可理解为简单速度 P 控制）
+ * - kd>0：提供速度误差“阻尼”，�?v_des 生效（可理解为简单速度 P 控制�?
  *
  * 你只需要调宏：
  * - `DM_DEMO_SPEED_KD`、`DM_DEMO_SPEED_TFF`
@@ -380,16 +371,16 @@ void MotorTest_DM_MIT_ConstantSpeed(float target_speed_rad_s) {
         dm_last_enable_tick = now;
     }
 
-    const float p_des = 0.0f; /* kp=0 时 p_des 不参与 */
+    const float p_des = 0.0f; /* kp=0 �?p_des 不参�?*/
     DMMotor_SendMIT(dm_motor, p_des, target_speed_rad_s, g_dm_kp_speed, g_dm_kd_speed,
                     g_dm_tff_speed);
 }
 
 /**
- * @brief DM8009P MIT 定时转动指定角度 Demo（每隔 interval_ms 将目标位置累加 step_deg）
+ * @brief DM8009P MIT 定时转动指定角度 Demo（每�?interval_ms 将目标位置累�?step_deg�?
  *
- * 说明：
- * - MIT 的 p_des 单位是 rad，且受 `DM_P_RANGE` 限制；这里采用回绕避免饱和。
+ * 说明�?
+ * - MIT �?p_des 单位�?rad，且�?`DM_P_RANGE` 限制；这里采用回绕避免饱和�?
  * - 参数调节：主要动 `DM_DEMO_STEP_KP/DM_DEMO_STEP_KD/DM_DEMO_STEP_TFF`
  */
 void MotorTest_DM_MIT_PeriodicAngleStep(float step_deg, uint32_t interval_ms) {
@@ -740,3 +731,6 @@ void assert_failed(uint8_t* file, uint32_t line) {
     (void)line;
 }
 #endif
+
+
+

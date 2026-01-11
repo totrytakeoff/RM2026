@@ -17,6 +17,8 @@ static Shoot_Upload_Data_s shoot_feedback_data; // 来自cmd的发射控制信�
 
 // dwt定时,计算冷却用
 static float hibernate_time = 0, dead_time = 0;
+static loader_mode_e last_load_mode = LOAD_STOP;
+static float single_shot_target = 0.0f;
 
 void ShootInit()
 {
@@ -138,20 +140,21 @@ void ShootTask()
         DJIMotorSetRef(loader, 0);             // 同时设定参考值为0,这样停止的速度最快
         break;
     // 单发模式,根据鼠标按下的时间,触发一次之后需要进入不响应输入的状态(否则按下的时间内可能多次进入,导致多次发射)
-    case LOAD_1_BULLET:                                                                     // 激活能量机关/干扰对方用,英雄用.
-        DJIMotorOuterLoop(loader, ANGLE_LOOP);                                              // 切换到角度环
-        DJIMotorSetRef(loader, loader->measure.total_angle + ONE_BULLET_DELTA_ANGLE); // 控制量增加一发弹丸的角度
-        hibernate_time = DWT_GetTimeline_ms();                                              // 记录触发指令的时间
-        dead_time = 150;                                                                    // 完成1发弹丸发射的时间
+    case LOAD_1_BULLET:                                                               // 激活能量机关干扰对方英雄用
+        if (last_load_mode != LOAD_1_BULLET)
+            single_shot_target = loader->measure.total_angle + ONE_BULLET_DELTA_ANGLE;
+        DJIMotorOuterLoop(loader, ANGLE_LOOP);                                        // 切换到角度环
+        DJIMotorSetRef(loader, single_shot_target);                                   // 控制量增加一发弹丸的角度
+        hibernate_time = DWT_GetTimeline_ms();
+        dead_time = 150;
         break;
-    // 三连发,如果不需要后续可能删除
     case LOAD_3_BULLET:
         DJIMotorOuterLoop(loader, ANGLE_LOOP);                                                  // 切换到速度环
         DJIMotorSetRef(loader, loader->measure.total_angle + 3 * ONE_BULLET_DELTA_ANGLE); // 增加3发
-        hibernate_time = DWT_GetTimeline_ms();                                                  // 记录触发指令的时间
-        dead_time = 300;                                                                        // 完成3发弹丸发射的时间
+        hibernate_time = DWT_GetTimeline_ms();
+        dead_time = 300;
         break;
-    // 连发模式,对速度闭环,射频后续修改为可变,目前固定为1Hz
+    // 连发模式,对速度闭环,射频后续修改为可变当前固定1Hz
     case LOAD_BURSTFIRE:
         DJIMotorOuterLoop(loader, SPEED_LOOP);
         DJIMotorSetRef(loader, shoot_cmd_recv.shoot_rate * 360 * REDUCTION_RATIO_LOADER / 8);
@@ -167,6 +170,8 @@ void ShootTask()
         while (1)
             ; // 未知模式,停止运行,检查指针越界,内存溢出等问题
     }
+
+    last_load_mode = shoot_cmd_recv.load_mode;
 
     // 确定是否开启摩擦轮,后续可能修改为键鼠模式下始终开启摩擦轮(上场时建议一直开启)
     if (shoot_cmd_recv.friction_mode == FRICTION_ON)
