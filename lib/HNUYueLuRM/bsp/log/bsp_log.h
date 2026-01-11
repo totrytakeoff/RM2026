@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #define BUFFER_INDEX 0
+#define BSP_LOG_USE_UART 1
 
 /**
  * @brief 日志系统初始化
@@ -17,17 +18,26 @@ void BSPLogInit();
  * @brief 日志功能原型,供下面的LOGI,LOGW,LOGE等使用
  *
  */
+#if BSP_LOG_USE_UART
+#define LOG_PROTO(type, color, format, ...) \
+        PrintLog("  %s" format "\r\n", type, ##__VA_ARGS__)
+#else
 #define LOG_PROTO(type, color, format, ...)                       \
         SEGGER_RTT_printf(BUFFER_INDEX, "  %s%s" format "\r\n%s", \
                           color,                                  \
                           type,                                   \
                           ##__VA_ARGS__,                          \
                           RTT_CTRL_RESET)
+#endif
 
 /*----------------------------------------下面是日志输出的接口-------------------------------------------------*/
 
 /* 清屏 */
+#if BSP_LOG_USE_UART
+#define LOG_CLEAR()
+#else
 #define LOG_CLEAR() SEGGER_RTT_WriteString(0, "  " RTT_CTRL_CLEAR)
+#endif
 
 /* 无颜色日志输出 */
 #define LOG(format, ...) LOG_PROTO("", "", format, ##__VA_ARGS__)
