@@ -63,6 +63,9 @@ typedef struct
     DaemonInstance* daemon;
     uint32_t feed_cnt;
     float dt;
+    float last_total_angle;
+    int8_t angle_feedback_sign;
+    uint8_t angle_feedback_locked;
 } DJIMotorInstance;
 
 /**

@@ -83,7 +83,10 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U};
 #define LOADER_GEAR_RATIO 13.0f
 #define LOADER_OUTPUT_STEP_DEG 45.0f
 #define LOADER_DIRECTION_SIGN (1.0f)
-#define LOADER_ANGLE_STEP_DEG (-LOADER_DIRECTION_SIGN * LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
+#define LOADER_SINGLE_DIRECTION_SIGN (LOADER_DIRECTION_SIGN)
+#define LOADER_SINGLE_REF_SIGN (-1.0f)
+#define LOADER_ANGLE_STEP_DEG (LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
+#define LOADER_SINGLE_SETTLE_EPS_DEG 5.0f
 
 #define SHOOT_INTERVAL_MS 2000U
 #define LOADER_CONTINUOUS_SPEED (LOADER_DIRECTION_SIGN * 20000.0f)
@@ -109,8 +112,13 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U};
 #define ET08_SWITCH_POS_MID 1U
 #define ET08_SWITCH_POS_DOWN 2U
 #define ET08_SWITCH_INVALID 0xFFu
-#define SB_SWITCH_DEBOUNCE_MS 120U
+#define SB_SWITCH_DEBOUNCE_MS 30U
 #define LOADER_CONTINUOUS_HOLD_MS 250U
+#define SB_RAW_UP 1896U
+#define SB_RAW_MID 1694U
+#define SB_RAW_DOWN 1493U
+#define SB_RAW_TOLERANCE 200U
+#define SA_SB_RAW_TOLERANCE 200U
 
 // Stick channel mapping (adjust to your radio)
 // 0: left stick = CH3/CH4, right stick = CH1/CH2
@@ -182,7 +190,7 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U};
 #define SPEED_FILTER_COEF 0.4f
 
 /* Private variables ---------------------------------------------------------*/
-static ET08_Ctrl_t et08_ctrl;
+static ET08_Ctrl_t *et08_ctrl = NULL;
 static USARTInstance *sbus_usart = NULL;
 static uint32_t sbus_last_tick = 0U;
 static uint32_t sbus_frame_count = 0U;
@@ -195,12 +203,17 @@ static DJIMotorInstance *pitch_motor = NULL;
 
 static uint8_t friction_enabled = 0;
 static uint8_t loader_enabled = 0;
+static uint8_t loader_enabled_last = 0;
 static uint8_t loader_continuous = 0;
 static uint8_t sb_pos = ET08_SWITCH_POS_MID;
 static uint8_t sb_last_pos = ET08_SWITCH_POS_MID;
 static uint32_t sb_last_change_ms = 0U;
+static uint8_t single_last_pos = ET08_SWITCH_POS_MID;
+static uint32_t single_last_change_ms = 0U;
+static uint8_t sb_down_armed = 1U;
 static uint8_t pending_shots = 0;
 static uint8_t loader_initialized = 0;
+static uint8_t single_shot_active = 0;
 static float loader_target_angle = 0.0f;
 static uint32_t last_shot_tick = 0;
 static uint32_t last_step_tick = 0;
@@ -240,65 +253,54 @@ static uint8_t Et08InputValid(void);
 static void EnsureFrictionMotorsReady(void);
 static void EnsureLoaderMotorReady(void);
 static void ApplyLoaderPidProfile(uint8_t single_shot_boost);
-static void ProcessShootRemote(void);
-static void UpdateFrictionControl(void);
-static void UpdateLoaderControl(void);
 static void GimbalMotorsInit(void);
-static void ProcessGimbalControl(void);
-static void UpdateGimbalControl(void);
 static float ClampFloat(float value, float min, float max);
-
-static void ChassisMotorsInit(void);
-static void ProcessChassisControl(void);
-static void UpdateChassisKinematics(void);
 static void SetAllMotorsZero(void);
-static void ForceMotorZero(void);
+static uint8_t Et08GetSaPosFromState(uint8_t state);
+static uint8_t Et08GetSbPosFromState(uint8_t state);
+static uint8_t Et08GetSdPosFromState(uint8_t state);
+static uint8_t Et08GetScPosFromState(uint8_t state);
+static uint8_t Et08MapUpperSwitchPos(uint8_t state);
+static uint8_t Et08MapLowerSwitchPos(uint8_t state);
+static uint8_t Et08MapSwitchStateRaw(uint16_t raw_value);
 
-/* Private user code ---------------------------------------------------------*/
-static void Debug_DisableWatchdogs(void)
+static uint8_t Et08MapUpperSwitchPos(uint8_t state)
 {
-    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_WWDG_STOP;
-    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
-}
-
-static void Et08SbusReinitUart(UART_HandleTypeDef *uart_handle)
-{
-    if (uart_handle == NULL) {
-        return;
+    if (state == ET08_SWITCH_INVALID || state > 5U) {
+        return ET08_SWITCH_INVALID;
     }
-
-    (void)HAL_UART_DeInit(uart_handle);
-    uart_handle->Init.BaudRate = SBUS_BAUDRATE;
-    uart_handle->Init.WordLength = UART_WORDLENGTH_9B;
-    uart_handle->Init.StopBits = UART_STOPBITS_2;
-    uart_handle->Init.Parity = UART_PARITY_EVEN;
-    uart_handle->Init.Mode = UART_MODE_TX_RX;
-    uart_handle->Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    uart_handle->Init.OverSampling = UART_OVERSAMPLING_16;
-    (void)HAL_UART_Init(uart_handle);
+    return (state <= 2U) ? ET08_SWITCH_POS_UP : ET08_SWITCH_POS_DOWN;
 }
 
-static void Et08SbusDecode(const uint8_t *buf, uint16_t *ch)
+static uint8_t Et08MapLowerSwitchPos(uint8_t state)
 {
-    ch[0] = (uint16_t)((buf[1] | (buf[2] << 8)) & 0x07FF);
-    ch[1] = (uint16_t)(((buf[2] >> 3) | (buf[3] << 5)) & 0x07FF);
-    ch[2] = (uint16_t)(((buf[3] >> 6) | (buf[4] << 2) | (buf[5] << 10)) & 0x07FF);
-    ch[3] = (uint16_t)(((buf[5] >> 1) | (buf[6] << 7)) & 0x07FF);
-    ch[4] = (uint16_t)(((buf[6] >> 4) | (buf[7] << 4)) & 0x07FF);
-    ch[5] = (uint16_t)(((buf[7] >> 7) | (buf[8] << 1) | (buf[9] << 9)) & 0x07FF);
-    ch[6] = (uint16_t)(((buf[9] >> 2) | (buf[10] << 6)) & 0x07FF);
-    ch[7] = (uint16_t)(((buf[10] >> 5) | (buf[11] << 3)) & 0x07FF);
-    ch[8] = (uint16_t)((buf[12] | (buf[13] << 8)) & 0x07FF);
-    ch[9] = (uint16_t)(((buf[13] >> 3) | (buf[14] << 5)) & 0x07FF);
-    ch[10] = (uint16_t)(((buf[14] >> 6) | (buf[15] << 2) | (buf[16] << 10)) & 0x07FF);
-    ch[11] = (uint16_t)(((buf[16] >> 1) | (buf[17] << 7)) & 0x07FF);
-    ch[12] = (uint16_t)(((buf[17] >> 4) | (buf[18] << 4)) & 0x07FF);
-    ch[13] = (uint16_t)(((buf[18] >> 7) | (buf[19] << 1) | (buf[20] << 9)) & 0x07FF);
-    ch[14] = (uint16_t)(((buf[20] >> 2) | (buf[21] << 6)) & 0x07FF);
-    ch[15] = (uint16_t)(((buf[21] >> 5) | (buf[22] << 3)) & 0x07FF);
+    if (state == ET08_SWITCH_INVALID || state > 5U) {
+        return ET08_SWITCH_INVALID;
+    }
+    return (state <= 2U) ? state : (uint8_t)(state - 3U);
 }
 
-static uint8_t Et08MapSwitchStateLenient(uint16_t raw_value)
+static uint8_t Et08GetSaPosFromState(uint8_t state)
+{
+    return Et08MapUpperSwitchPos(state);
+}
+
+static uint8_t Et08GetSbPosFromState(uint8_t state)
+{
+    return Et08MapLowerSwitchPos(state);
+}
+
+static uint8_t Et08GetSdPosFromState(uint8_t state)
+{
+    return Et08MapUpperSwitchPos(state);
+}
+
+static uint8_t Et08GetScPosFromState(uint8_t state)
+{
+    return Et08MapLowerSwitchPos(state);
+}
+
+static uint8_t Et08MapSwitchStateRaw(uint16_t raw_value)
 {
     const int16_t levels[ET08_SWITCH_LEVEL_COUNT] = {
         ET08_SWITCH_LEVEL_0,
@@ -309,107 +311,54 @@ static uint8_t Et08MapSwitchStateLenient(uint16_t raw_value)
         ET08_SWITCH_LEVEL_5,
     };
 
-    uint8_t best_index = 0u;
+    uint8_t best_index = ET08_SWITCH_INVALID;
     uint16_t best_diff = 0xFFFFu;
+
     for (uint8_t i = 0; i < ET08_SWITCH_LEVEL_COUNT; ++i) {
         uint16_t level_raw = (levels[i] < 0) ? (uint16_t)(levels[i] + ET08_CHANNEL_CENTER)
                                              : (uint16_t)levels[i];
-        uint16_t diff = (raw_value > level_raw) ? (raw_value - level_raw)
-                                                : (level_raw - raw_value);
+        uint16_t diff = (raw_value > level_raw) ? (raw_value - level_raw) : (level_raw - raw_value);
         if (diff < best_diff) {
             best_diff = diff;
             best_index = i;
         }
     }
-    return best_index;
-}
 
-static void Et08SbusFillCtrl(const uint16_t *ch, uint8_t flags, ET08_Ctrl_t *ctrl)
-{
-    memset(ctrl, 0, sizeof(*ctrl));
-
-    for (uint8_t i = 0; i < ET08_CHANNEL_COUNT; ++i) {
-        ctrl->raw[i] = ch[i];
-        ctrl->centered[i] = (int16_t)ch[i] - ET08_CHANNEL_CENTER;
+    if (best_diff <= SA_SB_RAW_TOLERANCE) {
+        return best_index;
     }
-
-    ctrl->left.x = ctrl->centered[ET08_LEFT_X_CH];
-    ctrl->left.y = ctrl->centered[ET08_LEFT_Y_CH];
-    ctrl->right.x = ctrl->centered[ET08_RIGHT_X_CH];
-    ctrl->right.y = ctrl->centered[ET08_RIGHT_Y_CH];
-
-    ctrl->switch_sa_sb_raw = ctrl->raw[ET08_CH5];
-    ctrl->switch_sa_sb_centered = ctrl->centered[ET08_CH5];
-    ctrl->switch_sa_sb_state = Et08MapSwitchStateLenient(ctrl->switch_sa_sb_raw);
-
-    ctrl->switch_sd_sc_raw = ctrl->raw[ET08_CH6];
-    ctrl->switch_sd_sc_centered = ctrl->centered[ET08_CH6];
-    ctrl->switch_sd_sc_state = Et08MapSwitchStateLenient(ctrl->switch_sd_sc_raw);
-
-    ctrl->knob_left = ctrl->centered[ET08_CH7];
-    ctrl->knob_right = ctrl->centered[ET08_CH8];
-
-    ctrl->frame_lost = (flags & 0x04u) ? 1u : 0u;
-    ctrl->failsafe = (flags & 0x08u) ? 1u : 0u;
-}
-
-static void Et08SbusRxCallback(void)
-{
-    if (sbus_usart == NULL) {
-        return;
-    }
-
-    const uint8_t *buf = sbus_usart->recv_buff;
-    if (buf[0] != SBUS_START_BYTE) {
-        sbus_bad_count++;
-        return;
-    }
-
-    uint16_t ch[16] = {0};
-    Et08SbusDecode(buf, ch);
-
-    uint8_t flags = buf[23];
-    Et08SbusFillCtrl(ch, flags, &et08_ctrl);
-    sbus_last_tick = HAL_GetTick();
-    sbus_frame_count++;
+    return ET08_SWITCH_INVALID;
 }
 
 static void Et08SbusInit(UART_HandleTypeDef *uart_handle)
 {
-    memset(&et08_ctrl, 0, sizeof(et08_ctrl));
-
-    Et08SbusReinitUart(uart_handle);
-
-    if (sbus_usart == NULL) {
-        USART_Init_Config_s sbus_config = {
-            .module_callback = Et08SbusRxCallback,
-            .recv_buff_size = SBUS_FRAME_SIZE,
-            .usart_handle = uart_handle,
-        };
-        sbus_usart = USARTRegister(&sbus_config);
-    }
-    sbus_last_tick = 0U;
-    sbus_frame_count = 0U;
-    sbus_bad_count = 0U;
+    et08_ctrl = ET08_Init(uart_handle);
 }
 
 static uint8_t Et08SbusIsOnline(void)
 {
-    if (sbus_usart == NULL) {
-        return 0U;
-    }
-    return ((HAL_GetTick() - sbus_last_tick) < SBUS_ONLINE_TIMEOUT_MS) ? 1U : 0U;
+    return ET08_IsOnline();
 }
 
 static uint8_t Et08InputValid(void)
 {
-    if (sbus_frame_count == 0U) {
+    et08_ctrl = ET08_GetCtrl();
+    if (et08_ctrl == NULL) {
         return 0U;
     }
-    if (et08_ctrl.failsafe) {
+    if (!ET08_IsOnline()) {
+        return 0U;
+    }
+    if (et08_ctrl->frame_lost || et08_ctrl->failsafe) {
         return 0U;
     }
     return 1U;
+}
+
+static void Debug_DisableWatchdogs(void)
+{
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_WWDG_STOP;
+    DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
 }
 
 static void EnsureFrictionMotorsReady(void)
@@ -457,7 +406,7 @@ static void EnsureFrictionMotorsReady(void)
                 .speed_feedback_source = MOTOR_FEED,
                 .outer_loop_type = SPEED_LOOP,
                 .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
-                .motor_reverse_flag = (i == 0U) ? MOTOR_DIRECTION_REVERSE
+                .motor_reverse_flag = (i == 1U) ? MOTOR_DIRECTION_REVERSE
                                                 : MOTOR_DIRECTION_NORMAL,
             },
             .motor_type = M3508,
@@ -466,6 +415,7 @@ static void EnsureFrictionMotorsReady(void)
         friction_motors[i] = DJIMotorInit(&config);
     }
 }
+
 static void EnsureLoaderMotorReady(void)
 {
     if (loader_motor != NULL) {
@@ -523,32 +473,30 @@ static void ApplyLoaderPidProfile(uint8_t single_shot_boost)
     if (loader_motor == NULL) {
         return;
     }
-    if (single_shot_boost) {
-        if (loader_pid_boosted) {
-            return;
-        }
+
+    if (single_shot_boost && !loader_pid_boosted) {
         loader_motor->motor_controller.angle_PID.Kp = LOADER_ANGLE_KP_BOOST;
         loader_motor->motor_controller.angle_PID.Kd = LOADER_ANGLE_KD_BOOST;
         loader_motor->motor_controller.angle_PID.MaxOut = LOADER_ANGLE_MAXOUT_BOOST;
+
         loader_motor->motor_controller.speed_PID.Kp = LOADER_SPEED_KP_BOOST;
         loader_motor->motor_controller.speed_PID.Kd = LOADER_SPEED_KD_BOOST;
         loader_motor->motor_controller.speed_PID.MaxOut = LOADER_SPEED_MAXOUT_BOOST;
+
         loader_motor->motor_controller.current_PID.MaxOut = LOADER_CURRENT_MAXOUT_BOOST;
         loader_pid_boosted = 1;
-        return;
-    }
+    } else if (!single_shot_boost && loader_pid_boosted) {
+        loader_motor->motor_controller.angle_PID.Kp = LOADER_ANGLE_KP_BASE;
+        loader_motor->motor_controller.angle_PID.Kd = LOADER_ANGLE_KD_BASE;
+        loader_motor->motor_controller.angle_PID.MaxOut = LOADER_ANGLE_MAXOUT_BASE;
 
-    if (!loader_pid_boosted) {
-        return;
+        loader_motor->motor_controller.speed_PID.Kp = LOADER_SPEED_KP_BASE;
+        loader_motor->motor_controller.speed_PID.Kd = LOADER_SPEED_KD_BASE;
+        loader_motor->motor_controller.speed_PID.MaxOut = LOADER_SPEED_MAXOUT_BASE;
+
+        loader_motor->motor_controller.current_PID.MaxOut = LOADER_CURRENT_MAXOUT_BASE;
+        loader_pid_boosted = 0;
     }
-    loader_motor->motor_controller.angle_PID.Kp = LOADER_ANGLE_KP_BASE;
-    loader_motor->motor_controller.angle_PID.Kd = LOADER_ANGLE_KD_BASE;
-    loader_motor->motor_controller.angle_PID.MaxOut = LOADER_ANGLE_MAXOUT_BASE;
-    loader_motor->motor_controller.speed_PID.Kp = LOADER_SPEED_KP_BASE;
-    loader_motor->motor_controller.speed_PID.Kd = LOADER_SPEED_KD_BASE;
-    loader_motor->motor_controller.speed_PID.MaxOut = LOADER_SPEED_MAXOUT_BASE;
-    loader_motor->motor_controller.current_PID.MaxOut = LOADER_CURRENT_MAXOUT_BASE;
-    loader_pid_boosted = 0;
 }
 
 static void GimbalMotorsInit(void)
@@ -590,7 +538,6 @@ static void GimbalMotorsInit(void)
     };
 
     yaw_motor = DJIMotorInit(&config);
-
     config.controller_param_init_config.current_feedforward_ptr = &pitch_current_ff;
     config.controller_setting_init_config.feedforward_flag = CURRENT_FEEDFORWARD;
     config.controller_param_init_config.speed_PID.MaxOut = 30000.0f;
@@ -609,68 +556,6 @@ static void GimbalMotorsInit(void)
         DJIMotorStop(pitch_motor);
     }
 }
-
-static uint8_t Et08GetUpperSwitchPos(uint8_t state)
-{
-    if (state == ET08_SWITCH_POS_UP) {
-        return ET08_SWITCH_POS_UP;
-    }
-    if (state == ET08_SWITCH_POS_DOWN) {
-        return ET08_SWITCH_POS_DOWN;
-    }
-    return ET08_SWITCH_INVALID;
-}
-
-static uint8_t Et08GetLowerSwitchPos(uint8_t state)
-{
-    if (state >= 3u && state <= 5u) {
-        return (uint8_t)(state - 3u);
-    }
-    return ET08_SWITCH_INVALID;
-}
-
-static uint8_t Et08GetSaPosFromState(uint8_t state)
-{
-    if (state == ET08_SWITCH_INVALID) {
-        return ET08_SWITCH_INVALID;
-    }
-    if (state <= 2u) {
-        return ET08_SWITCH_POS_UP;
-    }
-    if (state <= 5u) {
-        return ET08_SWITCH_POS_DOWN;
-    }
-    return ET08_SWITCH_INVALID;
-}
-
-static uint8_t Et08GetSbPosFromState(uint8_t state)
-{
-    if (state == ET08_SWITCH_INVALID) {
-        return ET08_SWITCH_INVALID;
-    }
-    switch (state % 3u) {
-    case 0u:
-        return ET08_SWITCH_POS_UP;
-    case 1u:
-        return ET08_SWITCH_POS_MID;
-    default:
-        return ET08_SWITCH_POS_DOWN;
-    }
-}
-
-static uint8_t Et08GetSdPosFromState(uint8_t state)
-{
-    return Et08GetSaPosFromState(state);
-}
-
-static uint8_t ET08_IsFrictionEnabled(const ET08_Ctrl_t *rc)
-{
-    if (rc == NULL) {
-        return 0;
-    }
-    return (Et08GetSaPosFromState(rc->switch_sa_sb_state) == ET08_SWITCH_POS_UP);
-}
-
 static void ProcessShootRemote(void)
 {
     if (!Et08InputValid()) {
@@ -682,54 +567,64 @@ static void ProcessShootRemote(void)
     }
 
     uint32_t now = HAL_GetTick();
-    uint8_t sa_pos = Et08GetSaPosFromState(et08_ctrl.switch_sa_sb_state);
+    uint8_t sa_sb_state = et08_ctrl->switch_sa_sb_state;
+    uint8_t raw_state = Et08MapSwitchStateRaw(et08_ctrl->switch_sa_sb_raw);
+    if (raw_state != ET08_SWITCH_INVALID) {
+        sa_sb_state = raw_state;
+    }
+    uint8_t sa_pos = Et08GetSaPosFromState(sa_sb_state);
     if (sa_pos == ET08_SWITCH_POS_UP) {
         friction_enabled = 1;
     } else if (sa_pos == ET08_SWITCH_POS_DOWN) {
         friction_enabled = 0;
     }
 
-    sb_pos = Et08GetSbPosFromState(et08_ctrl.switch_sa_sb_state);
+    sb_pos = Et08GetSbPosFromState(sa_sb_state);
     if (sb_pos == ET08_SWITCH_INVALID) {
         sb_pos = ET08_SWITCH_POS_MID;
     }
 
-    if (friction_enabled && sb_pos == ET08_SWITCH_POS_UP) {
-        if (!loader_continuous) {
-            loader_continuous_start_ms = now;
-        }
-        loader_continuous = 1;
-    } else if (loader_continuous) {
-        if ((now - loader_continuous_start_ms) < LOADER_CONTINUOUS_HOLD_MS) {
-            loader_continuous = 1;
-        } else {
-            loader_continuous = 0;
-        }
-    } else {
-        loader_continuous = 0;
-    }
-    loader_enabled = friction_enabled &&
-                     (sb_pos == ET08_SWITCH_POS_UP ||
-                      sb_pos == ET08_SWITCH_POS_DOWN ||
-                      loader_continuous);
+    loader_continuous = (friction_enabled && sb_pos == ET08_SWITCH_POS_UP) ? 1U : 0U;
+    loader_enabled = friction_enabled && (sb_pos != ET08_SWITCH_POS_MID);
 
     if (!loader_enabled) {
         pending_shots = 0;
         sb_last_pos = sb_pos;
+        loader_enabled_last = 0;
+        sb_down_armed = 1U;
         return;
     }
 
-    if (sb_pos != sb_last_pos && (now - sb_last_change_ms) >= SB_SWITCH_DEBOUNCE_MS) {
-        sb_last_change_ms = now;
-        if (sb_pos == ET08_SWITCH_POS_DOWN) {
-            pending_shots = 1;
-            last_shot_tick = now;
-            last_step_tick = last_shot_tick - SHOOT_INTERVAL_MS;
-        } else if (sb_pos == ET08_SWITCH_POS_UP) {
-            pending_shots = 0;
-        }
+    if (!loader_enabled_last && sb_pos == ET08_SWITCH_POS_DOWN) {
+        pending_shots = 1;
+        last_shot_tick = now;
+        last_step_tick = last_shot_tick - SHOOT_INTERVAL_MS;
         sb_last_pos = sb_pos;
+        sb_last_change_ms = now;
+        loader_enabled_last = 1;
+        sb_down_armed = 0U;
+        return;
     }
+
+    if (sb_pos != ET08_SWITCH_POS_DOWN) {
+        sb_down_armed = 1U;
+    }
+
+    if (sb_pos != sb_last_pos) {
+        if ((now - sb_last_change_ms) >= SB_SWITCH_DEBOUNCE_MS) {
+            sb_last_change_ms = now;
+            if (sb_pos == ET08_SWITCH_POS_DOWN && sb_down_armed) {
+                pending_shots = 1;
+                last_shot_tick = now;
+                last_step_tick = last_shot_tick - SHOOT_INTERVAL_MS;
+                sb_down_armed = 0U;
+            } else if (sb_pos == ET08_SWITCH_POS_UP) {
+                pending_shots = 0;
+            }
+            sb_last_pos = sb_pos;
+        }
+    }
+    loader_enabled_last = 1;
 }
 
 static void ProcessGimbalControl(void)
@@ -741,8 +636,8 @@ static void ProcessGimbalControl(void)
         return;
     }
 
-    int16_t pitch_in = et08_ctrl.right.y;
-    uint8_t sd_pos = Et08GetSdPosFromState(et08_ctrl.switch_sd_sc_state);
+    int16_t pitch_in = et08_ctrl->right.y;
+    uint8_t sd_pos = Et08GetSdPosFromState(et08_ctrl->switch_sd_sc_state);
     if (sd_pos == ET08_SWITCH_POS_UP) {
         yaw_speed_ref = 0.0f;
     } else {
@@ -794,6 +689,7 @@ static void UpdateLoaderControl(void)
         }
         pending_shots = 0;
         loader_initialized = 0;
+        single_shot_active = 0;
         loader_speed_cmd = 0.0f;
         loader_speed_tick = now;
         ApplyLoaderPidProfile(0);
@@ -802,6 +698,7 @@ static void UpdateLoaderControl(void)
     if (loader_continuous) {
         pending_shots = 0;
         loader_initialized = 0;
+        single_shot_active = 0;
         ApplyLoaderPidProfile(0);
         if (!loader_continuous_last) {
             loader_speed_cmd = 0.0f;
@@ -844,19 +741,20 @@ static void UpdateLoaderControl(void)
         loader_initialized = 1;
     }
 
-    if (pending_shots > 0) {
-        uint32_t elapsed = now - last_step_tick;
-        if (elapsed >= SHOOT_INTERVAL_MS) {
-            uint32_t steps = elapsed / SHOOT_INTERVAL_MS;
-            if (steps > pending_shots) {
-                steps = pending_shots;
-            }
-            last_step_tick += steps * SHOOT_INTERVAL_MS;
-            loader_target_angle += LOADER_ANGLE_STEP_DEG * (float)steps;
-            loader_target_angle = ClampFloat(loader_target_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
-            pending_shots -= (uint8_t)steps;
-        }
-    } else {
+    if (pending_shots == 0 && sb_pos == ET08_SWITCH_POS_DOWN && sb_down_armed) {
+        pending_shots = 1;
+        last_shot_tick = now;
+        last_step_tick = now - SHOOT_INTERVAL_MS;
+        sb_down_armed = 0U;
+    }
+
+    if (pending_shots > 0 && !single_shot_active) {
+        loader_target_angle += LOADER_SINGLE_DIRECTION_SIGN * LOADER_ANGLE_STEP_DEG;
+        loader_target_angle = ClampFloat(loader_target_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
+        pending_shots -= 1U;
+        single_shot_active = 1;
+        last_step_tick = now;
+    } else if (pending_shots == 0 && !single_shot_active) {
         DJIMotorStop(loader_motor);
         ApplyLoaderPidProfile(0);
         return;
@@ -865,7 +763,14 @@ static void UpdateLoaderControl(void)
     ApplyLoaderPidProfile(1);
     DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
     DJIMotorEnable(loader_motor);
-    DJIMotorSetRef(loader_motor, loader_target_angle);
+    DJIMotorSetRef(loader_motor, loader_target_angle * LOADER_SINGLE_REF_SIGN);
+
+    if (single_shot_active) {
+        float err = fabsf(loader_target_angle - loader_motor->measure.total_angle);
+        if (err <= LOADER_SINGLE_SETTLE_EPS_DEG) {
+            single_shot_active = 0;
+        }
+    }
 }
 
 static void UpdateGimbalControl(void)
@@ -1003,7 +908,7 @@ static void ProcessChassisControl(void)
     chassis_wz = 0.0f;
     return;
 #endif
-    if (sbus_frame_count == 0U) {
+    if (!Et08InputValid()) {
         chassis_vx = 0.0f;
         chassis_vy = 0.0f;
         chassis_wz = 0.0f;
@@ -1011,9 +916,9 @@ static void ProcessChassisControl(void)
         return;
     }
 
-    uint8_t all_in_deadzone = (abs(et08_ctrl.left.x) < 50) &&
-                              (abs(et08_ctrl.left.y) < 50) &&
-                              (abs(et08_ctrl.right.x) < 50);
+    uint8_t all_in_deadzone = (abs(et08_ctrl->left.x) < 50) &&
+                              (abs(et08_ctrl->left.y) < 50) &&
+                              (abs(et08_ctrl->right.x) < 50);
 
     if (all_in_deadzone) {
         chassis_vx = 0.0f;
@@ -1025,9 +930,9 @@ static void ProcessChassisControl(void)
 
     zero_speed_control = 0;
 
-    chassis_vx = et08_ctrl.left.x / ET08_STICK_SCALE_DEN * CHASSIS_MAX_VEL;
-    chassis_vy = -et08_ctrl.left.y / ET08_STICK_SCALE_DEN * CHASSIS_MAX_VEL;
-    chassis_wz = et08_ctrl.right.x / ET08_STICK_SCALE_DEN * CHASSIS_MAX_ROTATE;
+    chassis_vx = et08_ctrl->left.x / ET08_STICK_SCALE_DEN * CHASSIS_MAX_VEL;
+    chassis_vy = -et08_ctrl->left.y / ET08_STICK_SCALE_DEN * CHASSIS_MAX_VEL;
+    chassis_wz = et08_ctrl->right.x / ET08_STICK_SCALE_DEN * CHASSIS_MAX_ROTATE;
 
     chassis_vx = float_deadband(chassis_vx, -CHASSIS_DEADZONE_VX, CHASSIS_DEADZONE_VX);
     chassis_vy = float_deadband(chassis_vy, -CHASSIS_DEADZONE_VY, CHASSIS_DEADZONE_VY);
@@ -1236,6 +1141,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         HAL_IncTick();
     }
 }
+
+
+
 
 
 
