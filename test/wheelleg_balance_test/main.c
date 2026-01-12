@@ -53,31 +53,47 @@
 #define DM_V_RANGE 45.0f
 #define DM_T_RANGE 54.0f
 
-/* Stand pose (rad) from measured data */
-#define HIP_TARGET_L 0.108f
-#define HIP_TARGET_R -0.009f
-#define KNEE_TARGET_L 1.058f
-#define KNEE_TARGET_R -1.119f
+/* Stand pose (rad) from loaded stable stance.
+ * Update these from "joint pos" logs when the robot is stable on the ground. */
+#define HIP_TARGET_L 0.8f
+#define HIP_TARGET_R -0.6f
+#define KNEE_TARGET_L 0.05f
+#define KNEE_TARGET_R -0.08f
+// #define HIP_TARGET_L 0.92f
+// #define HIP_TARGET_R -0.84f
+// #define KNEE_TARGET_L 0.05f
+// #define KNEE_TARGET_R -0.08f
 
-/* Joint stiffness */
-#define HIP_KP 60.0f
-#define HIP_KD 4.0f
-#define KNEE_KP 70.0f
-#define KNEE_KD 5.0f
-#define HIP_TFF 0.0f
-#define KNEE_TFF 0.0f
+/* Joint stiffness (per motor).
+ * Note: MIT KD is clamped by the driver (<= 5.0). Keep KD in [0..5]. */
+#define FL_KP 50.0f
+#define FL_KD 3.0f
+#define RL_KP 70.0f
+#define RL_KD 2.5f
+#define FR_KP 50.0f
+#define FR_KD 3.0f
+#define RR_KP 70.0f
+#define RR_KD 2.5f
+
+/* Torque feedforward (TFF) to fight gravity.
+ * Use the sign/magnitude from "tq[]" logs at stable stance, then tune in small steps. */
+#define HIP_TFF_L 8.0f
+#define HIP_TFF_R -8.0f
+#define KNEE_TFF_L 4.0f
+#define KNEE_TFF_R -4.0f
 
 /* Balance controller (deg-based) */
-#define BALANCE_PITCH_KP 80.0f
-#define BALANCE_PITCH_KD 4.0f
-#define BALANCE_PITCH_KI 0.0f
+#define BALANCE_PITCH_KP 950.0f
+#define BALANCE_PITCH_KD 70.0f
+#define BALANCE_PITCH_KI 0.00f
 #define BALANCE_PITCH_I_LIMIT 50.0f
-#define BALANCE_OUT_MAX 8000.0f
-#define BALANCE_TILT_MAX_DEG 25.0f
+#define BALANCE_OUT_MAX 20000.0f
+#define BALANCE_TILT_MAX_DEG 40.0f
 #define BALANCE_PITCH_SIGN 1.0f
+#define BALANCE_REF_FIXED_DEG -4.70f
 
 /* Wheel command limits */
-#define WHEEL_SPEED_MAX 20000.0f
+#define WHEEL_SPEED_MAX 25000.0f
 #define WHEEL_SPEED_MIN (-WHEEL_SPEED_MAX)
 
 /* RC mapping */
@@ -118,9 +134,14 @@ static float pitch_rate_deg_s = 0.0f;
 static uint32_t imu_last_ms = 0;
 static uint8_t imu_valid = 0;
 
-static float pitch_ref_deg = 0.0f;
+static float pitch_ref_deg = BALANCE_REF_FIXED_DEG;
 static float balance_i = 0.0f;
 static uint8_t balance_active = 0;
+static float balance_err_deg = 0.0f;
+static float balance_out = 0.0f;
+static float forward_cmd = 0.0f;
+static float yaw_cmd = 0.0f;
+static uint8_t imu_alive = 0;
 
 static float wheel_left_ref = 0.0f;
 static float wheel_right_ref = 0.0f;
@@ -196,7 +217,7 @@ static void WheelMotorsInit(void)
                 .IntegralLimit = 3000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit |
                            PID_Derivative_On_Measurement,
-                .MaxOut = 12000.0f,
+                .MaxOut = 20000.0f,
             },
             .current_PID = {
                 .Kp = 0.4f,
@@ -205,7 +226,7 @@ static void WheelMotorsInit(void)
                 .IntegralLimit = 3000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit |
                            PID_Derivative_On_Measurement,
-                .MaxOut = 15000.0f,
+                .MaxOut = 20000.0f,
             },
         },
         .controller_setting_init_config = {
@@ -275,12 +296,12 @@ static void JointMotorInit(JointMotor *joint, uint8_t motor_id, float kp, float 
 
 static void JointMotorsInit(void)
 {
-    JointMotorInit(&front_left, FRONT_LEFT_ID, HIP_KP, HIP_KD, HIP_TFF, HIP_TARGET_L);
-    JointMotorInit(&front_right, FRONT_RIGHT_ID, HIP_KP, HIP_KD, HIP_TFF, HIP_TARGET_R);
+    JointMotorInit(&front_left, FRONT_LEFT_ID, FL_KP, FL_KD, HIP_TFF_L, HIP_TARGET_L);
+    JointMotorInit(&front_right, FRONT_RIGHT_ID, FR_KP, FR_KD, HIP_TFF_R, HIP_TARGET_R);
 
-    JointMotorInit(&rear_left, REAR_LEFT_ID, KNEE_KP, KNEE_KD, KNEE_TFF,
+    JointMotorInit(&rear_left, REAR_LEFT_ID, RL_KP, RL_KD, KNEE_TFF_L,
                    HIP_TARGET_L + KNEE_TARGET_L);
-    JointMotorInit(&rear_right, REAR_RIGHT_ID, KNEE_KP, KNEE_KD, KNEE_TFF,
+    JointMotorInit(&rear_right, REAR_RIGHT_ID, RR_KP, RR_KD, KNEE_TFF_R,
                    HIP_TARGET_R + KNEE_TARGET_R);
 }
 
@@ -392,6 +413,12 @@ static void UpdateControl(float dt_sec)
     else
         balance_mode = GetBalanceMode(et08_ctrl);
 
+    imu_alive = imu_valid && ((HAL_GetTick() - imu_last_ms) <= IMU_TIMEOUT_MS);
+    if (imu_alive)
+        balance_err_deg = (pitch_deg - pitch_ref_deg) * BALANCE_PITCH_SIGN;
+    else
+        balance_err_deg = 0.0f;
+
     if (balance_mode == BALANCE_MODE_DISABLE)
     {
         wheel_enable = 0;
@@ -399,6 +426,9 @@ static void UpdateControl(float dt_sec)
         wheel_right_ref = 0.0f;
         balance_active = 0;
         balance_i = 0.0f;
+        balance_out = 0.0f;
+        forward_cmd = 0.0f;
+        yaw_cmd = 0.0f;
         return;
     }
 
@@ -406,7 +436,7 @@ static void UpdateControl(float dt_sec)
 
     if (!balance_active && balance_mode == BALANCE_MODE_ACTIVE)
     {
-        pitch_ref_deg = pitch_deg;
+        pitch_ref_deg = BALANCE_REF_FIXED_DEG;
         balance_i = 0.0f;
         balance_active = 1;
     }
@@ -414,19 +444,17 @@ static void UpdateControl(float dt_sec)
     int16_t right_y = ApplyDeadzone(et08_ctrl->right.y, RC_DEADZONE);
     int16_t left_x = ApplyDeadzone(et08_ctrl->left.x, RC_DEADZONE);
 
-    float forward_cmd = (float)right_y / RC_STICK_MAX * RC_FWD_MAX;
-    float yaw_cmd = (float)left_x / RC_STICK_MAX * RC_YAW_MAX;
+    forward_cmd = (float)right_y / RC_STICK_MAX * RC_FWD_MAX;
+    yaw_cmd = (float)left_x / RC_STICK_MAX * RC_YAW_MAX;
 
-    float balance_out = 0.0f;
-    uint8_t imu_alive = imu_valid && ((HAL_GetTick() - imu_last_ms) <= IMU_TIMEOUT_MS);
+    balance_out = 0.0f;
     if (balance_mode == BALANCE_MODE_ACTIVE && imu_alive)
     {
-        float err = (pitch_deg - pitch_ref_deg) * BALANCE_PITCH_SIGN;
-        if (fabsf(err) <= BALANCE_TILT_MAX_DEG)
+        if (fabsf(balance_err_deg) <= BALANCE_TILT_MAX_DEG)
         {
-            balance_i += err * dt_sec;
+            balance_i += balance_err_deg * dt_sec;
             balance_i = ClampFloat(balance_i, -BALANCE_PITCH_I_LIMIT, BALANCE_PITCH_I_LIMIT);
-            balance_out = BALANCE_PITCH_KP * err +
+            balance_out = BALANCE_PITCH_KP * balance_err_deg +
                           BALANCE_PITCH_KD * pitch_rate_deg_s +
                           BALANCE_PITCH_KI * balance_i;
             balance_out = ClampFloat(balance_out, -BALANCE_OUT_MAX, BALANCE_OUT_MAX);
@@ -519,18 +547,51 @@ int main(void)
         {
             last_telemetry_tick = now;
             char buffer[200];
-            uint8_t imu_alive = imu_valid && ((now - imu_last_ms) <= IMU_TIMEOUT_MS);
             safe_snprintf(buffer, sizeof(buffer),
-                          "wl_balance mode=%u rc=%u imu=%u pitch=%.2f ref=%.2f rate=%.2f wheel[L=%.0f R=%.0f]\r\n",
+                          "wl_balance mode=%u rc=%u imu=%u pitch=%.2f ref=%.2f err=%.2f rate=%.2f out=%.0f i=%.2f cmd[F=%.0f Y=%.0f] wheel[L=%.0f R=%.0f]\r\n",
                           (unsigned)balance_mode,
                           (unsigned)ET08_IsOnline(),
                           (unsigned)imu_alive,
                           pitch_deg,
                           pitch_ref_deg,
+                          balance_err_deg,
                           pitch_rate_deg_s,
+                          balance_out,
+                          balance_i,
+                          forward_cmd,
+                          yaw_cmd,
                           wheel_left_ref,
                           wheel_right_ref);
             TelemetrySend(buffer);
+
+            const DMMotor_Feedback *fl = front_left.handle ? DMMotor_GetFeedback(front_left.handle) : NULL;
+            const DMMotor_Feedback *rl = rear_left.handle ? DMMotor_GetFeedback(rear_left.handle) : NULL;
+            const DMMotor_Feedback *fr = front_right.handle ? DMMotor_GetFeedback(front_right.handle) : NULL;
+            const DMMotor_Feedback *rr = rear_right.handle ? DMMotor_GetFeedback(rear_right.handle) : NULL;
+
+            float fl_pos = fl ? fl->position_rad : 0.0f;
+            float rl_pos = rl ? rl->position_rad : 0.0f;
+            float fr_pos = fr ? fr->position_rad : 0.0f;
+            float rr_pos = rr ? rr->position_rad : 0.0f;
+
+            float fl_tq = fl ? fl->torque : 0.0f;
+            float rl_tq = rl ? rl->torque : 0.0f;
+            float fr_tq = fr ? fr->torque : 0.0f;
+            float rr_tq = rr ? rr->torque : 0.0f;
+
+            uint8_t fl_err = fl ? fl->error_state : 0;
+            uint8_t rl_err = rl ? rl->error_state : 0;
+            uint8_t fr_err = fr ? fr->error_state : 0;
+            uint8_t rr_err = rr ? rr->error_state : 0;
+
+            char jbuf[240];
+            safe_snprintf(jbuf, sizeof(jbuf),
+                          "joint pos[FL %.3f RL %.3f FR %.3f RR %.3f] tq[%.2f %.2f %.2f %.2f] err[%u %u %u %u]\r\n",
+                          fl_pos, rl_pos, fr_pos, rr_pos,
+                          fl_tq, rl_tq, fr_tq, rr_tq,
+                          (unsigned)fl_err, (unsigned)rl_err,
+                          (unsigned)fr_err, (unsigned)rr_err);
+            TelemetrySend(jbuf);
         }
 
         HAL_Delay(2);
