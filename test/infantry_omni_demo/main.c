@@ -84,23 +84,25 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U};
 #define LOADER_OUTPUT_STEP_DEG 45.0f
 #define LOADER_DIRECTION_SIGN (1.0f)
 #define LOADER_SINGLE_DIRECTION_SIGN (LOADER_DIRECTION_SIGN)
-#define LOADER_SINGLE_REF_SIGN (-1.0f)
+#define LOADER_SINGLE_REF_SIGN (1.0f)
 #define LOADER_ANGLE_STEP_DEG (LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
 #define LOADER_SINGLE_SETTLE_EPS_DEG 5.0f
+#define LOADER_ANGLE_FEEDBACK_SIGN (1)
+#define LOADER_SINGLE_SPEED (LOADER_DIRECTION_SIGN * 7000.0f)
 
 #define SHOOT_INTERVAL_MS 2000U
 #define LOADER_CONTINUOUS_SPEED (LOADER_DIRECTION_SIGN * 20000.0f)
 
 #define LOADER_ANGLE_KP_BASE 3.5f
-#define LOADER_ANGLE_KP_BOOST 9.0f
+#define LOADER_ANGLE_KP_BOOST 6.0f
 #define LOADER_ANGLE_KD_BASE 0.5f
-#define LOADER_ANGLE_KD_BOOST 2.0f
+#define LOADER_ANGLE_KD_BOOST 4.0f
 #define LOADER_ANGLE_MAXOUT_BASE LOADER_SPEED_MAX
 #define LOADER_ANGLE_MAXOUT_BOOST 15000.0f
-#define LOADER_SPEED_KP_BASE 4.8f
-#define LOADER_SPEED_KP_BOOST 10.0f
-#define LOADER_SPEED_KD_BASE 0.5f
-#define LOADER_SPEED_KD_BOOST 0.0f
+#define LOADER_SPEED_KP_BASE 4.5f
+#define LOADER_SPEED_KP_BOOST 9.0f
+#define LOADER_SPEED_KD_BASE 0.2f
+#define LOADER_SPEED_KD_BOOST 0.2f
 #define LOADER_SPEED_MAXOUT_BASE 22000.0f
 #define LOADER_SPEED_MAXOUT_BOOST 30000.0f
 #define LOADER_CURRENT_MAXOUT_BASE 28000.0f
@@ -214,6 +216,7 @@ static uint8_t sb_down_armed = 1U;
 static uint8_t pending_shots = 0;
 static uint8_t loader_initialized = 0;
 static uint8_t single_shot_active = 0;
+static float single_shot_start_angle = 0.0f;
 static float loader_target_angle = 0.0f;
 static uint32_t last_shot_tick = 0;
 static uint32_t last_step_tick = 0;
@@ -466,6 +469,10 @@ static void EnsureLoaderMotorReady(void)
     };
 
     loader_motor = DJIMotorInit(&config);
+    if (loader_motor != NULL) {
+        loader_motor->angle_feedback_sign = LOADER_ANGLE_FEEDBACK_SIGN;
+        loader_motor->angle_feedback_locked = 1U;
+    }
 }
 
 static void ApplyLoaderPidProfile(uint8_t single_shot_boost)
@@ -753,6 +760,7 @@ static void UpdateLoaderControl(void)
         loader_target_angle = ClampFloat(loader_target_angle, LOADER_ANGLE_MIN, LOADER_ANGLE_MAX);
         pending_shots -= 1U;
         single_shot_active = 1;
+        single_shot_start_angle = loader_motor->measure.total_angle;
         last_step_tick = now;
     } else if (pending_shots == 0 && !single_shot_active) {
         DJIMotorStop(loader_motor);
@@ -760,16 +768,19 @@ static void UpdateLoaderControl(void)
         return;
     }
 
-    ApplyLoaderPidProfile(1);
-    DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
-    DJIMotorEnable(loader_motor);
-    DJIMotorSetRef(loader_motor, loader_target_angle * LOADER_SINGLE_REF_SIGN);
-
     if (single_shot_active) {
-        float err = fabsf(loader_target_angle - loader_motor->measure.total_angle);
-        if (err <= LOADER_SINGLE_SETTLE_EPS_DEG) {
+        float delta = fabsf(loader_motor->measure.total_angle - single_shot_start_angle);
+        if (delta >= LOADER_ANGLE_STEP_DEG) {
             single_shot_active = 0;
+            DJIMotorStop(loader_motor);
+            ApplyLoaderPidProfile(0);
+            return;
         }
+        ApplyLoaderPidProfile(1);
+        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+        DJIMotorEnable(loader_motor);
+        DJIMotorSetRef(loader_motor, ClampFloat(LOADER_SINGLE_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX));
+        return;
     }
 }
 
@@ -1141,6 +1152,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         HAL_IncTick();
     }
 }
+
 
 
 
