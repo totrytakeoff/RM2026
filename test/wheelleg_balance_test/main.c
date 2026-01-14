@@ -55,10 +55,13 @@
 
 /* Stand pose (rad) from loaded stable stance.
  * Update these from "joint pos" logs when the robot is stable on the ground. */
-#define HIP_TARGET_L 0.8f
-#define HIP_TARGET_R -0.6f
-#define KNEE_TARGET_L 0.05f
-#define KNEE_TARGET_R -0.08f
+
+// 电机逆时针转为正方向
+#define HIP_TARGET_L -0.10f // 下摆 顺转
+#define KNEE_TARGET_L 1.35f // 收起顺转 伸展逆转
+
+#define HIP_TARGET_R -0.25f // 下摆 逆转
+#define KNEE_TARGET_R -0.65f //收起逆转 伸展顺转
 // #define HIP_TARGET_L 0.92f
 // #define HIP_TARGET_R -0.84f
 // #define KNEE_TARGET_L 0.05f
@@ -66,21 +69,29 @@
 
 /* Joint stiffness (per motor).
  * Note: MIT KD is clamped by the driver (<= 5.0). Keep KD in [0..5]. */
+//left
 #define FL_KP 50.0f
-#define FL_KD 3.0f
-#define RL_KP 70.0f
+#define FL_KD 1.5f
+#define RL_KP 60.0f
 #define RL_KD 2.5f
+
+//right
 #define FR_KP 50.0f
-#define FR_KD 3.0f
-#define RR_KP 70.0f
-#define RR_KD 2.5f
+#define FR_KD 1.5f
+#define RR_KP 60.0f
+#define RR_KD 1.5f
 
 /* Torque feedforward (TFF) to fight gravity.
  * Use the sign/magnitude from "tq[]" logs at stable stance, then tune in small steps. */
-#define HIP_TFF_L 8.0f
-#define HIP_TFF_R -8.0f
-#define KNEE_TFF_L 4.0f
-#define KNEE_TFF_R -4.0f
+#define HIP_TFF_L -6.0f
+#define KNEE_TFF_L 8.0f
+
+#define HIP_TFF_R 6.0f
+#define KNEE_TFF_R -8.0f
+/* Hip TFF sharing between the two motors on the same leg.
+ * rear motor also contributes to hip due to series transmission (rear ~= hip+knee),
+ * so put part of hip TFF on rear to reduce "motor fighting" / backlash buzz. */
+#define HIP_TFF_SHARE 0.5f /* 0..1: front gets share, rear gets (1-share) */
 
 /* Balance controller (deg-based) */
 #define BALANCE_PITCH_KP 950.0f
@@ -296,12 +307,17 @@ static void JointMotorInit(JointMotor *joint, uint8_t motor_id, float kp, float 
 
 static void JointMotorsInit(void)
 {
-    JointMotorInit(&front_left, FRONT_LEFT_ID, FL_KP, FL_KD, HIP_TFF_L, HIP_TARGET_L);
-    JointMotorInit(&front_right, FRONT_RIGHT_ID, FR_KP, FR_KD, HIP_TFF_R, HIP_TARGET_R);
+    const float hip_front_tff_l = HIP_TFF_L * HIP_TFF_SHARE;
+    const float hip_rear_tff_l = HIP_TFF_L * (1.0f - HIP_TFF_SHARE);
+    const float hip_front_tff_r = HIP_TFF_R * HIP_TFF_SHARE;
+    const float hip_rear_tff_r = HIP_TFF_R * (1.0f - HIP_TFF_SHARE);
 
-    JointMotorInit(&rear_left, REAR_LEFT_ID, RL_KP, RL_KD, KNEE_TFF_L,
+    JointMotorInit(&front_left, FRONT_LEFT_ID, FL_KP, FL_KD, hip_front_tff_l, HIP_TARGET_L);
+    JointMotorInit(&front_right, FRONT_RIGHT_ID, FR_KP, FR_KD, hip_front_tff_r, HIP_TARGET_R);
+
+    JointMotorInit(&rear_left, REAR_LEFT_ID, RL_KP, RL_KD, KNEE_TFF_L + hip_rear_tff_l,
                    HIP_TARGET_L + KNEE_TARGET_L);
-    JointMotorInit(&rear_right, REAR_RIGHT_ID, RR_KP, RR_KD, KNEE_TFF_R,
+    JointMotorInit(&rear_right, REAR_RIGHT_ID, RR_KP, RR_KD, KNEE_TFF_R + hip_rear_tff_r,
                    HIP_TARGET_R + KNEE_TARGET_R);
 }
 
@@ -452,8 +468,15 @@ static void UpdateControl(float dt_sec)
     {
         if (fabsf(balance_err_deg) <= BALANCE_TILT_MAX_DEG)
         {
-            balance_i += balance_err_deg * dt_sec;
-            balance_i = ClampFloat(balance_i, -BALANCE_PITCH_I_LIMIT, BALANCE_PITCH_I_LIMIT);
+            if (BALANCE_PITCH_KI != 0.0f)
+            {
+                balance_i += balance_err_deg * dt_sec;
+                balance_i = ClampFloat(balance_i, -BALANCE_PITCH_I_LIMIT, BALANCE_PITCH_I_LIMIT);
+            }
+            else
+            {
+                balance_i = 0.0f;
+            }
             balance_out = BALANCE_PITCH_KP * balance_err_deg +
                           BALANCE_PITCH_KD * pitch_rate_deg_s +
                           BALANCE_PITCH_KI * balance_i;
@@ -548,7 +571,7 @@ int main(void)
             last_telemetry_tick = now;
             char buffer[200];
             safe_snprintf(buffer, sizeof(buffer),
-                          "wl_balance mode=%u rc=%u imu=%u pitch=%.2f ref=%.2f err=%.2f rate=%.2f out=%.0f i=%.2f cmd[F=%.0f Y=%.0f] wheel[L=%.0f R=%.0f]\r\n",
+                          "BAL,mode=%u,rc=%u,imu=%u,pitch_deg=%.2f,ref_deg=%.2f,err_deg=%.2f,rate_dps=%.2f,out=%.0f,i=%.2f,cmdF=%.0f,cmdY=%.0f,wL=%.0f,wR=%.0f\r\n",
                           (unsigned)balance_mode,
                           (unsigned)ET08_IsOnline(),
                           (unsigned)imu_alive,
@@ -586,7 +609,9 @@ int main(void)
 
             char jbuf[240];
             safe_snprintf(jbuf, sizeof(jbuf),
-                          "joint pos[FL %.3f RL %.3f FR %.3f RR %.3f] tq[%.2f %.2f %.2f %.2f] err[%u %u %u %u]\r\n",
+                          "JNT,hipL=%.3f,kneeL=%.3f,hipR=%.3f,kneeR=%.3f,posFL=%.3f,posRL=%.3f,posFR=%.3f,posRR=%.3f,tqFL=%.2f,tqRL=%.2f,tqFR=%.2f,tqRR=%.2f,errFL=%u,errRL=%u,errFR=%u,errRR=%u\r\n",
+                          fl_pos, (rl_pos - fl_pos),
+                          fr_pos, (rr_pos - fr_pos),
                           fl_pos, rl_pos, fr_pos, rr_pos,
                           fl_tq, rl_tq, fr_tq, rr_tq,
                           (unsigned)fl_err, (unsigned)rl_err,
