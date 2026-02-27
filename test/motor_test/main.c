@@ -52,7 +52,10 @@
 static const uint8_t M3508_CAN_IDS[M3508_MOTOR_COUNT] = {1U, 2U, 3U, 4U};
 #define GM6020_CAN_ID 5U
 
-#define M3508_SPEED_MAX 7200.0f  // deg/s, ~20 rps
+
+
+
+#define M3508_SPEED_MAX 360.0f // 360 deg/s , 1 turn per second
 #define M3508_SPEED_MIN (-M3508_SPEED_MAX)
 #define M3508_ANGLE_MAX 36000.0f  // deg, allow ~100 turns for demos
 #define M3508_ANGLE_MIN (-M3508_ANGLE_MAX)
@@ -155,20 +158,20 @@ int main(void) {
     LOGINFO("[motor_test] core init finished");
     HAL_UART_Transmit(&huart6, (uint8_t*)"---\n", 3, 1000);
 
-      MotorTest_M3508_SpeedLoop(7200.0f);
+    //   MotorTest_M3508_SpeedLoop(7200.0f);
     //   MotorTest_Loader_SpeedLoop(7200.0f);
 
     while (1) {
         /* 通过 g_dm_demo_select 选择 demo（推荐 GDB 改变量方式） */
-        if (g_dm_demo_select == 1) {
-            MotorTest_DM_MIT_ConstantSpeed(g_dm_target_speed_rad_s);
-        } else if (g_dm_demo_select == 2) {
-            MotorTest_DM_MIT_PeriodicAngleStep(g_dm_step_deg, g_dm_step_interval_ms);
-        }
+        // if (g_dm_demo_select == 1) {
+        //     MotorTest_DM_MIT_ConstantSpeed(g_dm_target_speed_rad_s);
+        // } else if (g_dm_demo_select == 2) {
+        //     MotorTest_DM_MIT_PeriodicAngleStep(g_dm_step_deg, g_dm_step_interval_ms);
+        // }
 
-        MotorTest_GM6020_SpeedLoop(7200.0f);
+        // MotorTest_GM6020_SpeedLoop(7200.0f);
         // MotorTest_M3508_PeriodicAngleStep(60.0f, 1000U);
-        // MotorTest_GM6020_PeriodicAngleStep(60.0f, 1000U);
+        MotorTest_GM6020_PeriodicAngleStep(30.0f, 1000U);
 
         DJIMotorControl();
         DaemonTask();

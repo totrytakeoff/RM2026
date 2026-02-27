@@ -174,7 +174,7 @@ ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle)
     et08_usart_instance = USARTRegister(&conf);
 
     Daemon_Init_Config_s daemon_conf = {
-        .reload_count = 10,
+        .reload_count = 400,
         .callback = ET08_LostCallback,
         .owner_id = NULL,
     };

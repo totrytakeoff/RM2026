@@ -204,8 +204,12 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define PITCH_LIMIT_MARGIN_DEG 1.0f
 
 // Pitch gravity FF + release hold (copied from wheelleg_shoot_test defaults; tune on real gimbal)
-#define PITCH_GRAVITY_FF_K -0.0f
-#define PITCH_GRAVITY_FF_MAX 20000.0f
+#define PITCH_FF_ENABLE 0
+#define PITCH_GRAVITY_FF_SIGN 1.0f
+#define PITCH_HOLD_KNOB_ON_THRESHOLD (-200)
+#define PITCH_HOLD_KNOB_OFF_THRESHOLD (200)
+#define PITCH_GRAVITY_FF_K 10000.0f
+#define PITCH_GRAVITY_FF_MAX 25000.0f
 #define PITCH_GRAVITY_FF_OFFSET_DEG 0.0f
 
 #define YAW_HOLD_KP 5.0f
@@ -226,8 +230,13 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define PITCH_HOLD_LPF_ALPHA 0.85f
 #define PITCH_HOLD_STATIC_COMP 100.0f
 #define PITCH_FF_LPF 0.9f
-#define PITCH_ANGLE_PID_KP 10.0f
-#define PITCH_ANGLE_PID_MAXOUT 1200.0f
+#define PITCH_ANGLE_PID_KP 15.0f
+#define PITCH_ANGLE_PID_MAXOUT 1500.0f
+#define PITCH_SPEED_PID_KP 50.0f
+#define PITCH_SPEED_PID_KI 350.0f
+#define PITCH_SPEED_PID_KD 0.15f
+#define PITCH_SPEED_PID_ILIMIT 2500.0f
+#define PITCH_SPEED_PID_MAXOUT 20000.0f
 
 typedef struct
 {
@@ -299,24 +308,18 @@ static uint32_t loader_cont_last_tick = 0;
 
 static float yaw_speed_ref = 0.0f;
 static float pitch_speed_ref = 0.0f;
-static float pitch_hold_angle = 0.0f;
-static uint8_t pitch_manual_active = 0;
-static uint8_t pitch_manual_active_last = 0;
-static float pitch_hold_i = 0.0f;
 static float pitch_current_ff = 0.0f;
-static float yaw_hold_angle = 0.0f;
+static uint8_t pitch_manual_active = 0;
 static uint8_t yaw_manual_active = 0;
-static uint8_t yaw_manual_active_last = 0;
-static float yaw_hold_i = 0.0f;
+static float yaw_hold_angle = 0.0f;
+static float pitch_hold_angle = 0.0f;
 static uint8_t yaw_hold_inited = 0;
-static float yaw_hold_speed_lpf = 0.0f;
-static float yaw_hold_error_prev = 0.0f;
-static uint32_t gimbal_last_tick = 0;
 static uint8_t pitch_hold_inited = 0;
-static float pitch_hold_speed_lpf = 0.0f;
-static float pitch_hold_error_prev = 0.0f;
 static float pitch_center_angle = 0.0f;
 static uint8_t pitch_center_inited = 0;
+static uint8_t pitch_hold_enabled = 1;
+static uint8_t pitch_hold_enabled_last = 1;
+static uint32_t gimbal_last_tick = 0;
 
 void SystemClock_Config(void);
 void Error_Handler(void);
@@ -380,6 +383,12 @@ static float WrapAngle180(float angle)
     return angle;
 }
 
+static float CalcTargetTotalAngle(float target_single, float current_single, float current_total)
+{
+    float delta = WrapAngle180(target_single - current_single);
+    return current_total + delta;
+}
+
 static float PitchDeltaFromCenter(float angle)
 {
     return WrapAngle180(angle - pitch_center_angle);
@@ -389,7 +398,43 @@ static float ClampPitchTarget(float target)
 {
     float delta = PitchDeltaFromCenter(target);
     delta = ClampFloat(delta, -PITCH_RANGE_DOWN_DEG, PITCH_RANGE_UP_DEG);
-    return pitch_center_angle + delta;
+    return WrapAngle180(pitch_center_angle + delta);
+}
+
+static void ResetPidState(PIDInstance *pid)
+{
+    if (pid == NULL) {
+        return;
+    }
+    pid->Measure = 0.0f;
+    pid->Last_Measure = 0.0f;
+    pid->Err = 0.0f;
+    pid->Last_Err = 0.0f;
+    pid->Last_ITerm = 0.0f;
+    pid->ITerm = 0.0f;
+    pid->Iout = 0.0f;
+    pid->Dout = 0.0f;
+    pid->Output = 0.0f;
+    pid->Last_Output = 0.0f;
+    pid->Last_Dout = 0.0f;
+    pid->Ref = 0.0f;
+    pid->dt = 0.0f;
+    pid->DWT_CNT = 0U;
+}
+
+static void ResetPitchPidRuntime(void)
+{
+    if (pitch_motor == NULL) {
+        return;
+    }
+    ResetPidState(&pitch_motor->motor_controller.angle_PID);
+    ResetPidState(&pitch_motor->motor_controller.speed_PID);
+    ResetPidState(&pitch_motor->motor_controller.current_PID);
+}
+
+static uint8_t GimbalFeedbackReady(const DJIMotorInstance *motor)
+{
+    return (motor != NULL && motor->feed_cnt != 0U);
 }
 
 static uint8_t MapSwitchClosest(uint16_t raw_value)
@@ -861,7 +906,7 @@ static void GimbalMotorsInit(void)
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = 15.0f,
+                .Kp = 8.0f,
                 .Ki = 0.0f,
                 .Kd = 0.0f,
                 .DeadBand = 0.1f,
@@ -871,9 +916,9 @@ static void GimbalMotorsInit(void)
                 .MaxOut = 500.0f,
             },
             .speed_PID = {
-                .Kp = 12.0f,
+                .Kp = 50.0f,
                 .Ki = 0.0f,
-                .Kd = 0.2f,
+                .Kd = 0.0f,
                 .IntegralLimit = 3000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit |
                            PID_Derivative_On_Measurement,
@@ -892,19 +937,28 @@ static void GimbalMotorsInit(void)
 
     yaw_motor = DJIMotorInit(&config);
     LOGINFO("[wl_all] Yaw GM6020 registered on CAN1 id %u", (unsigned)YAW_MOTOR_ID);
+    if (yaw_motor && yaw_motor->daemon) {
+        yaw_motor->daemon->reload_count = 50;
+    }
 
+    config.controller_setting_init_config.outer_loop_type = ANGLE_LOOP;
     config.controller_param_init_config.current_feedforward_ptr = &pitch_current_ff;
-    config.controller_setting_init_config.feedforward_flag = CURRENT_FEEDFORWARD;
+    config.controller_setting_init_config.feedforward_flag =
+        PITCH_FF_ENABLE ? CURRENT_FEEDFORWARD : FEEDFORWARD_NONE;
     config.controller_param_init_config.angle_PID.Kp = PITCH_ANGLE_PID_KP;
     config.controller_param_init_config.angle_PID.MaxOut = PITCH_ANGLE_PID_MAXOUT;
-    config.controller_param_init_config.speed_PID.MaxOut = 30000.0f;
-    config.controller_param_init_config.speed_PID.Kp = 12.0f;
-    config.controller_param_init_config.speed_PID.Ki = 25.0f;
-    config.controller_param_init_config.speed_PID.Kd = 0.2f;
+    config.controller_param_init_config.speed_PID.MaxOut = PITCH_SPEED_PID_MAXOUT;
+    config.controller_param_init_config.speed_PID.Kp = PITCH_SPEED_PID_KP;
+    config.controller_param_init_config.speed_PID.Ki = PITCH_SPEED_PID_KI;
+    config.controller_param_init_config.speed_PID.Kd = PITCH_SPEED_PID_KD;
+    config.controller_param_init_config.speed_PID.IntegralLimit = PITCH_SPEED_PID_ILIMIT;
     config.can_init_config.can_handle = &hcan2;
     config.can_init_config.tx_id = PITCH_MOTOR_ID;
     pitch_motor = DJIMotorInit(&config);
     LOGINFO("[wl_all] Pitch GM6020 registered on CAN2 id %u", (unsigned)PITCH_MOTOR_ID);
+    if (pitch_motor && pitch_motor->daemon) {
+        pitch_motor->daemon->reload_count = 50;
+    }
 
     if (yaw_motor != NULL) {
         DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
@@ -980,6 +1034,13 @@ static void ProcessGimbalControl(void)
         pitch_speed_ref = 0.0f;
         pitch_manual_active = 0;
         yaw_manual_active = 0;
+        pitch_hold_enabled = 1;
+        if (pitch_hold_enabled != pitch_hold_enabled_last) {
+            pitch_hold_inited = 0;
+            pitch_center_inited = 0;
+            pitch_hold_enabled_last = pitch_hold_enabled;
+            ResetPitchPidRuntime();
+        }
         return;
     }
 
@@ -987,6 +1048,7 @@ static void ProcessGimbalControl(void)
 
     int16_t yaw_in = ApplyDeadzone(rc->right.x, GIMBAL_RC_DEADZONE);
     int16_t pitch_in = ApplyDeadzone(rc->right.y, GIMBAL_RC_DEADZONE);
+    int16_t hold_knob = rc->knob_left;
 
     float yaw_ratio = float_constrain((float)yaw_in / ET08_STICK_SCALE_DEN, -1.0f, 1.0f);
     float pitch_ratio = float_constrain((float)pitch_in / ET08_STICK_SCALE_DEN, -1.0f, 1.0f);
@@ -1011,6 +1073,22 @@ static void ProcessGimbalControl(void)
         }
     } else if (abs(pitch_in) >= GIMBAL_MANUAL_ON) {
         pitch_manual_active = 1;
+    }
+
+    if (pitch_hold_enabled) {
+        if (hold_knob > PITCH_HOLD_KNOB_OFF_THRESHOLD) {
+            pitch_hold_enabled = 0;
+        }
+    } else {
+        if (hold_knob < PITCH_HOLD_KNOB_ON_THRESHOLD) {
+            pitch_hold_enabled = 1;
+        }
+    }
+    if (pitch_hold_enabled != pitch_hold_enabled_last) {
+        pitch_hold_inited = 0;
+        pitch_center_inited = 0;
+        pitch_hold_enabled_last = pitch_hold_enabled;
+        ResetPitchPidRuntime();
     }
 
     if (yaw_manual_active) {
@@ -1121,27 +1199,17 @@ static void UpdateLoaderControl(void)
 
 static void UpdateGimbalControl(void)
 {
-    if (yaw_motor == NULL || pitch_motor == NULL) {
+    if (pitch_motor == NULL) {
         return;
     }
 
-    if (!ET08_IsOnline() || et08_ctrl == NULL) {
-        yaw_hold_inited = 0;
-        pitch_hold_inited = 0;
-        yaw_hold_i = 0.0f;
-        pitch_hold_i = 0.0f;
-        yaw_hold_speed_lpf = 0.0f;
-        pitch_hold_speed_lpf = 0.0f;
-        yaw_hold_error_prev = 0.0f;
-        pitch_hold_error_prev = 0.0f;
-        DJIMotorStop(yaw_motor);
-        DJIMotorStop(pitch_motor);
-        return;
-    }
+    uint8_t yaw_ready = GimbalFeedbackReady(yaw_motor) &&
+                        yaw_motor->daemon && DaemonIsOnline(yaw_motor->daemon);
+    uint8_t pitch_ready = GimbalFeedbackReady(pitch_motor);
 
     uint32_t now = HAL_GetTick();
     float dt = 0.02f;
-    if (gimbal_last_tick != 0) {
+    if (gimbal_last_tick != 0U) {
         dt = (now - gimbal_last_tick) / 1000.0f;
         if (dt <= 0.0f) {
             dt = 0.02f;
@@ -1151,148 +1219,81 @@ static void UpdateGimbalControl(void)
     gimbal_last_tick = now;
 
     yaw_speed_ref = float_constrain(yaw_speed_ref, YAW_SPEED_MIN, YAW_SPEED_MAX);
-
-    float pitch_ff_raw =
-        PITCH_GRAVITY_FF_K *
-        sinf((pitch_motor->measure.total_angle - PITCH_GRAVITY_FF_OFFSET_DEG) * PI / 180.0f);
-    pitch_ff_raw = float_constrain(pitch_ff_raw, -PITCH_GRAVITY_FF_MAX, PITCH_GRAVITY_FF_MAX);
-    pitch_current_ff = pitch_current_ff * PITCH_FF_LPF + pitch_ff_raw * (1.0f - PITCH_FF_LPF);
-
-    float yaw_current = WrapAngle180(yaw_motor->measure.angle_single_round);
-    float pitch_current = WrapAngle180(pitch_motor->measure.angle_single_round);
-
-    if (!pitch_center_inited) {
-        pitch_center_angle = pitch_current;
-        pitch_center_inited = 1;
-    }
-
-    if (!yaw_hold_inited) {
-        yaw_hold_angle = yaw_current;
-        yaw_hold_i = 0.0f;
-        yaw_hold_speed_lpf = 0.0f;
-        yaw_hold_error_prev = 0.0f;
-        yaw_hold_inited = 1;
-    }
-    if (!pitch_hold_inited) {
-        pitch_hold_angle = ClampPitchTarget(pitch_current);
-        pitch_hold_i = 0.0f;
-        pitch_hold_speed_lpf = 0.0f;
-        pitch_hold_error_prev = 0.0f;
-        pitch_hold_inited = 1;
-    }
-
-    if (yaw_manual_active_last && !yaw_manual_active) {
-        yaw_hold_angle = yaw_current;
-        yaw_hold_i = 0.0f;
-        yaw_hold_speed_lpf = 0.0f;
-        yaw_hold_error_prev = 0.0f;
-    }
-    yaw_manual_active_last = yaw_manual_active;
-
-    if (pitch_manual_active_last && !pitch_manual_active) {
-        pitch_hold_angle = ClampPitchTarget(pitch_current);
-        pitch_hold_i = 0.0f;
-        pitch_hold_speed_lpf = 0.0f;
-        pitch_hold_error_prev = 0.0f;
-    }
-    pitch_manual_active_last = pitch_manual_active;
-
-    float pitch_delta = PitchDeltaFromCenter(pitch_current);
-    if (pitch_speed_ref > 0.0f &&
-        pitch_delta >= (PITCH_RANGE_UP_DEG - PITCH_LIMIT_MARGIN_DEG)) {
-        pitch_speed_ref = 0.0f;
-    } else if (pitch_speed_ref < 0.0f &&
-               pitch_delta <= -(PITCH_RANGE_DOWN_DEG - PITCH_LIMIT_MARGIN_DEG)) {
-        pitch_speed_ref = 0.0f;
-    }
     pitch_speed_ref = float_constrain(pitch_speed_ref, -PITCH_SPEED_MAX_DOWN, PITCH_SPEED_MAX_UP);
 
-    float yaw_hold_speed = 0.0f;
-    if (!yaw_manual_active) {
-        float error = WrapAngle180(yaw_hold_angle - yaw_current);
-        if ((error * yaw_hold_error_prev) < 0.0f) {
-            yaw_hold_i = 0.0f;
-        }
-        if (fabsf(error) <= YAW_HOLD_DEADBAND_DEG) {
-            yaw_hold_i = 0.0f;
+    if (pitch_ready) {
+        if (!pitch_hold_enabled) {
+            pitch_hold_inited = 0;
+            pitch_center_inited = 0;
+            pitch_current_ff = 0.0f;
+            DJIMotorStop(pitch_motor);
         } else {
-            float dir = (error > 0.0f) ? 1.0f : -1.0f;
-            float base = error * YAW_HOLD_KP -
-                         yaw_motor->measure.speed_aps * YAW_HOLD_KD +
-                         dir * YAW_HOLD_STATIC_COMP;
-            float speed_unsat = base + yaw_hold_i * YAW_HOLD_KI;
-            if (YAW_HOLD_KI != 0.0f) {
-                uint8_t allow_i =
-                    (fabsf(speed_unsat) < YAW_HOLD_MAX_SPEED) ||
-                    (speed_unsat > YAW_HOLD_MAX_SPEED && error < 0.0f) ||
-                    (speed_unsat < -YAW_HOLD_MAX_SPEED && error > 0.0f);
-                if (allow_i) {
-                    yaw_hold_i += error * dt;
-                    yaw_hold_i = float_constrain(yaw_hold_i, -YAW_HOLD_I_LIMIT, YAW_HOLD_I_LIMIT);
-                    speed_unsat = base + yaw_hold_i * YAW_HOLD_KI;
-                }
+            if (PITCH_FF_ENABLE) {
+                float pitch_ff_raw =
+                    PITCH_GRAVITY_FF_SIGN * PITCH_GRAVITY_FF_K *
+                    sinf((pitch_motor->measure.total_angle - PITCH_GRAVITY_FF_OFFSET_DEG) * PI / 180.0f);
+                pitch_ff_raw = float_constrain(pitch_ff_raw, -PITCH_GRAVITY_FF_MAX, PITCH_GRAVITY_FF_MAX);
+                pitch_current_ff = pitch_current_ff * PITCH_FF_LPF + pitch_ff_raw * (1.0f - PITCH_FF_LPF);
             } else {
-                yaw_hold_i = 0.0f;
+                pitch_current_ff = 0.0f;
             }
-            yaw_hold_speed = float_constrain(speed_unsat, -YAW_HOLD_MAX_SPEED, YAW_HOLD_MAX_SPEED);
-        }
-        yaw_hold_error_prev = error;
-    }
-    yaw_hold_speed_lpf = yaw_hold_speed_lpf * YAW_HOLD_LPF_ALPHA +
-                         yaw_hold_speed * (1.0f - YAW_HOLD_LPF_ALPHA);
 
-    float pitch_hold_speed = 0.0f;
-    if (!pitch_manual_active) {
-        float error = pitch_hold_angle - pitch_current;
-        if ((error * pitch_hold_error_prev) < 0.0f) {
-            pitch_hold_i = 0.0f;
+            float pitch_current_single = WrapAngle180(pitch_motor->measure.angle_single_round);
+            if (!pitch_center_inited) {
+                pitch_center_angle = pitch_current_single;
+                pitch_center_inited = 1;
+            }
+
+            if (!pitch_hold_inited) {
+                pitch_hold_angle = CalcTargetTotalAngle(
+                    ClampPitchTarget(pitch_current_single),
+                    pitch_current_single,
+                    pitch_motor->measure.total_angle);
+                pitch_hold_inited = 1;
+            }
+
+            float pitch_target_single = WrapAngle180(pitch_hold_angle);
+            if (pitch_manual_active) {
+                pitch_target_single = WrapAngle180(pitch_target_single + pitch_speed_ref * dt);
+                pitch_target_single = ClampPitchTarget(pitch_target_single);
+                pitch_hold_angle = CalcTargetTotalAngle(
+                    pitch_target_single,
+                    pitch_current_single,
+                    pitch_motor->measure.total_angle);
+            }
+
+            DJIMotorOuterLoop(pitch_motor, ANGLE_LOOP);
+            DJIMotorEnable(pitch_motor);
+            DJIMotorSetRef(pitch_motor, pitch_hold_angle);
         }
-        if ((pitch_delta >= PITCH_RANGE_UP_DEG && error > 0.0f) ||
-            (pitch_delta <= -PITCH_RANGE_DOWN_DEG && error < 0.0f)) {
-            pitch_hold_i = 0.0f;
-            error = 0.0f;
+    } else {
+        pitch_hold_inited = 0;
+        pitch_center_inited = 0;
+        ResetPitchPidRuntime();
+        DJIMotorStop(pitch_motor);
+    }
+
+    if (yaw_ready) {
+        float yaw_current_single = WrapAngle180(yaw_motor->measure.angle_single_round);
+        if (!yaw_hold_inited) {
+            yaw_hold_angle = yaw_motor->measure.total_angle;
+            yaw_hold_inited = 1;
         }
-        if (fabsf(error) <= PITCH_HOLD_DEADBAND_DEG) {
-            pitch_hold_i = 0.0f;
+        if (yaw_manual_active) {
+            yaw_hold_angle += yaw_speed_ref * dt;
         } else {
-            float dir = (error > 0.0f) ? 1.0f : -1.0f;
-            float base = error * PITCH_HOLD_KP -
-                         pitch_motor->measure.speed_aps * PITCH_HOLD_KD +
-                         dir * PITCH_HOLD_STATIC_COMP;
-            float speed_unsat = base + pitch_hold_i * PITCH_HOLD_KI;
-            if (PITCH_HOLD_KI != 0.0f) {
-                uint8_t allow_i =
-                    (fabsf(speed_unsat) < PITCH_HOLD_MAX_SPEED) ||
-                    (speed_unsat > PITCH_HOLD_MAX_SPEED && error < 0.0f) ||
-                    (speed_unsat < -PITCH_HOLD_MAX_SPEED && error > 0.0f);
-                if (allow_i) {
-                    pitch_hold_i += error * dt;
-                    pitch_hold_i = float_constrain(pitch_hold_i, -PITCH_HOLD_I_LIMIT, PITCH_HOLD_I_LIMIT);
-                    speed_unsat = base + pitch_hold_i * PITCH_HOLD_KI;
-                }
-            } else {
-                pitch_hold_i = 0.0f;
-            }
-            pitch_hold_speed = float_constrain(speed_unsat, -PITCH_HOLD_MAX_SPEED, PITCH_HOLD_MAX_SPEED);
+            yaw_hold_angle = CalcTargetTotalAngle(
+                WrapAngle180(yaw_hold_angle),
+                yaw_current_single,
+                yaw_motor->measure.total_angle);
         }
-        pitch_hold_error_prev = error;
+        DJIMotorOuterLoop(yaw_motor, ANGLE_LOOP);
+        DJIMotorEnable(yaw_motor);
+        DJIMotorSetRef(yaw_motor, yaw_hold_angle);
+    } else {
+        yaw_hold_inited = 0;
+        DJIMotorStop(yaw_motor);
     }
-    pitch_hold_speed_lpf = pitch_hold_speed_lpf * PITCH_HOLD_LPF_ALPHA +
-                           pitch_hold_speed * (1.0f - PITCH_HOLD_LPF_ALPHA);
-
-    float yaw_speed_cmd = yaw_speed_ref + yaw_hold_speed_lpf;
-    yaw_speed_cmd = float_constrain(yaw_speed_cmd, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
-
-    DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
-    DJIMotorEnable(yaw_motor);
-    DJIMotorSetRef(yaw_motor, yaw_speed_cmd);
-
-    float pitch_speed_cmd = pitch_speed_ref + pitch_hold_speed_lpf;
-    pitch_speed_cmd = float_constrain(pitch_speed_cmd, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
-
-    DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
-    DJIMotorEnable(pitch_motor);
-    DJIMotorSetRef(pitch_motor, pitch_speed_cmd);
 }
 
 int main(void)

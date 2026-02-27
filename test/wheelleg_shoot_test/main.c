@@ -9,8 +9,8 @@
  *
  * 默认控制逻辑（与步兵一致，可按现场改宏）：
  * - CH5(开关组 SA/SB)：摩擦轮开关（state 0~2 开启；3~5 关闭）
- * - CH6(开关组 SD/SC)：发射模式（0 单发，1 双连发，2 连发）
- * - 右旋钮：拨弹允许（向负方向拧过阈值允许拨弹，回到阈值以上停止）
+ * - CH6(开关组 SD/SC)：预留（不参与发射逻辑）
+ * - 右旋钮：拨弹允许（向负方向拧过阈值允许拨弹，回到阈值以上停止；开启即连发）
  * - 右摇杆左右：yaw 轴速度控制
  * - 右摇杆上下：pitch 轴速度控制（默认上推为抬头，幅度减半）
  *
@@ -75,19 +75,11 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define FRICTION_DIRECTION_SIGN (1.0f)
 #define FRICTION_SPEED_TARGET (FRICTION_DIRECTION_SIGN * 30000.0f)
 
-#define LOADER_SPEED_MAX 20000.0f
+#define LOADER_SPEED_MAX 30000.0f
 #define LOADER_SPEED_MIN (-LOADER_SPEED_MAX)
-#define LOADER_ANGLE_MAX 36000.0f
-#define LOADER_ANGLE_MIN (-LOADER_ANGLE_MAX)
-
-// 拨弹使用 M2006：减速比按 1:13（与 infantry_shoot_test 一致，按实际机构调整）
-#define LOADER_GEAR_RATIO 13.0f
-#define LOADER_OUTPUT_STEP_DEG 45.0f
-// Loader direction sign for both angle-step and continuous mode.
+// 拨弹使用 M2006：速度环连续拨弹
+// Loader direction sign for continuous mode.
 #define LOADER_DIRECTION_SIGN (1.0f)
-#define LOADER_ANGLE_STEP_DEG (LOADER_DIRECTION_SIGN * LOADER_OUTPUT_STEP_DEG * LOADER_GEAR_RATIO)
-
-#define SHOOT_INTERVAL_MS 1000U
 #define LOADER_CONTINUOUS_SPEED (LOADER_DIRECTION_SIGN * 15000.0f)
 
 // Loader PID (tune here)
@@ -99,7 +91,7 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define LOADER_ANGLE_PID_MAXOUT 6000.0f
 #define LOADER_ANGLE_PID_ILIMIT 500.0f
 
-#define LOADER_SPEED_PID_KP 12.0f
+#define LOADER_SPEED_PID_KP 15.0f
 #define LOADER_SPEED_PID_KI 0.0f
 #define LOADER_SPEED_PID_KD 0.0f
 #define LOADER_SPEED_PID_MAXOUT 10000.0f
@@ -116,17 +108,7 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U}; // CAN2
 #define ET08_FRICTION_ON_STATE_MIN 0U
 #define ET08_FRICTION_ON_STATE_MAX 2U
 
-// CH6 (SD/SC): only care SC, ignore SD.
-// Many remotes report 3 typical raw clusters on CH6 (example: ~1493 / ~1024 / ~554) and
-// `switch_sd_sc_state` may stay 0xFF (unmatched). So we decode fire_mode by matching raw
-// to these clusters, and group state(0..5) as (0/3)(1/4)(2/5) when state decode is valid.
-//
-// Tune by observing: `sd_sc(raw=xxxx st=yyyy cen=zzzz)` in logs.
-// NOTE: If your SC direction is reversed, swap SINGLE and CONTINUOUS raw values.
-#define ET08_SC_RAW_SINGLE 1493U
-#define ET08_SC_RAW_DOUBLE 1024U
-#define ET08_SC_RAW_CONTINUOUS 554U
-#define ET08_SC_RAW_TOLERANCE 200U
+// CH6 (SD/SC) reserved.
 
 // KnobRight acts like "dial": negative direction = trigger
 #define ET08_DIAL_ON_THRESHOLD (-200)
@@ -175,18 +157,8 @@ static DJIMotorInstance *yaw_motor = NULL;
 static DJIMotorInstance *pitch_motor = NULL;
 
 static uint8_t friction_enabled = 0;
-static uint8_t fire_mode = 0; // 0: single, 1: double, 2: continuous
-
-static uint8_t pending_shots = 0;
 static uint8_t dial_active = 0;
 static uint8_t dial_last = 0;
-static uint8_t loader_initialized = 0;
-static float loader_target_angle = 0.0f;
-static uint32_t last_shot_tick = 0;
-static uint32_t last_step_tick = 0;
-static uint8_t loader_cont_initialized = 0;
-static float loader_cont_target_angle = 0.0f;
-static uint32_t loader_cont_last_tick = 0;
 
 static float yaw_speed_ref = 0.0f;
 static float pitch_speed_ref = 0.0f;
@@ -211,7 +183,6 @@ static void UpdateGimbalControl(void);
 static float ClampFloat(float value, float min, float max);
 static void DebugTelemetryTick(uint32_t now);
 static uint8_t ET08_IsFrictionEnabled(const ET08_Ctrl_t *rc);
-static uint8_t ET08_MapFireMode(const ET08_Ctrl_t *rc, uint8_t last_mode);
 static void DebugSwitchStableTick(const ET08_Ctrl_t *rc, uint32_t now);
 
 /* Private user code ---------------------------------------------------------*/
@@ -319,7 +290,7 @@ static void EnsureLoaderMotorReady(void)
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = MOTOR_FEED,
             .outer_loop_type = SPEED_LOOP,
-            .close_loop_type = ANGLE_LOOP | SPEED_LOOP | CURRENT_LOOP,
+            .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
         },
         .motor_type = M2006,
@@ -406,78 +377,20 @@ static uint8_t ET08_IsFrictionEnabled(const ET08_Ctrl_t *rc)
     return (rc->switch_sa_sb_centered > 0);
 }
 
-static uint8_t ET08_MapFireMode(const ET08_Ctrl_t *rc, uint8_t last_mode)
-{
-    if (rc == NULL)
-        return 0;
-
-    // If state decoding is valid, treat CH6 as a 6-level group (SD/SC) and only care SC:
-    // (0/3)->single, (1/4)->double, (2/5)->continuous.
-    uint8_t st = rc->switch_sd_sc_state;
-    if (st != 0xFFu) {
-        switch (st) {
-        case 0:
-        case 3:
-            return 0;
-        case 1:
-        case 4:
-            return 1;
-        case 2:
-        case 5:
-            return 2;
-        default:
-            return last_mode;
-        }
-    }
-
-    uint16_t raw = rc->switch_sd_sc_raw;
-
-    uint16_t best = 0xFFFFu;
-    uint8_t best_mode = 0xFFu;
-
-    uint16_t diff_single =
-        (raw > ET08_SC_RAW_SINGLE) ? (raw - ET08_SC_RAW_SINGLE) : (ET08_SC_RAW_SINGLE - raw);
-    best = diff_single;
-    best_mode = 0;
-
-    uint16_t diff_double =
-        (raw > ET08_SC_RAW_DOUBLE) ? (raw - ET08_SC_RAW_DOUBLE) : (ET08_SC_RAW_DOUBLE - raw);
-    if (diff_double < best) {
-        best = diff_double;
-        best_mode = 1;
-    }
-
-    uint16_t diff_cont = (raw > ET08_SC_RAW_CONTINUOUS) ? (raw - ET08_SC_RAW_CONTINUOUS)
-                                                        : (ET08_SC_RAW_CONTINUOUS - raw);
-    if (diff_cont < best) {
-        best = diff_cont;
-        best_mode = 2;
-    }
-
-    if (best <= ET08_SC_RAW_TOLERANCE && best_mode != 0xFFu) {
-        return best_mode;
-    }
-
-    return last_mode;
-}
-
 static void ProcessRemoteControl(void)
 {
     if (et08_ctrl == NULL || !ET08_IsOnline()) {
         friction_enabled = 0;
         dial_active = 0;
-        pending_shots = 0;
         return;
     }
 
     const ET08_Ctrl_t *rc = et08_ctrl;
 
     friction_enabled = ET08_IsFrictionEnabled(rc);
-    fire_mode = ET08_MapFireMode(rc, fire_mode);
 
     if (!friction_enabled) {
         dial_active = 0;
-        pending_shots = 0;
         return;
     }
 
@@ -488,33 +401,12 @@ static void ProcessRemoteControl(void)
         dial_active = 0;
     }
 
-    uint8_t dial_edge = (dial_active && !dial_last);
     dial_last = dial_active;
 
-    if (fire_mode == 2) {
-        pending_shots = 0;
-        return;
-    }
-
     if (!dial_active) {
-        pending_shots = 0;
         return;
     }
 
-    if (dial_edge) {
-        pending_shots = (fire_mode == 0) ? 1 : 2;
-        last_shot_tick = HAL_GetTick();
-        last_step_tick = last_shot_tick - SHOOT_INTERVAL_MS;
-    }
-
-    if (pending_shots == 0) {
-        uint32_t now = HAL_GetTick();
-        if (now - last_shot_tick >= SHOOT_INTERVAL_MS) {
-            pending_shots = (fire_mode == 0) ? 1 : 2;
-            last_shot_tick = now;
-            last_step_tick = now - SHOOT_INTERVAL_MS;
-        }
-    }
 }
 
 static void DebugSwitchStableTick(const ET08_Ctrl_t *rc, uint32_t now)
@@ -667,64 +559,18 @@ static void UpdateLoaderControl(void)
         if (loader_motor != NULL) {
             DJIMotorStop(loader_motor);
         }
-        pending_shots = 0;
-        loader_initialized = 0;
-        loader_cont_initialized = 0;
         return;
     }
 
     if (!dial_active) {
         DJIMotorStop(loader_motor);
-        pending_shots = 0;
-        loader_initialized = 0;
-        loader_cont_initialized = 0;
         return;
     }
 
-    uint32_t now = HAL_GetTick();
-    if (fire_mode == 2) {
-        pending_shots = 0;
-        loader_initialized = 0;
-        loader_cont_initialized = 0;
-        float speed_ref = ClampFloat(LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
-        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
-        DJIMotorEnable(loader_motor);
-        DJIMotorSetRef(loader_motor, speed_ref);
-        return;
-    }
-
-    loader_cont_initialized = 0;
-
-    if (!loader_initialized) {
-        // Keep target aligned to current multi-turn angle to avoid large error after long-time rotation.
-        loader_target_angle = loader_motor->measure.total_angle;
-        if (pending_shots > 0) {
-            last_step_tick = now - SHOOT_INTERVAL_MS;
-        } else {
-            last_step_tick = now;
-        }
-        loader_initialized = 1;
-    }
-
-    if (pending_shots > 0) {
-        uint32_t elapsed = now - last_step_tick;
-        if (elapsed >= SHOOT_INTERVAL_MS) {
-            uint32_t steps = elapsed / SHOOT_INTERVAL_MS;
-            if (steps > pending_shots) {
-                steps = pending_shots;
-            }
-            last_step_tick += steps * SHOOT_INTERVAL_MS;
-            loader_target_angle += LOADER_ANGLE_STEP_DEG * (float)steps;
-            pending_shots -= (uint8_t)steps;
-        }
-    } else {
-        DJIMotorStop(loader_motor);
-        return;
-    }
-
-    DJIMotorOuterLoop(loader_motor, ANGLE_LOOP);
+    float speed_ref = ClampFloat(LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
+    DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
     DJIMotorEnable(loader_motor);
-    DJIMotorSetRef(loader_motor, loader_target_angle);
+    DJIMotorSetRef(loader_motor, speed_ref);
 }
 
 static void UpdateGimbalControl(void)
@@ -791,7 +637,7 @@ static void DebugTelemetryTick(uint32_t now)
         return;
     }
 
-    LOGINFO("[wl_shoot][dbg] online=%u sa_sb(raw=%u st=%u) sd_sc(raw=%u st=%u cen=%d) knobR=%d friction=%u dial=%u fire_mode=%u",
+    LOGINFO("[wl_shoot][dbg] online=%u sa_sb(raw=%u st=%u) sd_sc(raw=%u st=%u cen=%d) knobR=%d friction=%u dial=%u",
             (unsigned)ET08_IsOnline(),
             (unsigned)et08_ctrl->switch_sa_sb_raw,
             (unsigned)et08_ctrl->switch_sa_sb_state,
@@ -800,8 +646,7 @@ static void DebugTelemetryTick(uint32_t now)
             (int)et08_ctrl->switch_sd_sc_centered,
             (int)et08_ctrl->knob_right,
             (unsigned)friction_enabled,
-            (unsigned)dial_active,
-            (unsigned)fire_mode);
+            (unsigned)dial_active);
 
 #if WL_SHOOT_DEBUG_PRINT_CHANNELS
     LOGINFO("[wl_shoot][dbg] ch_raw 1..8: %u %u %u %u %u %u %u %u",
@@ -841,24 +686,6 @@ static void DebugTelemetryTick(uint32_t now)
             (int)et08_ctrl->centered_full[14],
             (int)et08_ctrl->centered_full[15]);
     {
-        uint16_t raw = et08_ctrl->switch_sd_sc_raw;
-        uint16_t diff_single =
-            (raw > ET08_SC_RAW_SINGLE) ? (raw - ET08_SC_RAW_SINGLE) : (ET08_SC_RAW_SINGLE - raw);
-        uint16_t diff_double =
-            (raw > ET08_SC_RAW_DOUBLE) ? (raw - ET08_SC_RAW_DOUBLE) : (ET08_SC_RAW_DOUBLE - raw);
-        uint16_t diff_cont = (raw > ET08_SC_RAW_CONTINUOUS) ? (raw - ET08_SC_RAW_CONTINUOUS)
-                                                            : (ET08_SC_RAW_CONTINUOUS - raw);
-        uint8_t mode_dbg = ET08_MapFireMode(et08_ctrl, fire_mode);
-        LOGINFO("[wl_shoot][dbg] sc_decode raw=%u target(s/d/c)=%u/%u/%u diff=%u/%u/%u tol=%u -> mode=%u",
-                (unsigned)raw,
-                (unsigned)ET08_SC_RAW_SINGLE,
-                (unsigned)ET08_SC_RAW_DOUBLE,
-                (unsigned)ET08_SC_RAW_CONTINUOUS,
-                (unsigned)diff_single,
-                (unsigned)diff_double,
-                (unsigned)diff_cont,
-                (unsigned)ET08_SC_RAW_TOLERANCE,
-                (unsigned)mode_dbg);
     }
 #endif
 
@@ -921,8 +748,8 @@ int main(void)
             (unsigned)(ET08_MAP_RIGHT_X_CH + 1),
             (unsigned)(ET08_MAP_RIGHT_Y_CH + 1));
     LOGINFO("[wl_shoot] CH5 (SA/SB) -> friction enable (0~2 on, 3~5 off)");
-    LOGINFO("[wl_shoot] CH6 (SD/SC) -> fire mode (0 single, 1 double, 2 continuous)");
-    LOGINFO("[wl_shoot] knob_right -> loader enable (turn negative to fire)");
+    LOGINFO("[wl_shoot] CH6 (SD/SC) -> unused (reserved)");
+    LOGINFO("[wl_shoot] knob_right -> loader enable (turn negative for continuous fire)");
     LOGINFO("[wl_shoot] right stick -> yaw/pitch");
     LOGINFO("[wl_shoot] CAN: friction(CAN2,id1/2,M3508), pitch(CAN2,id1,6020), yaw(CAN1,id5,6020), loader(CAN1,id5,M2006)");
 

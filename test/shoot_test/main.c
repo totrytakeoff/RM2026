@@ -41,8 +41,8 @@ static const uint8_t FRICTION_CAN_IDS[FRICTION_MOTOR_COUNT] = {1U, 2U};
 static DJIMotorInstance *friction_motors[FRICTION_MOTOR_COUNT] = {NULL};
 static DJIMotorInstance *loader_motor = NULL;
 
-volatile uint8_t g_friction_enable = 1;
-volatile float g_friction_speed_deg_s = 10000.0f;
+volatile uint8_t g_friction_enable = 0;
+volatile float g_friction_speed_deg_s = 20000.0f;
 
 volatile uint8_t g_loader_mode = 1;  // 0 stop, 1 speed, 2 periodic angle step
 volatile float g_loader_speed_deg_s = 3000.0f;
@@ -68,6 +68,7 @@ int main(void) {
     MX_GPIO_Init();
     MX_DMA_Init();
     MX_CAN1_Init();
+    MX_CAN2_Init();
     MX_USART6_UART_Init();
 
     BSPInit();
@@ -181,7 +182,7 @@ static void EnsureFrictionMotorsReady(void) {
         Motor_Init_Config_s config = {
                 .can_init_config =
                         {
-                                .can_handle = &hcan1,
+                                .can_handle = &hcan2,
                                 .tx_id = FRICTION_CAN_IDS[i],
                         },
                 .controller_param_init_config =
@@ -205,7 +206,7 @@ static void EnsureFrictionMotorsReady(void) {
                                                 .Improve = PID_Trapezoid_Intergral |
                                                            PID_Integral_Limit |
                                                            PID_Derivative_On_Measurement,
-                                                .MaxOut = 12000.0f,
+                                                .MaxOut = 35000.0f,
                                         },
                                 .current_PID =
                                         {
@@ -216,7 +217,7 @@ static void EnsureFrictionMotorsReady(void) {
                                                 .Improve = PID_Trapezoid_Intergral |
                                                            PID_Integral_Limit |
                                                            PID_Derivative_On_Measurement,
-                                                .MaxOut = 15000.0f,
+                                                .MaxOut = 30000.0f,
                                         },
                         },
                 .controller_setting_init_config =
