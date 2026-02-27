@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /**
  * @file main.c
  * @brief 电机测试固件（test/motor_test）
