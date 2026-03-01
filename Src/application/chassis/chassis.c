@@ -1,13 +1,13 @@
 /**
  * @file chassis.c
- * @author NeoZeng neozng1@hnu.edu.cn
+ * @author YZControl/myself
  * @brief 底盘应用,负责接收robot_cmd的控制命令并根据命令进行运动学解算,得到输出
  *        注意底盘采取右手系,对于平面视图,底盘纵向运动的正前方为x正方向;横向运动的右侧为y正方向
  *
- * @version 0.1
- * @date 2022-12-04
+ * @version 0.2
+ * @date 2026-2-28
  *
- * @copyright Copyright (c) 2022
+ * @copyright Copyright (c) YZControl
  *
  */
 
@@ -59,23 +59,23 @@ void ChassisInit()
 {
     // 四个轮子的参数一样,改tx_id和反转标志位即可
     Motor_Init_Config_s chassis_motor_config = {
-        .can_init_config.can_handle = &hcan1,
+        .can_init_config.can_handle = &CHASSIS_CAN_HANDLE,
         .controller_param_init_config = {
             .speed_PID = {
-                .Kp = 10, // 4.5
-                .Ki = 0,  // 0
-                .Kd = 0,  // 0
-                .IntegralLimit = 3000,
+                .Kp = CHASSIS_SPEED_PID_KP,
+                .Ki = CHASSIS_SPEED_PID_KI,
+                .Kd = CHASSIS_SPEED_PID_KD,
+                .IntegralLimit = CHASSIS_SPEED_PID_INTEGRAL_LIMIT,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = 12000,
+                .MaxOut = CHASSIS_SPEED_PID_MAX_OUT,
             },
             .current_PID = {
-                .Kp = 0.5, // 0.4
-                .Ki = 0,   // 0
-                .Kd = 0,
-                .IntegralLimit = 3000,
+                .Kp = CHASSIS_CURRENT_PID_KP,
+                .Ki = CHASSIS_CURRENT_PID_KI,
+                .Kd = CHASSIS_CURRENT_PID_KD,
+                .IntegralLimit = CHASSIS_CURRENT_PID_INTEGRAL_LIMIT,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = 15000,
+                .MaxOut = CHASSIS_CURRENT_PID_MAX_OUT,
             },
         },
         .controller_setting_init_config = {
@@ -87,29 +87,29 @@ void ChassisInit()
         .motor_type = M3508,
     };
     //  @todo: 当前还没有设置电机的正反转,仍然需要手动添加reference的正负号,需要电机module的支持,待修改.
-    chassis_motor_config.can_init_config.tx_id = 1;
-    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
+    chassis_motor_config.can_init_config.tx_id = CHASSIS_MOTOR_LF_ID;
+    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = CHASSIS_MOTOR_LF_DIR;
     motor_lf = DJIMotorInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 2;
-    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
+    chassis_motor_config.can_init_config.tx_id = CHASSIS_MOTOR_RF_ID;
+    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = CHASSIS_MOTOR_RF_DIR;
     motor_rf = DJIMotorInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 4;
-    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
+    chassis_motor_config.can_init_config.tx_id = CHASSIS_MOTOR_LB_ID;
+    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = CHASSIS_MOTOR_LB_DIR;
     motor_lb = DJIMotorInit(&chassis_motor_config);
 
-    chassis_motor_config.can_init_config.tx_id = 3;
-    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
+    chassis_motor_config.can_init_config.tx_id = CHASSIS_MOTOR_RB_ID;
+    chassis_motor_config.controller_setting_init_config.motor_reverse_flag = CHASSIS_MOTOR_RB_DIR;
     motor_rb = DJIMotorInit(&chassis_motor_config);
 
-    referee_data = UITaskInit(&huart6,&ui_data); // 裁判系统初始化,会同时初始化UI
+    referee_data = UITaskInit(&CHASSIS_REFEREE_UART_HANDLE, &ui_data); // 裁判系统初始化,会同时初始化UI
 
     SuperCap_Init_Config_s cap_conf = {
         .can_config = {
-            .can_handle = &hcan2,
-            .tx_id = 0x302, // 超级电容默认接收id
-            .rx_id = 0x301, // 超级电容默认发送id,注意tx和rx在其他人看来是反的
+            .can_handle = &CHASSIS_SUPERCAP_CAN_HANDLE,
+            .tx_id = CHASSIS_SUPERCAP_TX_ID, // 超级电容默认接收id
+            .rx_id = CHASSIS_SUPERCAP_RX_ID, // 超级电容默认发送id,注意tx和rx在其他人看来是反的
         }};
     cap = SuperCapInit(&cap_conf); // 超级电容初始化
 
@@ -119,9 +119,9 @@ void ChassisInit()
 
     CANComm_Init_Config_s comm_conf = {
         .can_config = {
-            .can_handle = &hcan2,
-            .tx_id = 0x311,
-            .rx_id = 0x312,
+            .can_handle = &CHASSIS_CANCOMM_CAN_HANDLE,
+            .tx_id = CHASSIS_CANCOMM_TX_ID,
+            .rx_id = CHASSIS_CANCOMM_RX_ID,
         },
         .recv_data_len = sizeof(Chassis_Ctrl_Cmd_s),
         .send_data_len = sizeof(Chassis_Upload_Data_s),
@@ -213,10 +213,10 @@ void ChassisTask()
     case CHASSIS_NO_FOLLOW: // keep commanded wz
         break;
     case CHASSIS_FOLLOW_GIMBAL_YAW: // 跟随云台,不单独设置pid,以误差角度平方为速度输出
-        chassis_cmd_recv.wz = -1.5f * chassis_cmd_recv.offset_angle * abs(chassis_cmd_recv.offset_angle);
+        chassis_cmd_recv.wz = -CHASSIS_FOLLOW_WZ_GAIN * chassis_cmd_recv.offset_angle * abs(chassis_cmd_recv.offset_angle);
         break;
     case CHASSIS_ROTATE: // 自旋,同时保持全向机动;当前wz维持定值,后续增加不规则的变速策略
-        chassis_cmd_recv.wz = 4000;
+        chassis_cmd_recv.wz = CHASSIS_ROTATE_WZ_REF;
         break;
     default:
         break;
