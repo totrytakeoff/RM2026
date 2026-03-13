@@ -28,8 +28,8 @@ uint8_t UI_Seq;                                      // 包序号，供整个ref
  */
 static void DeterminRobotID()
 {
-    // id小于7是红色,大于7是蓝色,0为红色，1为蓝色   #define Robot_Red 0    #define Robot_Blue 1
-    referee_recv_info->referee_id.Robot_Color = referee_recv_info->GameRobotState.robot_id > 7 ? Robot_Blue : Robot_Red;
+    // 2026 规则下红方机器人 ID 在 1~9, 蓝方机器人 ID 在 11~19
+    referee_recv_info->referee_id.Robot_Color = referee_recv_info->GameRobotState.robot_id > 10 ? Robot_Blue : Robot_Red;
     referee_recv_info->referee_id.Robot_ID = referee_recv_info->GameRobotState.robot_id;
     referee_recv_info->referee_id.Cilent_ID = 0x0100 + referee_recv_info->referee_id.Robot_ID; // 计算客户端ID
     referee_recv_info->referee_id.Receiver_Robot_ID = 0;
