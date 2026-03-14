@@ -1,38 +1,66 @@
-按你当前工程（RTT + OpenOCD + SWD），直接照抄这一套跑：
+# OpenOCD RTT 一键日志（推荐）
 
-**终端 A：启动 OpenOCD**
-
-```bash
-cd /home/myself/workspace/RM2026 && openocd -f config/openocd/openocd_dap.cfg 
-```
-
-**终端 B：telnet 进 OpenOCD，开启 RTT server**
+## 推荐用法（一条命令）
 
 ```bash
-telnet localhost 4444 
+cd /home/myself/workspace/RM2026
+./script/log.sh
 ```
 
-进去后依次输入这三行（每行回车）：
+默认行为：
+1. 自动复用或启动 OpenOCD（`4444`）
+2. 自动执行 `rtt setup/start/server start`
+3. 自动连接 RTT 日志输出（`19021`）
+4. `Ctrl+C` 退出时，仅关闭本次脚本拉起的 OpenOCD；外部已有实例不受影响
 
-`rtt setup 0x20000000 0x20000 "SEGGER RTT" `
+## 常用参数
 
-`rtt start `
+```bash
+./script/log.sh --cfg config/openocd/openocd_dap.cfg
+./script/log.sh --reset-run 0
+./script/log.sh --rtt-port 19021 --channel 0
+./script/log.sh --keep-openocd
+```
 
-`rtt server start 19021 0 `
+## 串口资源规范
 
+1. 当图传链路占用 `USART6` 时，日志默认走 RTT，不占 UART。  
+2. 全工程默认编译宏为 RTT：`BSP_LOG_USE_UART=0`。  
+3. 仅在必要时可临时回退 UART 日志（命令行覆盖）：
 
+```bash
+cmake -B build -S . -DBSP_LOG_USE_UART=1 -DBSP_LOG_UART_PORT=1
+```
 
+## 故障说明
 
+若出现类似：
+- `unknown command rtt`
+- `invalid command name "rtt"`
+- `no such command`
+
+说明当前 OpenOCD 构建不支持 RTT，脚本会直接退出。请更换支持 RTT 的 OpenOCD 版本。
+
+---
+
+## 底层原理（手动流程，仅排障时使用）
+
+1. 启动 OpenOCD：
+
+```bash
+openocd -f config/openocd/openocd_dap.cfg
+```
+
+2. 连接 telnet 并执行：
+
+```text
 rtt setup 0x20000000 0x20000 "SEGGER RTT"
-
 rtt start
-
 rtt server start 19021 0
+```
 
-**终端 C：连接 RTT 输出（看 LOGINFO/LOGERROR）**
+3. 连接 RTT 端口查看日志：
 
-`nc localhost 19021`
-
+```bash
 nc localhost 19021
-
-如果 **telnet localhost 4444** 里提示 **rtt** 是 unknown command，把那行报错原样发我（说明你这版 OpenOCD 没带 RTT 功能，需要换 OpenOCD 或改成串口/SWO）。
+```

@@ -23,9 +23,11 @@
   - `Q/E`：车体旋转（wz -/+）
   - `Shift`：加速倍率
   - `Ctrl`：慢速倍率
+  - 右摇杆兜底：`ch0 -> vx`，`ch1 -> vy`，`ch3 -> wz`（用于排查键鼠链路）
 - 云台（仅 `gear=S`）
   - 鼠标 `X`：yaw 角速度
   - 鼠标 `Y`：pitch 角速度
+  - 鼠标无输入时左摇杆兜底：`ch3 -> yaw`，`ch2 -> pitch`
 - 射击（仅 `gear=S`）
   - `R`：摩擦轮开关（按下切换）
   - 鼠标左键：单发（边沿触发）
@@ -70,5 +72,7 @@ ninja -C build flash-test_integrated_vt_km_demo
 
 1. 确保 CAN 线束与电机 ID 配置一致
 2. 遥控器离线或数值异常时会强制停机
-3. 上电后底盘电机有 2 秒稳定期，期间输出为 0
-4. 云台仅在摩擦轮开启时启用，Pitch 默认带重力补偿
+3. 默认图传串口为 `USART6(huart6)`；若你的发送端接在其他串口，请修改 `main.c` 中 `VT_UART_HANDLE`
+4. 上电后底盘电机有 2 秒稳定期，期间输出为 0
+5. 云台控制要求 `gear=S`，Pitch 默认带重力补偿
+6. 调试宏位于 `main.c`：`VT_REQUIRE_CRC_OK`（默认1）、`VT_ENABLE_PAUSE_ESTOP`（默认1）、`VT_REQUIRE_ONLINE`（默认1）

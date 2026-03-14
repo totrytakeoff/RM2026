@@ -14,6 +14,8 @@ static uint8_t vt_init_flag = 0u;
 
 static USARTInstance *vt_usart_instance;
 static DaemonInstance *vt_daemon;
+static uint8_t vt_stream_buf[VT_FRAME_SIZE * 3u];
+static uint16_t vt_stream_len = 0u;
 
 static uint16_t VT_Crc16CcittFalse(const uint8_t *data, uint16_t len)
 {
@@ -34,16 +36,38 @@ static uint16_t VT_Crc16CcittFalse(const uint8_t *data, uint16_t len)
     return crc;
 }
 
+/* Some VT firmware outputs CRC with reflected bit-order (poly 0x1021, init 0xFFFF, refin/refout=true). */
+static uint16_t VT_Crc16CcittReflected(const uint8_t *data, uint16_t len)
+{
+    uint16_t crc = 0xFFFFu;
+    uint16_t i;
+    for (i = 0u; i < len; ++i)
+    {
+        uint8_t bit;
+        crc ^= (uint16_t)data[i];
+        for (bit = 0u; bit < 8u; ++bit)
+        {
+            if (crc & 0x0001u)
+                crc = (uint16_t)((crc >> 1) ^ 0x8408u);
+            else
+                crc >>= 1;
+        }
+    }
+    return crc;
+}
+
 static uint8_t VT_VerifyFrame(const uint8_t *buf)
 {
     if (buf[0] != VT_FRAME_HEADER_0 || buf[1] != VT_FRAME_HEADER_1)
         return 0u;
 
     {
-        uint16_t calc = VT_Crc16CcittFalse(buf, VT_FRAME_SIZE - 2u);
+        uint16_t calc_false = VT_Crc16CcittFalse(buf, VT_FRAME_SIZE - 2u);
+        uint16_t calc_reflected = VT_Crc16CcittReflected(buf, VT_FRAME_SIZE - 2u);
         uint16_t rx_le = (uint16_t)buf[VT_FRAME_SIZE - 2u] | ((uint16_t)buf[VT_FRAME_SIZE - 1u] << 8);
         uint16_t rx_be = (uint16_t)buf[VT_FRAME_SIZE - 1u] | ((uint16_t)buf[VT_FRAME_SIZE - 2u] << 8);
-        if (calc != rx_le && calc != rx_be)
+        if ((calc_false != rx_le && calc_false != rx_be) &&
+            (calc_reflected != rx_le && calc_reflected != rx_be))
             return 0u;
     }
 
@@ -112,29 +136,106 @@ static void VT_FillCtrl(const uint8_t *buf, VT_Ctrl_t *ctrl)
     ctrl->keyboard_value = VT_GetBitsU16(buf, 136u, 16u);
 }
 
+static void VT_StreamPush(const uint8_t *data, uint16_t len)
+{
+    if (data == NULL || len == 0u)
+        return;
+
+    if (len >= sizeof(vt_stream_buf))
+    {
+        data += (len - sizeof(vt_stream_buf));
+        len = (uint16_t)sizeof(vt_stream_buf);
+        vt_stream_len = 0u;
+    }
+
+    if ((uint16_t)(vt_stream_len + len) > (uint16_t)sizeof(vt_stream_buf))
+    {
+        uint16_t overflow = (uint16_t)(vt_stream_len + len - sizeof(vt_stream_buf));
+        if (overflow >= vt_stream_len)
+        {
+            vt_stream_len = 0u;
+        }
+        else
+        {
+            memmove(vt_stream_buf, vt_stream_buf + overflow, (size_t)(vt_stream_len - overflow));
+            vt_stream_len = (uint16_t)(vt_stream_len - overflow);
+        }
+    }
+
+    memcpy(vt_stream_buf + vt_stream_len, data, len);
+    vt_stream_len = (uint16_t)(vt_stream_len + len);
+}
+
+static void VT_StreamConsume(uint16_t n)
+{
+    if (n == 0u || vt_stream_len == 0u)
+        return;
+    if (n >= vt_stream_len)
+    {
+        vt_stream_len = 0u;
+        return;
+    }
+
+    memmove(vt_stream_buf, vt_stream_buf + n, (size_t)(vt_stream_len - n));
+    vt_stream_len = (uint16_t)(vt_stream_len - n);
+}
+
 static void VT_RxCallback(void)
 {
     if (vt_usart_instance == NULL)
         return;
 
+    if (vt_usart_instance->recv_len == 0u)
+        return;
+
+    VT_StreamPush(vt_usart_instance->recv_buff, vt_usart_instance->recv_len);
+
+    while (vt_stream_len >= 2u)
     {
-        const uint8_t *buf = vt_usart_instance->recv_buff;
-        if (!VT_VerifyFrame(buf))
+        if (vt_stream_buf[0] != VT_FRAME_HEADER_0 || vt_stream_buf[1] != VT_FRAME_HEADER_1)
+        {
+            uint16_t i;
+            uint16_t header_pos = vt_stream_len;
+            for (i = 1u; i + 1u < vt_stream_len; ++i)
+            {
+                if (vt_stream_buf[i] == VT_FRAME_HEADER_0 && vt_stream_buf[i + 1u] == VT_FRAME_HEADER_1)
+                {
+                    header_pos = i;
+                    break;
+                }
+            }
+
+            if (header_pos >= vt_stream_len)
+            {
+                VT_StreamConsume((uint16_t)(vt_stream_len - 1u));
+            }
+            else if (header_pos > 0u)
+            {
+                VT_StreamConsume(header_pos);
+            }
+            continue;
+        }
+
+        if (vt_stream_len < VT_FRAME_SIZE)
+            break;
+
+        if (!VT_VerifyFrame(vt_stream_buf))
         {
             vt_ctrl.bad_count++;
             vt_ctrl.crc_ok = 0u;
-            return;
+            VT_StreamConsume(1u);
+            continue;
         }
 
         VT_Ctrl_t next = vt_ctrl;
-        VT_FillCtrl(buf, &next);
+        VT_FillCtrl(vt_stream_buf, &next);
         next.crc_ok = 1u;
         next.frame_count = vt_ctrl.frame_count + 1u;
         next.bad_count = vt_ctrl.bad_count;
         memcpy(&vt_ctrl, &next, sizeof(next));
+        VT_StreamConsume(VT_FRAME_SIZE);
+        DaemonReload(vt_daemon);
     }
-
-    DaemonReload(vt_daemon);
 }
 
 static void VT_LostCallback(void *id)
@@ -168,6 +269,7 @@ static void VT_ReinitUart(UART_HandleTypeDef *uart_handle)
 VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
 {
     memset(&vt_ctrl, 0, sizeof(vt_ctrl));
+    vt_stream_len = 0u;
     VT_ReinitUart(uart_handle);
 
     {

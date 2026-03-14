@@ -7,7 +7,9 @@
  *
  * 图传键鼠映射（VT03/VT13）：
  * - 底盘：W/S 前后, A/D 左右, Q/E 旋转；Shift 加速，Ctrl 慢速
+ *        右摇杆兜底：ch0->vx, ch1->vy, ch3->wz（用于定位客户端键鼠问题）
  * - 云台：鼠标 X 控制 yaw，鼠标 Y 控制 pitch（gear=S 时生效）
+ *        鼠标无输入时，左摇杆兜底：ch3->yaw, ch2->pitch
  * - 射击：R 切换摩擦轮；鼠标左键单发；鼠标中键双发；鼠标右键按住连发
  * - 安全：pause 键急停
  *
@@ -86,6 +88,17 @@ static uint8_t vt_last_mouse_middle = 0u;
 #define KM_MOUSE_YAW_GAIN 15.0f
 #define KM_MOUSE_PITCH_GAIN 12.0f
 #define KM_MOUSE_DEADZONE 5
+#define KM_STICK_DEADZONE 50
+#define KM_STICK_SCALE_DEN 660.0f
+
+/* 本测试使用 USART6 图传串口 */
+#define VT_UART_HANDLE huart6
+#define VT_UART_LABEL "huart6"
+#define VT_DIAG_LOG_INTERVAL_MS 500U
+#define VT_REQUIRE_CRC_OK 1u
+#define VT_ENABLE_PAUSE_ESTOP 1u
+#define VT_REQUIRE_ONLINE 1u
+#define VT_DEBUG_FORCE_DRIVE_ON_VALID_FRAME 0u
 
 /* ============================== 底盘 ============================== */
 #define CHASSIS_MOTOR_COUNT 4U
@@ -125,6 +138,9 @@ static void ChassisForceZero(void);
 static void ChassisProcessRC(void);
 static void ChassisUpdateKinematics(void);
 static uint8_t VTKeyDown(uint16_t key_mask, uint8_t bit_index);
+static void VTInputDiag(const VT_Ctrl_t *ctrl);
+static uint8_t VTControlBlocked(const VT_Ctrl_t *ctrl);
+static void ChassisCmdDiag(void);
 
 /* ============================== 云台 ============================== */
 #define GIMBAL_UPDATE_INTERVAL_MS 20U
@@ -321,18 +337,31 @@ static void ChassisForceZero(void)
 
 static void ChassisProcessRC(void)
 {
-    if (vt_data == NULL || !VT_IsOnline()) {
+    if (vt_data == NULL || (VT_REQUIRE_ONLINE && !VT_IsOnline())) {
         chassis_vx = chassis_vy = chassis_wz = 0.0f;
         chassis_zero_speed = 1;
+        VTInputDiag(NULL);
         return;
     }
 
     vt_data = VT_GetCtrl();
-    if (vt_data == NULL || !vt_data->crc_ok || vt_data->pause_pressed) {
+    if (VTControlBlocked(vt_data)) {
         chassis_vx = chassis_vy = chassis_wz = 0.0f;
         chassis_zero_speed = 1;
+        VTInputDiag(vt_data);
         return;
     }
+
+#if VT_DEBUG_FORCE_DRIVE_ON_VALID_FRAME
+    if (vt_data->frame_count > 20u) {
+        chassis_vx = 0.0f;
+        chassis_vy = 4.0f;
+        chassis_wz = 0.0f;
+        chassis_zero_speed = 0u;
+        VTInputDiag(vt_data);
+        return;
+    }
+#endif
 
     uint16_t key_mask = vt_data->keyboard_value;
     float speed_scale = 1.0f;
@@ -358,11 +387,24 @@ static void ChassisProcessRC(void)
     if (VTKeyDown(key_mask, KEY_Q_BIT))
         wz_cmd -= KM_CHASSIS_WZ_BASE * speed_scale;
 
+    /* Stick fallback to help isolate keyboard/client issues */
+    if (abs(vt_data->ch0_right_x.centered) >= KM_STICK_DEADZONE)
+        vx_cmd += CHASSIS_MAX_VEL * (float)vt_data->ch0_right_x.centered / KM_STICK_SCALE_DEN;
+    if (abs(vt_data->ch1_right_y.centered) >= KM_STICK_DEADZONE)
+        vy_cmd += CHASSIS_MAX_VEL * (float)vt_data->ch1_right_y.centered / KM_STICK_SCALE_DEN;
+    if ((vt_data->gear != VT_GEAR_S) && (abs(vt_data->ch3_left_x.centered) >= KM_STICK_DEADZONE))
+        wz_cmd += CHASSIS_MAX_ROTATE * (float)vt_data->ch3_left_x.centered / KM_STICK_SCALE_DEN;
+
+    vx_cmd = ClampFloat(vx_cmd, -CHASSIS_MAX_VEL, CHASSIS_MAX_VEL);
+    vy_cmd = ClampFloat(vy_cmd, -CHASSIS_MAX_VEL, CHASSIS_MAX_VEL);
+    wz_cmd = ClampFloat(wz_cmd, -CHASSIS_MAX_ROTATE, CHASSIS_MAX_ROTATE);
+
     chassis_vx = float_deadband(vx_cmd, -CHASSIS_DEADZONE_VX, CHASSIS_DEADZONE_VX);
     chassis_vy = float_deadband(vy_cmd, -CHASSIS_DEADZONE_VY, CHASSIS_DEADZONE_VY);
     chassis_wz = float_deadband(wz_cmd, -CHASSIS_DEADZONE_WZ, CHASSIS_DEADZONE_WZ);
 
     chassis_zero_speed = (fabsf(chassis_vx) < 1e-4f && fabsf(chassis_vy) < 1e-4f && fabsf(chassis_wz) < 1e-4f) ? 1u : 0u;
+    VTInputDiag(vt_data);
 }
 
 static void ChassisUpdateKinematics(void)
@@ -422,6 +464,7 @@ static void ChassisUpdateKinematics(void)
             DJIMotorSetRef(chassis_motors[i], wheel_speeds[i]);
         }
     }
+    ChassisCmdDiag();
 }
 
 /* ============================== 云台实现 ============================== */
@@ -504,7 +547,7 @@ static void GimbalProcessRC(void)
         return;
     }
 
-    if (vt_data == NULL || !VT_IsOnline()) {
+    if (vt_data == NULL || (VT_REQUIRE_ONLINE && !VT_IsOnline())) {
         yaw_speed_ref = 0.0f;
         pitch_speed_ref = 0.0f;
         gimbal_zero_speed = 1;
@@ -516,7 +559,7 @@ static void GimbalProcessRC(void)
     }
 
     vt_data = VT_GetCtrl();
-    if (vt_data == NULL || !vt_data->crc_ok || vt_data->pause_pressed) {
+    if (VTControlBlocked(vt_data)) {
         yaw_speed_ref = 0.0f;
         pitch_speed_ref = 0.0f;
         gimbal_zero_speed = 1;
@@ -539,10 +582,12 @@ static void GimbalProcessRC(void)
         return;
     }
 
-    uint8_t all_in_deadzone = (abs(vt_data->mouse_x) < KM_MOUSE_DEADZONE) &&
-                              (abs(vt_data->mouse_y) < KM_MOUSE_DEADZONE);
+    uint8_t mouse_active = (abs(vt_data->mouse_x) >= KM_MOUSE_DEADZONE) ||
+                           (abs(vt_data->mouse_y) >= KM_MOUSE_DEADZONE);
+    uint8_t stick_active = (abs(vt_data->ch3_left_x.centered) >= KM_STICK_DEADZONE) ||
+                           (abs(vt_data->ch2_left_y.centered) >= KM_STICK_DEADZONE);
 
-    if (all_in_deadzone) {
+    if (!mouse_active && !stick_active) {
         yaw_speed_ref = 0.0f;
         pitch_speed_ref = 0.0f;
         gimbal_zero_speed = 1;
@@ -559,8 +604,13 @@ static void GimbalProcessRC(void)
     pitch_hold_active = 0;
     yaw_hold_active = 0;
 
-    yaw_speed_ref = (float)vt_data->mouse_x * KM_MOUSE_YAW_GAIN;
-    pitch_speed_ref = -(float)vt_data->mouse_y * KM_MOUSE_PITCH_GAIN;
+    if (mouse_active) {
+        yaw_speed_ref = (float)vt_data->mouse_x * KM_MOUSE_YAW_GAIN;
+        pitch_speed_ref = -(float)vt_data->mouse_y * KM_MOUSE_PITCH_GAIN;
+    } else {
+        yaw_speed_ref = YAW_SPEED_MAX * (float)vt_data->ch3_left_x.centered / KM_STICK_SCALE_DEN;
+        pitch_speed_ref = -PITCH_SPEED_MAX_UP * (float)vt_data->ch2_left_y.centered / KM_STICK_SCALE_DEN;
+    }
 
     yaw_speed_ref = float_deadband(yaw_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
     pitch_speed_ref = float_deadband(pitch_speed_ref, -GM6020_SPEED_DEADZONE, GM6020_SPEED_DEADZONE);
@@ -824,13 +874,13 @@ static void EnsureLoaderMotorReady(void)
 
 static void ShootProcessRC(void)
 {
-    if (vt_data == NULL || !VT_IsOnline()) {
+    if (vt_data == NULL || (VT_REQUIRE_ONLINE && !VT_IsOnline())) {
         friction_enabled = 0;
         return;
     }
 
     vt_data = VT_GetCtrl();
-    if (vt_data == NULL || !vt_data->crc_ok || vt_data->pause_pressed) {
+    if (VTControlBlocked(vt_data)) {
         friction_enabled = 0;
         loader_trigger_allowed = 0;
         pending_shots = 0;
@@ -998,6 +1048,66 @@ static uint8_t VTKeyDown(uint16_t key_mask, uint8_t bit_index)
     return (uint8_t)((key_mask >> bit_index) & 0x01u);
 }
 
+static uint8_t VTControlBlocked(const VT_Ctrl_t *ctrl)
+{
+    if (ctrl == NULL)
+        return 1u;
+    if (VT_REQUIRE_CRC_OK && (!ctrl->crc_ok))
+        return 1u;
+    if (VT_ENABLE_PAUSE_ESTOP && ctrl->pause_pressed)
+        return 1u;
+    return 0u;
+}
+
+static void VTInputDiag(const VT_Ctrl_t *ctrl)
+{
+    static uint32_t last_log_tick = 0u;
+    uint32_t now = HAL_GetTick();
+    if (now - last_log_tick < VT_DIAG_LOG_INTERVAL_MS)
+        return;
+    last_log_tick = now;
+
+    if (ctrl == NULL) {
+        LOGINFO("[vt-diag] online=%u ctrl=null", (unsigned)VT_IsOnline());
+        return;
+    }
+
+    LOGINFO("[vt-diag] online=%u crc=%u gear=%u pause=%u key=0x%04X ch0=%d ch1=%d ch2=%d ch3=%d mouse=(%d,%d) frame=%lu bad=%lu block=%u",
+            (unsigned)VT_IsOnline(),
+            (unsigned)ctrl->crc_ok,
+            (unsigned)ctrl->gear,
+            (unsigned)ctrl->pause_pressed,
+            (unsigned)ctrl->keyboard_value,
+            (int)ctrl->ch0_right_x.centered,
+            (int)ctrl->ch1_right_y.centered,
+            (int)ctrl->ch2_left_y.centered,
+            (int)ctrl->ch3_left_x.centered,
+            (int)ctrl->mouse_x,
+            (int)ctrl->mouse_y,
+            (unsigned long)ctrl->frame_count,
+            (unsigned long)ctrl->bad_count,
+            (unsigned)VTControlBlocked(ctrl));
+}
+
+static void ChassisCmdDiag(void)
+{
+    static uint32_t last_log_tick = 0u;
+    uint32_t now = HAL_GetTick();
+    if (now - last_log_tick < VT_DIAG_LOG_INTERVAL_MS)
+        return;
+    last_log_tick = now;
+
+    LOGINFO("[chassis-diag] zero=%u cmd(vx=%.2f vy=%.2f wz=%.2f) wheel_ref=(%.1f %.1f %.1f %.1f)",
+            (unsigned)chassis_zero_speed,
+            (double)chassis_vx,
+            (double)chassis_vy,
+            (double)chassis_wz,
+            (double)wheel_speeds[0],
+            (double)wheel_speeds[1],
+            (double)wheel_speeds[2],
+            (double)wheel_speeds[3]);
+}
+
 /* ============================== 主函数 ============================== */
 int main(void)
 {
@@ -1038,11 +1148,12 @@ int main(void)
     gimbal_startup_hold_active = 1;
     gimbal_startup_hold_tick = HAL_GetTick();
 
-    vt_data = VT_Init(&huart6); // 注意 连接3pin 的 usart6 串口
+    vt_data = VT_Init(&VT_UART_HANDLE);
 
 
 
     LOGINFO("[integrated-vt-km] demo initialized");
+    LOGINFO("[integrated-vt-km] VT UART=%s", VT_UART_LABEL);
     LOGINFO("[integrated] CAN1: chassis 1-4, loader 5, yaw 2; CAN2: friction 1/2, pitch 5");
 
     uint32_t last_chassis = 0;

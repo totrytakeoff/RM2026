@@ -20,6 +20,16 @@ include(${CMAKE_TOOLCHAIN_FILE})
 
 project(RM2026 C CXX ASM)
 
+# =============================================================================
+# 全局日志默认配置（默认 RTT，不占用业务串口）
+# 可通过目标级/命令行 -D 覆盖
+# =============================================================================
+add_compile_definitions(
+    BSP_LOG_USE_UART=0
+    BSP_LOG_UART_PORT=1
+    BSP_LOG_UART_TIMEOUT_MS=100
+)
+
 include(cmake/Functions.cmake)
 include(CTest)
 enable_testing()

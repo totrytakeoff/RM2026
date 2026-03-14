@@ -5,8 +5,26 @@
 #include "SEGGER_RTT_Conf.h"
 #include <stdio.h>
 
+#ifndef BUFFER_INDEX
 #define BUFFER_INDEX 0
+#endif
+
+#ifndef BSP_LOG_USE_UART
 #define BSP_LOG_USE_UART 1
+#endif
+/*
+ * 日志UART端口选择（仅在 BSP_LOG_USE_UART=1 时生效）:
+ * 1 -> USART1(huart1)
+ * 3 -> USART3(huart3)
+ * 6 -> USART6(huart6)
+ */
+#ifndef BSP_LOG_UART_PORT
+#define BSP_LOG_UART_PORT 6
+#endif
+
+#ifndef BSP_LOG_UART_TIMEOUT_MS
+#define BSP_LOG_UART_TIMEOUT_MS 100
+#endif
 
 /**
  * @brief 日志系统初始化

@@ -9,6 +9,7 @@ OPENOCD_HOST="${OPENOCD_HOST:-127.0.0.1}"
 OPENOCD_TELNET_PORT="${OPENOCD_TELNET_PORT:-4444}"
 OPENOCD_TCL_PORT="${OPENOCD_TCL_PORT:-6666}"
 OPENOCD_RESET_RUN="${OPENOCD_RESET_RUN:-1}"
+OPENOCD_KEEP_RUNNING="${OPENOCD_KEEP_RUNNING:-0}"
 
 # STM32F407 RAM: 0x2000_0000, 128KB
 RTT_RAM_ADDR="${RTT_RAM_ADDR:-0x20000000}"
@@ -48,6 +49,9 @@ wait_port() {
 }
 
 cleanup() {
+  if [[ "${OPENOCD_KEEP_RUNNING}" == "1" ]]; then
+    return 0
+  fi
   if [[ -n "${OPENOCD_PID}" ]]; then
     kill "${OPENOCD_PID}" >/dev/null 2>&1 || true
     wait "${OPENOCD_PID}" >/dev/null 2>&1 || true
@@ -61,7 +65,7 @@ start_openocd_if_needed() {
     return 0
   fi
 
-need_cmd openocd
+  need_cmd openocd
   if [[ ! -f "${OPENOCD_CFG}" ]]; then
     echo "[rtt] OpenOCD cfg not found: ${OPENOCD_CFG}" >&2
     exit 1
@@ -76,6 +80,9 @@ need_cmd openocd
     echo "[rtt] last log lines:" >&2
     tail -n 80 /tmp/openocd-rtt.log >&2 || true
     exit 1
+  fi
+  if [[ "${OPENOCD_KEEP_RUNNING}" == "1" ]]; then
+    echo "[rtt] keep-openocd enabled: process will stay after exit"
   fi
 }
 
