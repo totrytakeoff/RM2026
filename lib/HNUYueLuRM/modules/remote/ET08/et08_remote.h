@@ -17,7 +17,7 @@
 #define ET08_SWITCH_LEVEL_4 -353
 #define ET08_SWITCH_LEVEL_5 -554
 
-#define ET08_SWITCH_TOLERANCE 40
+#define ET08_SWITCH_TOLERANCE 200
 
 typedef enum
 {

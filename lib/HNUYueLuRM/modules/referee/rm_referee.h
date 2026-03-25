@@ -39,6 +39,11 @@ typedef struct
 	ext_shoot_data_t ShootData;							   // 0x0207
 	ext_projectile_allowance_t ProjectileAllowance;	   // 0x0208
 	ext_rfid_status_t RfidStatus;						   // 0x0209
+	ext_dart_client_cmd_t DartClientCmd;				   // 0x020A
+	ext_ground_robot_position_t GroundRobotPos;		   // 0x020B
+	ext_radar_mark_data_t RadarMarkData;				   // 0x020C
+	ext_sentry_info_t SentryInfo;						   // 0x020D
+	ext_radar_info_t RadarInfo;							   // 0x020E
 
 	// 自定义交互数据的接收
 	Communicate_ReceiveData_t ReceiveData;

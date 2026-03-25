@@ -1,10 +1,10 @@
 /**
  * @file referee_protocol.h
- * @author kidneygood (you@domain.com)
- * @version 0.1
- * @date 2022-12-02
+ * @author myself@YZControl
+ * @version 1.0
+ * @date 2026-3-22
  *
- * @copyright Copyright (c) HNU YueLu EC 2022 all rights reserved
+ * @copyright Copyright (c) myself@YZControl 2026 all rights reserved
  *
  */
 
@@ -107,7 +107,12 @@ typedef enum
 	LEN_robot_hurt = 1,							 // 0x0206
 	LEN_shoot_data = 7,							 // 0x0207
 	LEN_projectile_allowance = 8,				 // 0x0208
-	LEN_rfid_status = 4,						 // 0x0209
+	LEN_rfid_status = 5,						 // 0x0209
+	LEN_dart_client_cmd = 6,					 // 0x020A
+	LEN_ground_robot_position = 40,				 // 0x020B
+	LEN_radar_mark_data = 2,					 // 0x020C
+	LEN_sentry_info = 6,						 // 0x020D
+	LEN_radar_info = 1,						 // 0x020E
 	LEN_receive_data = 6 + Communicate_Data_LEN, // 0x0301
 
 } JudgeDataLength_e;
@@ -179,15 +184,15 @@ typedef struct
 	uint8_t power_management_shooter_output : 1;
 } ext_game_robot_state_t;
 
-/* ID: 0X0202  Byte: 14    实时功率热量数据 */
+/* ID: 0x0202  Byte: 14    实时功率热量数据 */
 typedef struct
 {
 	uint16_t reserved_0;
 	uint16_t reserved_1;
 	float reserved_2;
-	uint16_t buffer_energy; // 单位 J
-	uint16_t shooter_heat0; // 17mm
-	uint16_t shooter_heat1; // 42mm
+	uint16_t buffer_energy;
+	uint16_t shooter_17mm_barrel_heat;
+	uint16_t shooter_42mm_barrel_heat;
 } ext_power_heat_data_t;
 
 /* ID: 0x0203  Byte: 12    机器人位置数据 */
@@ -213,7 +218,7 @@ typedef struct
 typedef struct
 {
 	uint8_t armor_id : 4;
-	uint8_t hurt_type : 4;
+	uint8_t HP_deduction_reason : 4;
 } ext_robot_hurt_t;
 
 /* ID: 0x0207  Byte:  7    实时射击数据 */
@@ -222,7 +227,7 @@ typedef struct
 	uint8_t bullet_type;
 	uint8_t shooter_number;
 	uint8_t launching_frequency;
-	float bullet_speed;
+	float initial_speed;
 } ext_shoot_data_t;
 
 /* ID: 0x0208  Byte:  8    允许发弹量 */
@@ -234,11 +239,55 @@ typedef struct
 	uint16_t projectile_allowance_fortress;
 } ext_projectile_allowance_t;
 
-/* ID: 0x0209  Byte:  4    机器人 RFID 模块状态 */
+/* ID: 0x0209  Byte:  5    机器人 RFID 模块状态 */
 typedef struct
 {
 	uint32_t rfid_status;
+	uint8_t rfid_status_2;
 } ext_rfid_status_t;
+
+/* ID: 0x020A  Byte:  6    飞镖选手端指令数据 */
+typedef struct
+{
+	uint8_t dart_launch_opening_status;
+	uint8_t reserved;
+	uint16_t target_change_time;
+	uint16_t latest_launch_cmd_time;
+} ext_dart_client_cmd_t;
+
+/* ID: 0x020B  Byte: 40    地面机器人位置数据 */
+typedef struct
+{
+	float hero_x;
+	float hero_y;
+	float engineer_x;
+	float engineer_y;
+	float standard_3_x;
+	float standard_3_y;
+	float standard_4_x;
+	float standard_4_y;
+	float reserved_0;
+	float reserved_1;
+} ext_ground_robot_position_t;
+
+/* ID: 0x020C  Byte:  2    雷达标记进度数据 */
+typedef struct
+{
+	uint16_t mark_progress;
+} ext_radar_mark_data_t;
+
+/* ID: 0x020D  Byte:  6    哨兵自主决策信息同步 */
+typedef struct
+{
+	uint32_t sentry_info;
+	uint16_t sentry_info_2;
+} ext_sentry_info_t;
+
+/* ID: 0x020E  Byte:  1    雷达自主决策信息同步 */
+typedef struct
+{
+	uint8_t radar_info;
+} ext_radar_info_t;
 
 /****************************机器人交互数据****************************/
 /****************************机器人交互数据****************************/
@@ -283,6 +332,8 @@ typedef enum
 	UI_Data_ID_Draw5 = 0x103,
 	UI_Data_ID_Draw7 = 0x104,
 	UI_Data_ID_DrawChar = 0x110,
+	UI_Data_ID_SentryCmd = 0x120,
+	UI_Data_ID_RadarCmd = 0x121,
 
 	/* 自定义交互数据部分 */
 	Communicate_Data_ID = 0x0200,

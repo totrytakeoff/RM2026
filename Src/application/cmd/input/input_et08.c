@@ -72,18 +72,28 @@ void RobotCMDInputET08Update(const RobotCMDInput_Context_s *ctx, RobotCMDInput_D
 
     if (et08_ctrl == NULL)
     {
+        LOGWARNING("[et08] ctrl NULL");
         data->request_stop = 1u;
         return;
     }
 
     et08_ctrl = ET08_GetCtrl();
-    if (et08_ctrl == NULL || !ET08_IsOnline() || et08_ctrl->failsafe || et08_ctrl->frame_lost)
+    if (et08_ctrl == NULL || !ET08_IsOnline())
     {
+        LOGWARNING("[et08] offline: online=%d, failsafe=%d, frame_lost=%d", 
+            ET08_IsOnline(), et08_ctrl->failsafe, et08_ctrl->frame_lost);
         et08_sb_down_armed = 1u;
         et08_sb_last_pos = ET08_POS_INVALID;
         data->request_stop = 1u;
         return;
     }
+
+    // 调试：打印摇杆值和原始通道值
+    LOGINFO("[et08] L:(%d,%d) R:(%d,%d) SA_SB:%d SD_SC:%d raw_SA_SB:%d raw_SD_SC:%d", 
+        et08_ctrl->left.x, et08_ctrl->left.y,
+        et08_ctrl->right.x, et08_ctrl->right.y,
+        et08_ctrl->switch_sa_sb_state, et08_ctrl->switch_sd_sc_state,
+        et08_ctrl->switch_sa_sb_raw, et08_ctrl->switch_sd_sc_raw);
 
     data->input_online = 1u;
     data->request_recover = 1u;

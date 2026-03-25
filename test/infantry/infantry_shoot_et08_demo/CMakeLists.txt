@@ -1,0 +1,24 @@
+# =============================================================================
+# @file test/infantry/infantry_shoot_et08_demo/CMakeLists.txt
+# @brief Infantry ET08最小发射测试 CMake 配置
+# =============================================================================
+
+cmake_minimum_required(VERSION 3.16)
+project(infantry_shoot_et08_demo C ASM)
+
+include(${CMAKE_SOURCE_DIR}/cmake/TestFunctions.cmake)
+
+create_embedded_test(infantry_shoot_et08_demo
+    SOURCES
+        main.c
+    INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/test/infantry/infantry_minimal
+    LINK_LIBRARIES
+        HNUYueLuRM_modules
+        HNUYueLuRM_bsp
+        HNUYueLuRM_common
+        HNUYueLuRM_drivers
+        HAL_Lib
+    LINKER_SCRIPT ${MCU_LINKER_SCRIPT}
+)

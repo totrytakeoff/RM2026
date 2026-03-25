@@ -107,7 +107,11 @@ void RobotCMDInit()
 {
     // 输入源初始化与视觉接口初始化
     RobotCMDInputInit();
+#ifdef VISION_ENABLE
     vision_recv_data = VisionInit(&ROBOT_CMD_UART_VISION_HANDLE);
+#else
+    // 视觉未启用,避免串口冲突 (需要开启时请在robot_def.h中定义 VISION_ENABLE)
+#endif
 
     gimbal_cmd_pub = PubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
     gimbal_feed_sub = SubRegister("gimbal_feed", sizeof(Gimbal_Upload_Data_s));

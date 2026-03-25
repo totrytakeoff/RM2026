@@ -100,7 +100,22 @@ static void JudgeReadData(uint8_t *buff)
 				case ID_rfid_status: // 0x0209
 					memcpy(&referee_info.RfidStatus, (buff + DATA_Offset), LEN_rfid_status);
 					break;
-				case ID_student_interactive: // 0x0301   syhtodo接收代码未测试
+				case ID_dart_client_cmd: // 0x020A
+					memcpy(&referee_info.DartClientCmd, (buff + DATA_Offset), LEN_dart_client_cmd);
+					break;
+				case ID_ground_robot_position: // 0x020B
+					memcpy(&referee_info.GroundRobotPos, (buff + DATA_Offset), LEN_ground_robot_position);
+					break;
+				case ID_radar_mark_data: // 0x020C
+					memcpy(&referee_info.RadarMarkData, (buff + DATA_Offset), LEN_radar_mark_data);
+					break;
+				case ID_sentry_info: // 0x020D
+					memcpy(&referee_info.SentryInfo, (buff + DATA_Offset), LEN_sentry_info);
+					break;
+				case ID_radar_info: // 0x020E
+					memcpy(&referee_info.RadarInfo, (buff + DATA_Offset), LEN_radar_info);
+					break;
+				case ID_student_interactive: // 0x0301
 					memcpy(&referee_info.ReceiveData, (buff + DATA_Offset), LEN_receive_data);
 					break;
 				}
