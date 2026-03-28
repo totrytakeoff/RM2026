@@ -201,17 +201,23 @@ static void EstimateSpeed()
 /* 机器人底盘控制核心任务 */
 void ChassisTask()
 {
+     static float last_cmd_time_ms = 0.0f;
+     uint8_t has_new_cmd = 0u;
+     float now = DWT_GetTimeline_ms();
 
-
-
-     // 后续增加没收到消息的处理(双板的情况)
      // 获取新的控制信息
  #ifdef ONE_BOARD
-     SubGetMessage(chassis_sub, &chassis_cmd_recv);
+     has_new_cmd = SubGetMessage(chassis_sub, &chassis_cmd_recv);
  #endif
  #ifdef CHASSIS_BOARD
      chassis_cmd_recv = *(Chassis_Ctrl_Cmd_s *)CANCommGet(chasiss_can_comm);
+     has_new_cmd = 1u;
  #endif // CHASSIS_BOARD
+
+    if (has_new_cmd)
+        last_cmd_time_ms = now;
+    else if (last_cmd_time_ms > 0.0f && (now - last_cmd_time_ms) > APP_CMD_TIMEOUT_MS)
+        chassis_cmd_recv.chassis_mode = CHASSIS_ZERO_FORCE;
 
     static uint32_t log_counter = 0;
     log_counter++;

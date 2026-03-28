@@ -127,9 +127,16 @@ void ShootInit()
 /* 机器人发射机构控制核心任务 */
 void ShootTask()
 {
+    static float last_cmd_time_ms = 0.0f;
+    uint8_t has_new_cmd;
+
     // 从cmd获取控制数据
-    SubGetMessage(shoot_sub, &shoot_cmd_recv);
     float now = DWT_GetTimeline_ms();
+    has_new_cmd = SubGetMessage(shoot_sub, &shoot_cmd_recv);
+    if (has_new_cmd)
+        last_cmd_time_ms = now;
+    else if (last_cmd_time_ms > 0.0f && (now - last_cmd_time_ms) > APP_CMD_TIMEOUT_MS)
+        shoot_cmd_recv.shoot_mode = SHOOT_OFF;
 
     // 对shoot mode等于SHOOT_STOP的情况特殊处理,直接停止所有电机(紧急停止)
     if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
@@ -245,6 +252,16 @@ void ShootTask()
     {
         DJIMotorSetRef(friction_l, SHOOT_FRICTION_STOP_REF);
         DJIMotorSetRef(friction_r, SHOOT_FRICTION_STOP_REF);
+    }
+
+    if (shoot_cmd_recv.friction_mode != FRICTION_ON &&
+        shoot_cmd_recv.load_mode != LOAD_STOP &&
+        shoot_cmd_recv.load_mode != LOAD_REVERSE)
+    {
+        DJIMotorOuterLoop(loader, SHOOT_LOADER_LOOP_STOP);
+        DJIMotorSetRef(loader, SHOOT_LOADER_STOP_REF);
+        loader_speed_cmd = 0.0f;
+        loader_last_update_ms = now;
     }
 
     // 开关弹舱盖

@@ -49,6 +49,10 @@
 #include "minimal_config.h"
 
 /* Private define ------------------------------------------------------------*/
+#ifndef GIMBAL_SPIN_DEMO_ENABLE
+#define GIMBAL_SPIN_DEMO_ENABLE 0
+#endif
+
 #define TELEMETRY_RX_DUMMY 32U
 #define TELEMETRY_PERIOD_MS 100U
 #define VOFA_PERIOD_MS 20U
@@ -65,9 +69,17 @@
 #define PITCH_BRAKE_SPEED_EPS 20.0f
 #define PITCH_BRAKE_STABLE_COUNT 3U
 #define PITCH_BRAKE_TIMEOUT_MS 120U
+#define PITCH_RELEASE_SPEED_PREDICT_GAIN 0.02f
 #define GM6020_SPEED_MIN (-GM6020_SPEED_MAX)
 #define ET08_SWITCH_POS_UP 0U
 #define ET08_SWITCH_POS_DOWN 2U
+
+#if GIMBAL_SPIN_DEMO_ENABLE
+#define CHASSIS_MOTOR_COUNT 4U
+#define CHASSIS_SPIN_WZ_CMD 18.0f
+#define CHASSIS_SPIN_WZ_RAMP_STEP 0.50f
+#define WHEEL_SPEED_LIMIT_DPS 30000.0f
+#endif
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum {
@@ -80,6 +92,14 @@ typedef enum {
     AXIS_CTRL_SPEED = 1,
     AXIS_CTRL_BRAKE = 2,
 } AxisCtrlMode_t;
+
+#if GIMBAL_SPIN_DEMO_ENABLE
+typedef struct {
+    float vx;
+    float vy;
+    float wz;
+} ChassisCmd_t;
+#endif
 
 /* Private variables ---------------------------------------------------------*/
 static ET08_Ctrl_t *et08_ctrl = NULL;
@@ -97,10 +117,26 @@ static float yaw_speed_ref = 0.0f;
 static float pitch_speed_ref = 0.0f;
 static float yaw_hold_ref = 0.0f;
 static float pitch_hold_ref = 0.0f;
+static float pitch_release_hold_ref = 0.0f;
+static float pitch_current_ff = 0.0f;
+static float pitch_imu_speed_fdb = 0.0f;
 static float yaw_separate_center = 0.0f;
 static AxisCtrlMode_t yaw_ctrl_mode = AXIS_CTRL_ANGLE;
 static AxisCtrlMode_t pitch_ctrl_mode = AXIS_CTRL_ANGLE;
 static GimbalMode_t last_gimbal_mode = GIMBAL_MODE_FOLLOW;
+
+#if GIMBAL_SPIN_DEMO_ENABLE
+static DJIMotorInstance *motor_fr = NULL;
+static DJIMotorInstance *motor_fl = NULL;
+static DJIMotorInstance *motor_br = NULL;
+static DJIMotorInstance *motor_bl = NULL;
+static uint8_t chassis_enabled = 0U;
+static uint8_t chassis_spin_enabled = 0U;
+static uint8_t last_chassis_spin_enabled = 0U;
+static float chassis_wz_target = 0.0f;
+static float chassis_wz_cmd = 0.0f;
+static float wheel_speed_ref[CHASSIS_MOTOR_COUNT] = {0.0f};
+#endif
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -118,6 +154,10 @@ static float ClampFloat(float value, float min_value, float max_value);
 static float GetYawHoldFeedbackAngle(void);
 static float LimitYawSeparateHoldRef(float ref);
 static void ApplyYawPidProfile(GimbalMode_t mode);
+static void UpdatePitchGravityFeedforward(void);
+static float GetPitchSpeedFeedback(void);
+static void ResetPidState(PIDInstance *pid);
+static void ResetPitchPidRuntime(void);
 static float PidSatRatio(const PIDInstance *pid);
 static uint8_t PidNearlySaturated(const PIDInstance *pid);
 static const char *AxisCtrlModeName(AxisCtrlMode_t mode);
@@ -129,6 +169,14 @@ static bool GimbalUpdateFromET08(void);
 static void SendTelemetry(void);
 static void SendVofaFrame(void);
 static uint8_t UpdateStickActiveState(int16_t raw, uint8_t prev_state, uint8_t *enter_cnt, uint8_t *exit_cnt);
+
+#if GIMBAL_SPIN_DEMO_ENABLE
+static void OmniInverseKinematics(float vx, float vy, float wz, float out[4]);
+static void ChassisMotorsInit(void);
+static void ChassisStop(void);
+static void ChassisApplyCommand(const ChassisCmd_t *cmd);
+static void ChassisUpdateSpinFromEt08(void);
+#endif
 
 /* Private user code ---------------------------------------------------------*/
 static void Debug_DisableWatchdogs(void)
@@ -257,6 +305,65 @@ static void ApplyYawPidProfile(GimbalMode_t mode)
     PIDInit(&motor_yaw->motor_controller.speed_PID, &speed_cfg);
 }
 
+static void UpdatePitchGravityFeedforward(void)
+{
+    if (motor_pitch == NULL) {
+        pitch_current_ff = 0.0f;
+        return;
+    }
+
+    /* Positive FF means positive motor output (CCW by project convention). */
+    float pitch_ff_raw =
+        PITCH_GRAVITY_FF_K *
+        sinf((motor_pitch->measure.total_angle - PITCH_GRAVITY_FF_OFFSET_DEG) * (float)M_PI / 180.0f);
+    pitch_ff_raw = ClampFloat(pitch_ff_raw, -PITCH_GRAVITY_FF_MAX, PITCH_GRAVITY_FF_MAX);
+    pitch_current_ff = pitch_current_ff * PITCH_FF_LPF + pitch_ff_raw * (1.0f - PITCH_FF_LPF);
+}
+
+static float GetPitchSpeedFeedback(void)
+{
+    if (gimbal_imu != NULL) {
+        pitch_imu_speed_fdb = gimbal_imu->Gyro[0];
+        return pitch_imu_speed_fdb;
+    }
+    pitch_imu_speed_fdb = (motor_pitch != NULL) ? motor_pitch->measure.speed_aps : 0.0f;
+    return pitch_imu_speed_fdb;
+}
+
+static void ResetPidState(PIDInstance *pid)
+{
+    if (pid == NULL) {
+        return;
+    }
+
+    pid->Measure = 0.0f;
+    pid->Last_Measure = 0.0f;
+    pid->Err = 0.0f;
+    pid->Last_Err = 0.0f;
+    pid->Last_ITerm = 0.0f;
+    pid->Pout = 0.0f;
+    pid->Iout = 0.0f;
+    pid->Dout = 0.0f;
+    pid->ITerm = 0.0f;
+    pid->Output = 0.0f;
+    pid->Last_Output = 0.0f;
+    pid->Last_Dout = 0.0f;
+    pid->Ref = 0.0f;
+    pid->DWT_CNT = 0U;
+    pid->dt = 0.0f;
+}
+
+static void ResetPitchPidRuntime(void)
+{
+    if (motor_pitch == NULL) {
+        return;
+    }
+
+    ResetPidState(&motor_pitch->motor_controller.angle_PID);
+    ResetPidState(&motor_pitch->motor_controller.speed_PID);
+    ResetPidState(&motor_pitch->motor_controller.current_PID);
+}
+
 static float PidSatRatio(const PIDInstance *pid)
 {
     if (pid == NULL || pid->MaxOut <= 1e-6f) {
@@ -327,6 +434,190 @@ static uint8_t UpdateStickActiveState(int16_t raw, uint8_t prev_state, uint8_t *
     return 0U;
 }
 
+#if GIMBAL_SPIN_DEMO_ENABLE
+static void OmniInverseKinematics(float vx, float vy, float wz, float out[4])
+{
+    const float l = CHASSIS_WHEEL_BASE * 0.5f;
+    const float v_fr = vy - vx - l * wz;
+    const float v_fl = vy + vx - l * wz;
+    const float v_br = -vy + vx - l * wz;
+    const float v_bl = -vy - vx - l * wz;
+
+    out[0] = v_fr / CHASSIS_WHEEL_RADIUS;
+    out[1] = v_fl / CHASSIS_WHEEL_RADIUS;
+    out[2] = v_br / CHASSIS_WHEEL_RADIUS;
+    out[3] = v_bl / CHASSIS_WHEEL_RADIUS;
+}
+
+static void ChassisMotorsInit(void)
+{
+    Motor_Init_Config_s config = {
+        .motor_type = M3508,
+        .can_init_config = {
+            .can_handle = &CHASSIS_CAN,
+            .tx_id = CHASSIS_MOTOR_FR_ID,
+        },
+        .controller_param_init_config = {
+            .speed_PID = {
+                .Kp = CHASSIS_SPEED_KP,
+                .Ki = CHASSIS_SPEED_KI,
+                .Kd = CHASSIS_SPEED_KD,
+                .MaxOut = CHASSIS_SPEED_MAX_OUT,
+                .IntegralLimit = 1000.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+            },
+            .current_PID = {
+                .Kp = 0.35f,
+                .Ki = 0.0f,
+                .Kd = 0.0f,
+                .IntegralLimit = 1000.0f,
+                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
+                .MaxOut = 8000.0f,
+            },
+        },
+        .controller_setting_init_config = {
+            .angle_feedback_source = MOTOR_FEED,
+            .speed_feedback_source = MOTOR_FEED,
+            .outer_loop_type = SPEED_LOOP,
+            .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
+            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+        },
+    };
+
+    motor_fr = DJIMotorInit(&config);
+    if (motor_fr != NULL) {
+        DJIMotorOuterLoop(motor_fr, SPEED_LOOP);
+        DJIMotorStop(motor_fr);
+    }
+
+    config.can_init_config.tx_id = CHASSIS_MOTOR_FL_ID;
+    motor_fl = DJIMotorInit(&config);
+    if (motor_fl != NULL) {
+        DJIMotorOuterLoop(motor_fl, SPEED_LOOP);
+        DJIMotorStop(motor_fl);
+    }
+
+    config.can_init_config.tx_id = CHASSIS_MOTOR_BR_ID;
+    motor_br = DJIMotorInit(&config);
+    if (motor_br != NULL) {
+        DJIMotorOuterLoop(motor_br, SPEED_LOOP);
+        DJIMotorStop(motor_br);
+    }
+
+    config.can_init_config.tx_id = CHASSIS_MOTOR_BL_ID;
+    motor_bl = DJIMotorInit(&config);
+    if (motor_bl != NULL) {
+        DJIMotorOuterLoop(motor_bl, SPEED_LOOP);
+        DJIMotorStop(motor_bl);
+    }
+
+    TelemetrySendString("[gmb_et08] chassis motors initialized\r\n");
+}
+
+static void ChassisStop(void)
+{
+    chassis_wz_target = 0.0f;
+    chassis_wz_cmd = 0.0f;
+    chassis_enabled = 0U;
+    chassis_spin_enabled = 0U;
+    memset(wheel_speed_ref, 0, sizeof(wheel_speed_ref));
+
+    if (motor_fr != NULL)
+        DJIMotorStop(motor_fr);
+    if (motor_fl != NULL)
+        DJIMotorStop(motor_fl);
+    if (motor_br != NULL)
+        DJIMotorStop(motor_br);
+    if (motor_bl != NULL)
+        DJIMotorStop(motor_bl);
+}
+
+static void ChassisApplyCommand(const ChassisCmd_t *cmd)
+{
+    float wheel_speed_rad_s[CHASSIS_MOTOR_COUNT] = {0.0f};
+
+    if (cmd == NULL) {
+        return;
+    }
+
+    if (!chassis_enabled) {
+        if (motor_fr != NULL)
+            DJIMotorEnable(motor_fr);
+        if (motor_fl != NULL)
+            DJIMotorEnable(motor_fl);
+        if (motor_br != NULL)
+            DJIMotorEnable(motor_br);
+        if (motor_bl != NULL)
+            DJIMotorEnable(motor_bl);
+        chassis_enabled = 1U;
+    }
+
+    OmniInverseKinematics(cmd->vx, cmd->vy, cmd->wz, wheel_speed_rad_s);
+
+    for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+        float speed_dps = wheel_speed_rad_s[i] * 180.0f / (float)M_PI;
+        speed_dps *= CHASSIS_SPEED_SCALE;
+        if (fabsf(speed_dps) < CHASSIS_SPEED_DEADZONE) {
+            speed_dps = 0.0f;
+        }
+        wheel_speed_ref[i] = ClampFloat(speed_dps, -WHEEL_SPEED_LIMIT_DPS, WHEEL_SPEED_LIMIT_DPS);
+    }
+
+    if (motor_fr != NULL)
+        DJIMotorSetRef(motor_fr, wheel_speed_ref[0]);
+    if (motor_fl != NULL)
+        DJIMotorSetRef(motor_fl, wheel_speed_ref[1]);
+    if (motor_br != NULL)
+        DJIMotorSetRef(motor_br, wheel_speed_ref[2]);
+    if (motor_bl != NULL)
+        DJIMotorSetRef(motor_bl, wheel_speed_ref[3]);
+}
+
+static void ChassisUpdateSpinFromEt08(void)
+{
+    ChassisCmd_t cmd = {0.0f};
+    uint8_t sa_pos;
+
+    if (et08_ctrl == NULL) {
+        ChassisStop();
+        return;
+    }
+
+    sa_pos = ET08_MapUpperSwitchPos(et08_ctrl->switch_sa_sb_state);
+    chassis_spin_enabled = (sa_pos == ET08_SWITCH_POS_UP) ? 1U : 0U;
+    chassis_wz_target = chassis_spin_enabled ? CHASSIS_SPIN_WZ_CMD : 0.0f;
+
+    if (chassis_spin_enabled != last_chassis_spin_enabled) {
+        TelemetryPrintf("[gmb_et08] chassis spin -> %s sa_raw=%u sa_state=%u target_wz_x100=%ld\r\n",
+                        chassis_spin_enabled ? "ON" : "OFF",
+                        (unsigned int)et08_ctrl->switch_sa_sb_raw,
+                        (unsigned int)et08_ctrl->switch_sa_sb_state,
+                        (long)(chassis_wz_target * 100.0f));
+        last_chassis_spin_enabled = chassis_spin_enabled;
+    }
+
+    if (chassis_wz_cmd < chassis_wz_target) {
+        chassis_wz_cmd += CHASSIS_SPIN_WZ_RAMP_STEP;
+        if (chassis_wz_cmd > chassis_wz_target) {
+            chassis_wz_cmd = chassis_wz_target;
+        }
+    } else if (chassis_wz_cmd > chassis_wz_target) {
+        chassis_wz_cmd -= CHASSIS_SPIN_WZ_RAMP_STEP;
+        if (chassis_wz_cmd < chassis_wz_target) {
+            chassis_wz_cmd = chassis_wz_target;
+        }
+    }
+
+    if (!chassis_spin_enabled && fabsf(chassis_wz_cmd) <= 1e-3f) {
+        ChassisStop();
+        return;
+    }
+
+    cmd.wz = chassis_wz_cmd;
+    ChassisApplyCommand(&cmd);
+}
+#endif
+
 static void GimbalMotorsInit(void)
 {
     Motor_Init_Config_s yaw_config = {
@@ -386,12 +677,15 @@ static void GimbalMotorsInit(void)
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .MaxOut = PITCH_SPEED_MAX_OUT,
             },
+            .other_speed_feedback_ptr = &pitch_imu_speed_fdb,
+            .current_feedforward_ptr = &pitch_current_ff,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
-            .speed_feedback_source = MOTOR_FEED,
+            .speed_feedback_source = OTHER_FEED,
             .outer_loop_type = SPEED_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
+            .feedforward_flag = CURRENT_FEEDFORWARD,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
         },
     };
@@ -410,6 +704,7 @@ static void GimbalMotorsInit(void)
         DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
         DJIMotorStop(motor_pitch);
         pitch_hold_ref = motor_pitch->measure.total_angle;
+        pitch_release_hold_ref = pitch_hold_ref;
     }
 
     TelemetrySendString("[gmb_et08] gimbal motors initialized\r\n");
@@ -422,6 +717,10 @@ static void GimbalStop(void)
     yaw_ctrl_mode = AXIS_CTRL_ANGLE;
     pitch_ctrl_mode = AXIS_CTRL_ANGLE;
     gimbal_enabled = 0U;
+    pitch_release_hold_ref = pitch_hold_ref;
+    pitch_current_ff = 0.0f;
+    pitch_imu_speed_fdb = 0.0f;
+    ResetPitchPidRuntime();
 
     if (motor_yaw) {
         DJIMotorStop(motor_yaw);
@@ -462,6 +761,9 @@ static bool GimbalUpdateFromET08(void)
                         (long)(yaw_hold_ref * 10.0f),
                         (long)(pitch_hold_ref * 10.0f));
     }
+
+    UpdatePitchGravityFeedforward();
+    GetPitchSpeedFeedback();
 
     const int16_t yaw_raw = et08_ctrl->right.x;
     const int16_t pitch_raw = et08_ctrl->right.y;
@@ -577,15 +879,22 @@ static bool GimbalUpdateFromET08(void)
     }
 
     if (pitch_cmd_active) {
+        if (pitch_ctrl_mode != AXIS_CTRL_SPEED) {
+            ResetPitchPidRuntime();
+        }
         pitch_ctrl_mode = AXIS_CTRL_SPEED;
         pitch_brake_stable_count = 0U;
         pitch_brake_start_ms = 0U;
     } else if (pitch_ctrl_mode == AXIS_CTRL_SPEED) {
+        pitch_release_hold_ref = motor_pitch->measure.total_angle +
+                                 GetPitchSpeedFeedback() * PITCH_RELEASE_SPEED_PREDICT_GAIN;
+        pitch_hold_ref = pitch_release_hold_ref;
         pitch_ctrl_mode = AXIS_CTRL_BRAKE;
         pitch_brake_stable_count = 0U;
         pitch_brake_start_ms = now_ms;
+        ResetPidState(&motor_pitch->motor_controller.speed_PID);
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
-        if (fabsf(motor_pitch->measure.speed_aps) <= PITCH_BRAKE_SPEED_EPS) {
+        if (fabsf(GetPitchSpeedFeedback()) <= PITCH_BRAKE_SPEED_EPS) {
             if (pitch_brake_stable_count < 255U) {
                 pitch_brake_stable_count++;
             }
@@ -594,11 +903,12 @@ static bool GimbalUpdateFromET08(void)
         }
         if (pitch_brake_stable_count >= PITCH_BRAKE_STABLE_COUNT ||
             (now_ms - pitch_brake_start_ms) >= PITCH_BRAKE_TIMEOUT_MS) {
-            pitch_hold_ref = motor_pitch->measure.total_angle;
+            pitch_hold_ref = pitch_release_hold_ref;
             pitch_ctrl_mode = AXIS_CTRL_ANGLE;
+            ResetPitchPidRuntime();
             TelemetryPrintf("[gmb_et08] pitch brake -> hold lock_x10=%ld spd_x10=%ld\r\n",
                             (long)(pitch_hold_ref * 10.0f),
-                            (long)(motor_pitch->measure.speed_aps * 10.0f));
+                            (long)(GetPitchSpeedFeedback() * 10.0f));
         }
     }
 
@@ -610,6 +920,7 @@ static bool GimbalUpdateFromET08(void)
         }
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
         DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
+        DJIMotorChangeFeed(motor_pitch, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
         DJIMotorSetRef(motor_pitch, 0.0f);
     } else {
         if (last_pitch_ctrl_mode != AXIS_CTRL_ANGLE) {
@@ -617,6 +928,7 @@ static bool GimbalUpdateFromET08(void)
                             (long)(pitch_hold_ref * 10.0f),
                             (long)(motor_pitch->measure.total_angle * 10.0f));
         }
+        DJIMotorChangeFeed(motor_pitch, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
         DJIMotorOuterLoop(motor_pitch, ANGLE_LOOP);
         DJIMotorSetRef(motor_pitch, pitch_hold_ref);
     }
@@ -702,11 +1014,31 @@ static void SendTelemetry(void)
                     (long)((motor_pitch != NULL) ? (motor_pitch->motor_controller.speed_PID.Err * 10.0f) : 0.0f),
                     (long)((motor_pitch != NULL) ? (motor_pitch->motor_controller.speed_PID.Output * 10.0f) : 0.0f),
                     (unsigned int)((motor_pitch != NULL) ? PidNearlySaturated(&motor_pitch->motor_controller.speed_PID) : 0U));
+
+#if GIMBAL_SPIN_DEMO_ENABLE
+    TelemetryPrintf("[gmb_et08] chassis spin=%u target_wz_x100=%ld cmd_wz_x100=%ld\r\n",
+                    (unsigned int)chassis_spin_enabled,
+                    (long)(chassis_wz_target * 100.0f),
+                    (long)(chassis_wz_cmd * 100.0f));
+    TelemetryPrintf("[gmb_et08] chassis wheel_ref(fr_x10=%ld fl_x10=%ld br_x10=%ld bl_x10=%ld) wheel_fdb(fr_x10=%ld fl_x10=%ld br_x10=%ld bl_x10=%ld)\r\n",
+                    (long)(wheel_speed_ref[0] * 10.0f),
+                    (long)(wheel_speed_ref[1] * 10.0f),
+                    (long)(wheel_speed_ref[2] * 10.0f),
+                    (long)(wheel_speed_ref[3] * 10.0f),
+                    (long)((motor_fr != NULL) ? (motor_fr->measure.speed_aps * 10.0f) : 0.0f),
+                    (long)((motor_fl != NULL) ? (motor_fl->measure.speed_aps * 10.0f) : 0.0f),
+                    (long)((motor_br != NULL) ? (motor_br->measure.speed_aps * 10.0f) : 0.0f),
+                    (long)((motor_bl != NULL) ? (motor_bl->measure.speed_aps * 10.0f) : 0.0f));
+#endif
 }
 
 static void SendVofaFrame(void)
 {
-    float ch[38];
+#if GIMBAL_SPIN_DEMO_ENABLE
+    float ch[50];
+#else
+    float ch[39];
+#endif
     uint8_t txbuf[sizeof(ch) + 4U];
     static const uint8_t tail[4] = {0x00U, 0x00U, 0x80U, 0x7FU};
 
@@ -719,7 +1051,7 @@ static void SendVofaFrame(void)
     ch[6] = (motor_yaw != NULL) ? motor_yaw->measure.speed_aps : 0.0f;
     ch[7] = yaw_hold_ref;
     ch[8] = pitch_speed_ref;
-    ch[9] = (motor_pitch != NULL) ? motor_pitch->measure.speed_aps : 0.0f;
+    ch[9] = pitch_imu_speed_fdb;
     ch[10] = pitch_hold_ref;
     ch[11] = (motor_pitch != NULL) ? motor_pitch->measure.total_angle : 0.0f;
     ch[12] = (motor_pitch != NULL) ? motor_pitch->motor_controller.angle_PID.Ref : 0.0f;
@@ -748,6 +1080,20 @@ static void SendVofaFrame(void)
     ch[35] = (gimbal_imu != NULL) ? gimbal_imu->Pitch : 0.0f;
     ch[36] = (gimbal_imu != NULL) ? gimbal_imu->Gyro[2] : 0.0f;
     ch[37] = (gimbal_imu != NULL) ? gimbal_imu->Gyro[0] : 0.0f;
+    ch[38] = pitch_current_ff;
+#if GIMBAL_SPIN_DEMO_ENABLE
+    ch[39] = (float)chassis_spin_enabled;
+    ch[40] = chassis_wz_target;
+    ch[41] = chassis_wz_cmd;
+    ch[42] = wheel_speed_ref[0];
+    ch[43] = (motor_fr != NULL) ? motor_fr->measure.speed_aps : 0.0f;
+    ch[44] = wheel_speed_ref[1];
+    ch[45] = (motor_fl != NULL) ? motor_fl->measure.speed_aps : 0.0f;
+    ch[46] = wheel_speed_ref[2];
+    ch[47] = (motor_br != NULL) ? motor_br->measure.speed_aps : 0.0f;
+    ch[48] = wheel_speed_ref[3];
+    ch[49] = (motor_bl != NULL) ? motor_bl->measure.speed_aps : 0.0f;
+#endif
 
     memcpy(txbuf, ch, sizeof(ch));
     memcpy(txbuf + sizeof(ch), tail, sizeof(tail));
@@ -789,6 +1135,9 @@ int main(void)
     et08_ctrl = ET08_Init(&RC_UART);
     gimbal_imu = INS_Init();
     GimbalMotorsInit();
+#if GIMBAL_SPIN_DEMO_ENABLE
+    ChassisMotorsInit();
+#endif
 
     HAL_Delay(MOTOR_STABILIZE_TIME_MS);
     TelemetrySendString("[gmb_et08] control loop start\r\n");
@@ -822,6 +1171,9 @@ int main(void)
             bool online = GimbalUpdateFromET08();
             if (!online) {
                 GimbalStop();
+#if GIMBAL_SPIN_DEMO_ENABLE
+                ChassisStop();
+#endif
                 if (last_online_state != 0U) {
                     TelemetryPrintf("[gmb_et08] remote offline/failsafe -> stop online=%u fs=%u lost=%u raw(rx=%d ry=%d)\r\n",
                                     (unsigned int)ET08_IsOnline(),
@@ -831,9 +1183,14 @@ int main(void)
                                     (int)((et08_ctrl != NULL) ? et08_ctrl->right.y : 0));
                     last_online_state = 0U;
                 }
-            } else if (last_online_state == 0U) {
-                TelemetrySendString("[gmb_et08] remote online -> run\r\n");
-                last_online_state = 1U;
+            } else {
+#if GIMBAL_SPIN_DEMO_ENABLE
+                ChassisUpdateSpinFromEt08();
+#endif
+                if (last_online_state == 0U) {
+                    TelemetrySendString("[gmb_et08] remote online -> run\r\n");
+                    last_online_state = 1U;
+                }
             }
         }
 
@@ -846,7 +1203,7 @@ int main(void)
             SendVofaFrame();
         }
 
-        HAL_Delay(1);
+        HAL_Delay(2);
     }
 }
 

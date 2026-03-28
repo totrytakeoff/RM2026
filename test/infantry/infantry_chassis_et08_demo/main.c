@@ -51,6 +51,8 @@
 #define CHASSIS_MOTOR_COUNT 4U
 #define TELEMETRY_RX_DUMMY 32U
 #define TELEMETRY_PERIOD_MS 100U
+#define DAEMON_TASK_PERIOD_MS 1U
+#define MOTOR_CONTROL_PERIOD_MS 2U
 #define RC_INPUT_DEADZONE 50
 #define WHEEL_SPEED_LIMIT_DPS 30000.0f
 
@@ -73,6 +75,10 @@ static DJIMotorInstance *motor_bl = NULL;
 static uint8_t chassis_enabled = 0U;
 static uint8_t last_online_state = 0U;
 static float wheel_speed_ref[CHASSIS_MOTOR_COUNT] = {0.0f};
+static ChassisCmd_t last_cmd = {0.0f};
+static float filtered_vx = 0.0f;
+static float filtered_vy = 0.0f;
+static float filtered_wz = 0.0f;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -90,6 +96,7 @@ static float ClampFloat(float value, float min_value, float max_value);
 static void OmniInverseKinematics(float vx, float vy, float wz, float out[4]);
 
 static void ChassisMotorsInit(void);
+static void ForceMotorZero(void);
 static void ChassisStop(void);
 static void ChassisApplyCommand(const ChassisCmd_t *cmd);
 static bool BuildChassisCommandFromEt08(ChassisCmd_t *cmd);
@@ -250,8 +257,20 @@ static void ChassisStop(void)
     wheel_speed_ref[1] = 0.0f;
     wheel_speed_ref[2] = 0.0f;
     wheel_speed_ref[3] = 0.0f;
+    filtered_vx = 0.0f;
+    filtered_vy = 0.0f;
+    filtered_wz = 0.0f;
 
     chassis_enabled = 0U;
+
+    if (motor_fr)
+        DJIMotorSetRef(motor_fr, 0.0f);
+    if (motor_fl)
+        DJIMotorSetRef(motor_fl, 0.0f);
+    if (motor_br)
+        DJIMotorSetRef(motor_br, 0.0f);
+    if (motor_bl)
+        DJIMotorSetRef(motor_bl, 0.0f);
 
     if (motor_fr)
         DJIMotorStop(motor_fr);
@@ -261,6 +280,28 @@ static void ChassisStop(void)
         DJIMotorStop(motor_br);
     if (motor_bl)
         DJIMotorStop(motor_bl);
+}
+
+static void ForceMotorZero(void)
+{
+    DJIMotorInstance *motors[CHASSIS_MOTOR_COUNT] = {motor_fr, motor_fl, motor_br, motor_bl};
+
+    for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
+        if (motors[i] == NULL) {
+            continue;
+        }
+        DJIMotorStop(motors[i]);
+        DJIMotorSetRef(motors[i], 0.0f);
+        HAL_Delay(10);
+        DJIMotorEnable(motors[i]);
+        DJIMotorSetRef(motors[i], 0.0f);
+    }
+
+    filtered_vx = 0.0f;
+    filtered_vy = 0.0f;
+    filtered_wz = 0.0f;
+    memset(wheel_speed_ref, 0, sizeof(wheel_speed_ref));
+    chassis_enabled = 0U;
 }
 
 static void ChassisApplyCommand(const ChassisCmd_t *cmd)
@@ -280,8 +321,13 @@ static void ChassisApplyCommand(const ChassisCmd_t *cmd)
         chassis_enabled = 1U;
     }
 
+    last_cmd = *cmd;
+    filtered_vx = filtered_vx * CHASSIS_SPEED_FILTER_COEF + cmd->vx * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+    filtered_vy = filtered_vy * CHASSIS_SPEED_FILTER_COEF + cmd->vy * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+    filtered_wz = filtered_wz * CHASSIS_SPEED_FILTER_COEF + cmd->wz * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+
     float wheel_speed_rad_s[CHASSIS_MOTOR_COUNT] = {0.0f};
-    OmniInverseKinematics(cmd->vx, cmd->vy, cmd->wz, wheel_speed_rad_s);
+    OmniInverseKinematics(filtered_vx, filtered_vy, filtered_wz, wheel_speed_rad_s);
 
     for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
         float speed_dps = wheel_speed_rad_s[i] * 180.0f / (float)M_PI;
@@ -341,9 +387,16 @@ static void SendTelemetry(void)
                     (unsigned int)((et08_ctrl != NULL) ? et08_ctrl->frame_lost : 0U),
                     lx, ly, rx, ry);
 
-    TelemetryPrintf("[chs_et08] wheel_ref(fr=%.1f fl=%.1f br=%.1f bl=%.1f) fdb(fr=%.1f)\\r\\n",
+    TelemetryPrintf("[chs_et08] cmd(vx=%.2f vy=%.2f wz=%.2f) filt(vx=%.2f vy=%.2f wz=%.2f)\\r\\n",
+                    last_cmd.vx, last_cmd.vy, last_cmd.wz,
+                    filtered_vx, filtered_vy, filtered_wz);
+
+    TelemetryPrintf("[chs_et08] wheel_ref(fr=%.1f fl=%.1f br=%.1f bl=%.1f) fdb(fr=%.1f fl=%.1f br=%.1f bl=%.1f)\\r\\n",
                     wheel_speed_ref[0], wheel_speed_ref[1], wheel_speed_ref[2], wheel_speed_ref[3],
-                    (motor_fr != NULL) ? motor_fr->measure.speed_aps : 0.0f);
+                    (motor_fr != NULL) ? motor_fr->measure.speed_aps : 0.0f,
+                    (motor_fl != NULL) ? motor_fl->measure.speed_aps : 0.0f,
+                    (motor_br != NULL) ? motor_br->measure.speed_aps : 0.0f,
+                    (motor_bl != NULL) ? motor_bl->measure.speed_aps : 0.0f);
 }
 
 /* Main ----------------------------------------------------------------------*/
@@ -380,18 +433,27 @@ int main(void)
 
     et08_ctrl = ET08_Init(&RC_UART);
     ChassisMotorsInit();
+    ForceMotorZero();
 
     HAL_Delay(MOTOR_STABILIZE_TIME_MS);
     TelemetrySendString("[chs_et08] control loop start\\r\\n");
 
     uint32_t last_control_tick = DWT_GetTimeline_ms();
     uint32_t last_telemetry_tick = last_control_tick;
+    uint32_t last_daemon_tick = last_control_tick;
+    uint32_t last_motor_tick = last_control_tick;
 
     while (1) {
-        DaemonTask();
-        DJIMotorControl();
-
         uint32_t now = DWT_GetTimeline_ms();
+
+        if ((now - last_daemon_tick) >= DAEMON_TASK_PERIOD_MS) {
+            last_daemon_tick = now;
+            DaemonTask();
+        }
+        if ((now - last_motor_tick) >= MOTOR_CONTROL_PERIOD_MS) {
+            last_motor_tick = now;
+            DJIMotorControl();
+        }
 
         if ((now - last_control_tick) >= MAIN_LOOP_PERIOD_MS) {
             last_control_tick = now;
@@ -418,6 +480,8 @@ int main(void)
             last_telemetry_tick = now;
             SendTelemetry();
         }
+
+        HAL_Delay(1);
     }
 }
 

@@ -5,6 +5,7 @@
 #include "message_center.h"
 #include "general_def.h"
 #include "bmi088.h"
+#include "bsp_dwt.h"
 
 static attitude_t *gimba_IMU_data; // 云台IMU数据
 static DJIMotorInstance *yaw_motor, *pitch_motor;
@@ -123,9 +124,16 @@ void GimbalInit()
 /* 机器人云台控制核心任务,后续考虑只保留IMU控制,不再需要电机的反馈 */
 void GimbalTask()
 {
+    static float last_cmd_time_ms = 0.0f;
+    uint8_t has_new_cmd;
+    float now = DWT_GetTimeline_ms();
+
     // 获取云台控制数据
-    // 后续增加未收到数据的处理
-    SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
+    has_new_cmd = SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
+    if (has_new_cmd)
+        last_cmd_time_ms = now;
+    else if (last_cmd_time_ms > 0.0f && (now - last_cmd_time_ms) > APP_CMD_TIMEOUT_MS)
+        gimbal_cmd_recv.gimbal_mode = GIMBAL_ZERO_FORCE;
 
     // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
     // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref

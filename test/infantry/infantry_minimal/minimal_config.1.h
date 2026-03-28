@@ -1,6 +1,6 @@
 /**
  * @file minimal_config.h
- * @brief 最小框架配置文件 - 所有参数集中于此
+ * @brief 最小框架配置文件 - 所有参数集中于此   全哨兵 参数
  * @note 修改参数后重新编译即可
  */
 
@@ -231,22 +231,15 @@
 #define PITCH_ANGLE_KD          0.50f
 #define PITCH_ANGLE_MAX_OUT     5000.0f
 
-#define PITCH_SPEED_KP          9.0f
+#define PITCH_SPEED_KP          6.5f
 // #define PITCH_SPEED_KI          20.0f
-#define PITCH_SPEED_KI          2.0f
+#define PITCH_SPEED_KI          1.0f
 #define PITCH_SPEED_KD          0.0f
-#define PITCH_SPEED_MAX_OUT     15000.0f
+#define PITCH_SPEED_MAX_OUT     10000.0f
 
-/* Pitch重力补偿
- * 约定:
- * - 电机逆时针输出为正
- * - Pitch角度正方向为正
- * 调参时优先改 K 的大小; 若整体方向反了, 再改符号。
- */
-#define PITCH_GRAVITY_FF_K      (-15000.0f)
+/* Pitch重力补偿 */
+#define PITCH_GRAVITY_FF_K      (0.0f)
 #define PITCH_GRAVITY_FF_MAX    120000.0f
-#define PITCH_GRAVITY_FF_OFFSET_DEG 15.0f
-#define PITCH_FF_LPF            0.9f
 #define PITCH_HOLD_KP           12.0f
 #define PITCH_HOLD_KI           0.8f
 #define PITCH_HOLD_KD           0.35f
