@@ -114,6 +114,13 @@
 #define CHASSIS_FOLLOW_WZ_I_MAX 15.0f
 #define GIMBAL_YAW_SPEED_SCALE_DEMO 0.23f
 
+/*
+ * 小陀螺模式: 在SEPARATE模式下叠加自旋速度
+ * SA上: 开启小陀螺
+ * SA下: 关闭小陀螺
+ */
+#define SPIN_ROTATE_SPEED_RAD_S 40.0f       /* 小陀螺自旋角速度 rad/s */
+
 /* Private typedef -----------------------------------------------------------*/
 typedef enum {
     CHASSIS_MODE_FOLLOW = 0,
@@ -159,6 +166,8 @@ static uint8_t chassis_enabled = 0U;
 static uint8_t last_online_state = 0U;
 static ChassisMode_t chassis_mode = CHASSIS_MODE_FOLLOW;
 static ChassisMode_t last_chassis_mode = CHASSIS_MODE_FOLLOW;
+static uint8_t spin_mode_enabled = 0U;  /* 小陀螺模式: SA上开, SA下关 */
+static uint8_t last_spin_mode_enabled = 0U;
 
 static float yaw_speed_ref = 0.0f;
 static float pitch_speed_ref = 0.0f;
@@ -722,6 +731,7 @@ static bool BuildChassisCommandFromEt08(ChassisCmd_t *cmd)
         const int16_t left_x = ApplyDeadzone(et08_ctrl->left.x, RC_INPUT_DEADZONE);
         const int16_t left_y = ApplyDeadzone(et08_ctrl->left.y, RC_INPUT_DEADZONE);
         const uint8_t sd_pos = ET08_MapUpperSwitchPos(et08_ctrl->switch_sd_sc_state);
+        const uint8_t sa_pos = ET08_MapUpperSwitchPos(et08_ctrl->switch_sa_sb_state);
 
         /*
          * 与 infantry_omni_demo 对齐:
@@ -731,6 +741,9 @@ static bool BuildChassisCommandFromEt08(ChassisCmd_t *cmd)
         cmd->vx_cmd = ClampFloat(-(float)left_x / RC_STICK_SCALE * CHASSIS_MAX_VX, -CHASSIS_MAX_VX, CHASSIS_MAX_VX);
         cmd->vy_cmd = ClampFloat((float)left_y / RC_STICK_SCALE * CHASSIS_MAX_VY, -CHASSIS_MAX_VY, CHASSIS_MAX_VY);
         chassis_mode = (sd_pos == ET08_SWITCH_POS_UP) ? CHASSIS_MODE_FOLLOW : CHASSIS_MODE_SEPARATE;
+        
+        /* 小陀螺模式: SA上开, SA下关 (仅在SEPARATE模式下生效) */
+        spin_mode_enabled = (sa_pos == ET08_SWITCH_POS_UP) ? 1U : 0U;
     }
 
     yaw_offset_deg = GetYawOffsetLogicDeg();
@@ -780,7 +793,13 @@ static bool BuildChassisCommandFromEt08(ChassisCmd_t *cmd)
     } else {
         /* SEPARATE模式清零积分 */
         follow_wz_integral = 0.0f;
-        cmd->wz_cmd = 0.0f;
+        
+        /* 小陀螺模式: 叠加固定自旋速度 */
+        if (spin_mode_enabled) {
+            cmd->wz_cmd = SPIN_ROTATE_SPEED_RAD_S;
+        } else {
+            cmd->wz_cmd = 0.0f;
+        }
     }
 
     if (fabsf(cmd->wz_cmd) < CHASSIS_DEADZONE_WZ) {

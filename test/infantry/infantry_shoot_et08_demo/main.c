@@ -50,10 +50,14 @@
 /* Private define ------------------------------------------------------------*/
 #define TELEMETRY_RX_DUMMY 32U
 #define TELEMETRY_PERIOD_MS 100U
+#define VOFA_PERIOD_MS 20U
 #define ET08_POS_UP 0U
 #define ET08_POS_MID 1U
 #define ET08_POS_DOWN 2U
 #define ET08_POS_INVALID 0xFFU
+#define SB_SWITCH_DEBOUNCE_MS 30U
+#define LOADER_SPEED_MAX 12000.0f
+#define LOADER_SPEED_MIN (-LOADER_SPEED_MAX)
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum {
@@ -74,13 +78,22 @@ static uint8_t shoot_enabled = 0U;
 static uint8_t last_online_state = 0U;
 
 static uint8_t friction_enabled = 0U;
+static uint8_t loader_enabled = 0U;
+static uint8_t loader_continuous = 0U;
 static LoaderMode_t loader_mode = LOADER_MODE_STOP;
+static uint8_t sb_pos = ET08_POS_MID;
 static uint8_t sb_last_pos = ET08_POS_MID;
+static uint32_t sb_last_change_ms = 0U;
+static uint8_t loader_enabled_last = 0U;
+static uint8_t sb_down_armed = 1U;
 static uint8_t single_shot_active = 0U;
 static uint8_t pending_shots = 0U;
-static uint32_t last_shot_tick = 0U;
+static float single_shot_start_angle = 0.0f;
 static uint32_t single_shot_start_ms = 0U;
 static float loader_target_angle = 0.0f;
+static float loader_speed_cmd = 0.0f;
+static uint32_t loader_speed_tick = 0U;
+static uint8_t loader_continuous_last = 0U;
 static float loader_ref_last = 0.0f;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -102,6 +115,7 @@ static void ShootMotorsInit(void);
 static void ShootStop(void);
 static bool UpdateShootByET08(void);
 static void SendTelemetry(void);
+static void SendVofaFrame(void);
 
 /* Private user code ---------------------------------------------------------*/
 static void Debug_DisableWatchdogs(void)
@@ -259,6 +273,8 @@ static void ShootMotorsInit(void)
     if (loader_motor) {
         DJIMotorOuterLoop(loader_motor, LOADER_INIT_LOOP);
         DJIMotorStop(loader_motor);
+        loader_motor->angle_feedback_sign = 1;
+        loader_motor->angle_feedback_locked = 1U;
         loader_target_angle = loader_motor->measure.total_angle;
     }
 
@@ -270,8 +286,20 @@ static void ShootStop(void)
     shoot_enabled = 0U;
     friction_enabled = 0U;
     loader_mode = LOADER_MODE_STOP;
+    loader_enabled = 0U;
+    loader_continuous = 0U;
+    sb_pos = ET08_POS_MID;
+    sb_last_pos = ET08_POS_MID;
+    sb_last_change_ms = 0U;
+    loader_enabled_last = 0U;
+    sb_down_armed = 1U;
     single_shot_active = 0U;
     pending_shots = 0U;
+    single_shot_start_angle = 0.0f;
+    single_shot_start_ms = 0U;
+    loader_speed_cmd = 0.0f;
+    loader_speed_tick = 0U;
+    loader_continuous_last = 0U;
     loader_ref_last = 0.0f;
 
     if (friction_l) {
@@ -287,11 +315,18 @@ static void ShootStop(void)
 
 static bool UpdateShootByET08(void)
 {
-    if (et08_ctrl == NULL || friction_l == NULL || friction_r == NULL || loader_motor == NULL) {
+    uint32_t now;
+    uint8_t sa_sb_state;
+    uint8_t raw_state;
+    uint8_t sa_pos;
+    float target_speed;
+
+    et08_ctrl = ET08_GetCtrl();
+    if (friction_l == NULL || friction_r == NULL || loader_motor == NULL) {
         return false;
     }
 
-    if (!ET08_IsOnline() || et08_ctrl->failsafe || et08_ctrl->frame_lost) {
+    if (et08_ctrl == NULL || !ET08_IsOnline() || et08_ctrl->failsafe || et08_ctrl->frame_lost) {
         return false;
     }
 
@@ -302,98 +337,160 @@ static bool UpdateShootByET08(void)
         shoot_enabled = 1U;
     }
 
-    uint8_t sa_sb_state = et08_ctrl->switch_sa_sb_state;
-    uint8_t raw_state = ET08_MapSwitchState(et08_ctrl->switch_sa_sb_raw);
+    now = HAL_GetTick();
+    sa_sb_state = et08_ctrl->switch_sa_sb_state;
+    raw_state = ET08_MapSwitchState(et08_ctrl->switch_sa_sb_raw);
     if (raw_state != ET08_POS_INVALID) {
         sa_sb_state = raw_state;
     }
 
-    uint8_t sa_pos = ET08_MapUpperSwitchPos(sa_sb_state);
-    uint8_t sb_pos = ET08_MapLowerSwitchPos(sa_sb_state);
-
-    if (sa_pos == ET08_POS_INVALID) {
-        sa_pos = ET08_POS_DOWN;
+    sa_pos = ET08_MapUpperSwitchPos(sa_sb_state);
+    if (sa_pos == ET08_POS_UP) {
+        friction_enabled = 1U;
+    } else if (sa_pos == ET08_POS_DOWN) {
+        friction_enabled = 0U;
     }
+
+    sb_pos = ET08_MapLowerSwitchPos(sa_sb_state);
     if (sb_pos == ET08_POS_INVALID) {
         sb_pos = ET08_POS_MID;
     }
 
-    friction_enabled = (sa_pos == ET08_POS_UP) ? 1U : 0U;
+    loader_continuous = (friction_enabled && sb_pos == ET08_POS_UP) ? 1U : 0U;
+    loader_enabled = (friction_enabled && sb_pos != ET08_POS_MID) ? 1U : 0U;
 
-    uint32_t now = HAL_GetTick();
-
-    if (!friction_enabled) {
-        DJIMotorOuterLoop(friction_l, FRICTION_RUN_LOOP_STOP);
-        DJIMotorOuterLoop(friction_r, FRICTION_RUN_LOOP_STOP);
-        DJIMotorStop(friction_l);
-        DJIMotorStop(friction_r);
-
-        DJIMotorOuterLoop(loader_motor, LOADER_RUN_LOOP_STOP);
-        DJIMotorStop(loader_motor);
-
-        loader_mode = LOADER_MODE_STOP;
+    if (!loader_enabled) {
+        pending_shots = 0U;
         sb_last_pos = sb_pos;
+        loader_enabled_last = 0U;
+        sb_down_armed = 1U;
+    } else {
+        if (!loader_enabled_last && sb_pos == ET08_POS_DOWN) {
+            pending_shots = 1U;
+            sb_last_pos = sb_pos;
+            sb_last_change_ms = now;
+            loader_enabled_last = 1U;
+            sb_down_armed = 0U;
+        } else {
+            if (sb_pos != ET08_POS_DOWN) {
+                sb_down_armed = 1U;
+            }
+
+            if (sb_pos != sb_last_pos) {
+                if ((now - sb_last_change_ms) >= SB_SWITCH_DEBOUNCE_MS) {
+                    sb_last_change_ms = now;
+                    if (sb_pos == ET08_POS_DOWN && sb_down_armed) {
+                        pending_shots = 1U;
+                        sb_down_armed = 0U;
+                    } else if (sb_pos == ET08_POS_UP) {
+                        pending_shots = 0U;
+                    }
+                    sb_last_pos = sb_pos;
+                }
+            }
+            loader_enabled_last = 1U;
+        }
+    }
+
+    target_speed = ClampFloat(FRICTION_TARGET_SPEED, -fabsf(FRICTION_TARGET_SPEED), fabsf(FRICTION_TARGET_SPEED));
+    if (friction_enabled) {
+        DJIMotorOuterLoop(friction_l, SPEED_LOOP);
+        DJIMotorEnable(friction_l);
+        DJIMotorSetRef(friction_l, target_speed);
+        DJIMotorOuterLoop(friction_r, SPEED_LOOP);
+        DJIMotorEnable(friction_r);
+        DJIMotorSetRef(friction_r, target_speed);
+    } else {
+        DJIMotorOuterLoop(friction_l, SPEED_LOOP);
+        DJIMotorStop(friction_l);
+        DJIMotorOuterLoop(friction_r, SPEED_LOOP);
+        DJIMotorStop(friction_r);
+    }
+
+    if (!loader_enabled) {
+        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+        DJIMotorStop(loader_motor);
+        loader_mode = LOADER_MODE_STOP;
         single_shot_active = 0U;
         pending_shots = 0U;
+        loader_speed_cmd = 0.0f;
+        loader_speed_tick = now;
+        loader_continuous_last = 0U;
         loader_ref_last = 0.0f;
         return true;
     }
 
-    float friction_target = ClampFloat(FRICTION_TARGET_SPEED, -M3508_SPEED_MAX, M3508_SPEED_MAX);
-    DJIMotorOuterLoop(friction_l, FRICTION_RUN_LOOP_ON);
-    DJIMotorSetRef(friction_l, friction_target);
-    DJIMotorOuterLoop(friction_r, FRICTION_RUN_LOOP_ON);
-    DJIMotorSetRef(friction_r, friction_target);
+    if (loader_continuous) {
+        float speed_target = ClampFloat(LOADER_CONTINUOUS_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX);
+        float dt_ms;
+        float max_delta;
 
-    if (sb_pos == ET08_POS_UP) {
+        pending_shots = 0U;
+        single_shot_active = 0U;
         loader_mode = LOADER_MODE_CONTINUOUS;
-        single_shot_active = 0U;
-        pending_shots = 0U;
 
-        float speed_target = ClampFloat(LOADER_CONTINUOUS_SPEED, -M3508_SPEED_MAX, M3508_SPEED_MAX);
-        DJIMotorOuterLoop(loader_motor, LOADER_RUN_LOOP_CONTINUOUS);
-        DJIMotorSetRef(loader_motor, speed_target);
-        loader_ref_last = speed_target;
-    } else if (sb_pos == ET08_POS_DOWN) {
-        loader_mode = LOADER_MODE_SINGLE;
-
-        if (sb_last_pos != ET08_POS_DOWN && (now - last_shot_tick) >= SHOOT_INTERVAL_MS) {
-            pending_shots = 1U;
-            last_shot_tick = now;
+        if (!loader_continuous_last) {
+            loader_speed_cmd = 0.0f;
+            loader_speed_tick = now;
         }
 
-        if (!single_shot_active && pending_shots > 0U) {
-            loader_target_angle = loader_motor->measure.total_angle + LOADER_ANGLE_STEP;
-            pending_shots--;
-            single_shot_active = 1U;
-            single_shot_start_ms = now;
-        }
-
-        if (single_shot_active) {
-            DJIMotorOuterLoop(loader_motor, LOADER_RUN_LOOP_SINGLE);
-            DJIMotorSetRef(loader_motor, loader_target_angle);
-            loader_ref_last = loader_target_angle;
-
-            if (fabsf(loader_motor->measure.total_angle - loader_target_angle) <= LOADER_SINGLE_SETTLE_EPS ||
-                (now - single_shot_start_ms) >= LOADER_SINGLE_TIMEOUT_MS) {
-                single_shot_active = 0U;
-            }
+        if (loader_speed_tick == 0U) {
+            loader_speed_tick = now;
+            loader_speed_cmd = speed_target;
         } else {
-            DJIMotorOuterLoop(loader_motor, LOADER_RUN_LOOP_STOP);
-            DJIMotorSetRef(loader_motor, 0.0f);
-            loader_ref_last = 0.0f;
+            dt_ms = (float)(now - loader_speed_tick);
+            loader_speed_tick = now;
+            max_delta = LOADER_CONTINUOUS_SLEW_PER_MS * dt_ms;
+            if (speed_target > loader_speed_cmd + max_delta) {
+                loader_speed_cmd += max_delta;
+            } else if (speed_target < loader_speed_cmd - max_delta) {
+                loader_speed_cmd -= max_delta;
+            } else {
+                loader_speed_cmd = speed_target;
+            }
         }
-    } else {
-        loader_mode = LOADER_MODE_STOP;
-        single_shot_active = 0U;
-        pending_shots = 0U;
 
-        DJIMotorOuterLoop(loader_motor, LOADER_RUN_LOOP_STOP);
-        DJIMotorStop(loader_motor);
-        loader_ref_last = 0.0f;
+        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+        DJIMotorEnable(loader_motor);
+        DJIMotorSetRef(loader_motor, loader_speed_cmd);
+        loader_ref_last = loader_speed_cmd;
+        loader_continuous_last = 1U;
+        return true;
     }
 
-    sb_last_pos = sb_pos;
+    loader_mode = LOADER_MODE_SINGLE;
+    loader_speed_cmd = 0.0f;
+    loader_speed_tick = now;
+    loader_continuous_last = 0U;
+
+    if (pending_shots > 0U && !single_shot_active) {
+        loader_target_angle = loader_motor->measure.total_angle + LOADER_ANGLE_STEP;
+        single_shot_start_angle = loader_motor->measure.total_angle;
+        single_shot_start_ms = now;
+        pending_shots -= 1U;
+        single_shot_active = 1U;
+    }
+
+    if (single_shot_active) {
+        float delta = fabsf(loader_motor->measure.total_angle - single_shot_start_angle);
+        if (delta >= LOADER_ANGLE_STEP || (now - single_shot_start_ms) >= LOADER_SINGLE_TIMEOUT_MS) {
+            single_shot_active = 0U;
+            DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+            DJIMotorStop(loader_motor);
+            loader_ref_last = 0.0f;
+            return true;
+        }
+
+        DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+        DJIMotorEnable(loader_motor);
+        DJIMotorSetRef(loader_motor, ClampFloat(LOADER_SINGLE_SPEED, LOADER_SPEED_MIN, LOADER_SPEED_MAX));
+        loader_ref_last = LOADER_SINGLE_SPEED;
+        return true;
+    }
+
+    DJIMotorOuterLoop(loader_motor, SPEED_LOOP);
+    DJIMotorSetRef(loader_motor, 0.0f);
+    loader_ref_last = 0.0f;
     return true;
 }
 
@@ -405,14 +502,17 @@ static void SendTelemetry(void)
     uint8_t sa_sb_state = (et08_ctrl != NULL) ? et08_ctrl->switch_sa_sb_state : ET08_POS_INVALID;
     uint16_t sa_sb_raw = (et08_ctrl != NULL) ? et08_ctrl->switch_sa_sb_raw : 0U;
 
-    TelemetryPrintf("[sht_et08] #%lu online=%u fs=%u lost=%u sa_sb(raw=%u st=%u) friction=%u mode=%u single=%u pending=%u\r\n",
+    TelemetryPrintf("[sht_et08] #%lu online=%u fs=%u lost=%u sa_sb(raw=%u st=%u sb=%u) friction=%u loader_en=%u cont=%u mode=%u single=%u pending=%u\r\n",
                     (unsigned long)seq,
                     (unsigned int)ET08_IsOnline(),
                     (unsigned int)((et08_ctrl != NULL) ? et08_ctrl->failsafe : 0U),
                     (unsigned int)((et08_ctrl != NULL) ? et08_ctrl->frame_lost : 0U),
                     (unsigned int)sa_sb_raw,
                     (unsigned int)sa_sb_state,
+                    (unsigned int)sb_pos,
                     (unsigned int)friction_enabled,
+                    (unsigned int)loader_enabled,
+                    (unsigned int)loader_continuous,
                     (unsigned int)loader_mode,
                     (unsigned int)single_shot_active,
                     (unsigned int)pending_shots);
@@ -423,6 +523,58 @@ static void SendTelemetry(void)
                     loader_ref_last,
                     (loader_motor != NULL) ? loader_motor->measure.speed_aps : 0.0f,
                     (loader_motor != NULL) ? loader_motor->measure.total_angle : 0.0f);
+
+    TelemetryPrintf("[sht_et08] loader(single_start=%.1f target=%.1f delta=%.1f err=%.1f speed_cmd=%.1f elapsed=%lu)\r\n",
+                    single_shot_start_angle,
+                    loader_target_angle,
+                    (loader_motor != NULL) ? fabsf(loader_motor->measure.total_angle - single_shot_start_angle) : 0.0f,
+                    (loader_motor != NULL) ? (loader_target_angle - loader_motor->measure.total_angle) : 0.0f,
+                    loader_speed_cmd,
+                    (unsigned long)((single_shot_active != 0U) ? (HAL_GetTick() - single_shot_start_ms) : 0U));
+}
+
+static void SendVofaFrame(void)
+{
+    float ch[32];
+    uint8_t txbuf[sizeof(ch) + 4U];
+    static const uint8_t tail[4] = {0x00U, 0x00U, 0x80U, 0x7FU};
+
+    ch[0] = (float)HAL_GetTick();
+    ch[1] = (float)ET08_IsOnline();
+    ch[2] = (float)friction_enabled;
+    ch[3] = (float)loader_enabled;
+    ch[4] = (float)loader_continuous;
+    ch[5] = (float)loader_mode;
+    ch[6] = (float)single_shot_active;
+    ch[7] = (float)pending_shots;
+    ch[8] = (float)(et08_ctrl != NULL ? et08_ctrl->switch_sa_sb_raw : 0U);
+    ch[9] = (float)(et08_ctrl != NULL ? et08_ctrl->switch_sa_sb_state : 0U);
+    ch[10] = (float)sb_pos;
+    ch[11] = loader_ref_last;
+    ch[12] = loader_speed_cmd;
+    ch[13] = loader_target_angle;
+    ch[14] = (loader_motor != NULL) ? loader_motor->measure.total_angle : 0.0f;
+    ch[15] = (loader_motor != NULL) ? (loader_target_angle - loader_motor->measure.total_angle) : 0.0f;
+    ch[16] = single_shot_start_angle;
+    ch[17] = (loader_motor != NULL) ? fabsf(loader_motor->measure.total_angle - single_shot_start_angle) : 0.0f;
+    ch[18] = (float)((single_shot_active != 0U) ? (HAL_GetTick() - single_shot_start_ms) : 0U);
+    ch[19] = (loader_motor != NULL) ? loader_motor->measure.speed_aps : 0.0f;
+    ch[20] = (loader_motor != NULL) ? loader_motor->measure.real_current : 0.0f;
+    ch[21] = (friction_l != NULL) ? friction_l->measure.speed_aps : 0.0f;
+    ch[22] = (friction_r != NULL) ? friction_r->measure.speed_aps : 0.0f;
+    ch[23] = FRICTION_TARGET_SPEED;
+    ch[24] = LOADER_CONTINUOUS_SPEED;
+    ch[25] = LOADER_SINGLE_SPEED;
+    ch[26] = LOADER_ANGLE_STEP;
+    ch[27] = (loader_motor != NULL) ? loader_motor->motor_controller.speed_PID.Kp : LOADER_SPEED_KP;
+    ch[28] = (loader_motor != NULL) ? loader_motor->motor_controller.speed_PID.Kd : LOADER_SPEED_KD;
+    ch[29] = (loader_motor != NULL) ? loader_motor->motor_controller.angle_PID.Kp : LOADER_ANGLE_KP;
+    ch[30] = (loader_motor != NULL) ? loader_motor->motor_controller.angle_PID.Kd : LOADER_ANGLE_KD;
+    ch[31] = (float)shoot_enabled;
+
+    memcpy(txbuf, ch, sizeof(ch));
+    memcpy(txbuf + sizeof(ch), tail, sizeof(tail));
+    TelemetrySendBuffer(txbuf, (uint16_t)sizeof(txbuf));
 }
 
 /* Main ----------------------------------------------------------------------*/
@@ -465,6 +617,7 @@ int main(void)
 
     uint32_t last_control_tick = DWT_GetTimeline_ms();
     uint32_t last_telemetry_tick = last_control_tick;
+    uint32_t last_vofa_tick = last_control_tick;
 
     while (1) {
         DaemonTask();
@@ -492,6 +645,13 @@ int main(void)
             last_telemetry_tick = now;
             SendTelemetry();
         }
+
+        if ((now - last_vofa_tick) >= VOFA_PERIOD_MS) {
+            last_vofa_tick = now;
+            SendVofaFrame();
+        }
+
+        HAL_Delay(1);
     }
 }
 
