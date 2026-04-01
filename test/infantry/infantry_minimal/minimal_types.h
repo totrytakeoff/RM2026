@@ -53,6 +53,12 @@ typedef enum {
 } RefType_e;
 
 typedef enum {
+    AXIS_CTRL_ANGLE = 0,
+    AXIS_CTRL_SPEED,
+    AXIS_CTRL_BRAKE,
+} AxisCtrlMode_e;
+
+typedef enum {
     INPUT_ACTIVE_NONE = 0,
     INPUT_ACTIVE_VT,
     INPUT_ACTIVE_ET08,
@@ -69,6 +75,7 @@ typedef struct {
     uint8_t sa_pos;         // SA开关: 0=上, 1=中, 2=下
     uint8_t sb_pos;         // SB开关
     uint8_t sd_pos;         // SD开关
+    uint8_t sc_pos;         // SC开关
     uint8_t online;         // 在线状态
 } RC_ET08_Data_t;
 
@@ -110,10 +117,10 @@ typedef struct {
  *============================================================================*/
 typedef struct {
     /* 底盘控制量 */
-    float vx;               // 纵向速度 (m/s)
-    float vy;               // 横向速度 (m/s)
-    float wz;               // 旋转角速度 (rad/s)
-    
+    float vx;               // 云台坐标系横移速度 (m/s, 左为正)
+    float vy;               // 云台坐标系前进速度 (m/s, 前为正)
+    float wz;               // 底盘旋转角速度意图 (rad/s)
+
     /* 云台控制量 */
     float yaw_speed;        // Yaw角速度指令
     float pitch_speed;      // Pitch角速度指令
@@ -126,6 +133,7 @@ typedef struct {
     
     /* 模式控制 */
     GimbalMode_e gimbal_mode;   // 云台模式
+    uint8_t spin_enable;        // 小陀螺使能
     uint8_t emergency_stop;     // 急停
     
     /* 状态 */
@@ -142,10 +150,14 @@ typedef struct {
  * 底盘控制数据
  *============================================================================*/
 typedef struct {
-    float vx;               // 纵向速度 (m/s)
-    float vy;               // 横向速度 (m/s)
-    float wz;               // 旋转角速度 (rad/s)
+    float vx;               // 车体坐标系横移速度 (m/s)
+    float vy;               // 车体坐标系前进速度 (m/s)
+    float wz;               // 车体旋转角速度 (rad/s)
+    float vx_cmd;           // 云台坐标系横移速度指令
+    float vy_cmd;           // 云台坐标系前进速度指令
+    float yaw_offset_deg;   // 云台相对底盘逻辑夹角
     ChassisMode_e mode;
+    uint8_t spin_enable;
     ControlMode_e control_mode;
     RefType_e ref_type;
 } Chassis_Cmd_t;
@@ -160,6 +172,7 @@ typedef struct {
     float pitch_angle;      // Pitch目标角度
     GimbalMode_e mode;      // 跟随/分离模式
     uint8_t manual_pitch;   // 手动Pitch模式
+    AxisCtrlMode_e pitch_ctrl_mode;
     ControlMode_e control_mode;
     RefType_e ref_type;
 } Gimbal_Cmd_t;

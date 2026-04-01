@@ -94,12 +94,27 @@ static void __attribute__((unused)) MinimalDebug_TextPeriodic(void)
 #endif
 
 #if MINIMAL_DEBUG_MOD_INPUT
-    MinimalDebug_LogEventInput("src=%u vt_allowed=%u vx_mms=%ld vy_mms=%ld wz_mrads=%ld",
-                               (unsigned)g_robot.input.active_input,
-                               (unsigned)Input_IsVTAllowed(),
-                               (long)(g_robot.input.vx * 1000.0f),
-                               (long)(g_robot.input.vy * 1000.0f),
-                               (long)(g_robot.input.wz * 1000.0f));
+    MinimalDebug_LogEventInput(
+        "src=%u online=%u vt_allowed=%u gear=%u estop=%u mode=%u kb=0x%04X mouse=(%d,%d,%d) ch=(%d,%d,%d,%d) cmd(vx=%ld vy=%ld wz=%ld) yaw=%ld pitch=%ld",
+        (unsigned)g_robot.input.active_input,
+        (unsigned)g_robot.input.online,
+        (unsigned)Input_IsVTAllowed(),
+        (unsigned)g_robot.input.gear,
+        (unsigned)g_robot.input.emergency_stop,
+        (unsigned)g_robot.input.gimbal_mode,
+        (unsigned)g_robot.input.vt_raw.keyboard,
+        (int)g_robot.input.vt_raw.mouse_x,
+        (int)g_robot.input.vt_raw.mouse_y,
+        (int)g_robot.input.vt_raw.mouse_z,
+        (int)g_robot.input.vt_raw.ch0_c,
+        (int)g_robot.input.vt_raw.ch1_c,
+        (int)g_robot.input.vt_raw.ch2_c,
+        (int)g_robot.input.vt_raw.ch3_c,
+        (long)(g_robot.input.vx * 1000.0f),
+        (long)(g_robot.input.vy * 1000.0f),
+        (long)(g_robot.input.wz * 1000.0f),
+        (long)(g_robot.input.yaw_speed * 10.0f),
+        (long)(g_robot.input.pitch_speed * 10.0f));
 #endif
 
 #if MINIMAL_DEBUG_MOD_CHASSIS
@@ -113,13 +128,14 @@ static void __attribute__((unused)) MinimalDebug_TextPeriodic(void)
 #endif
 
 #if MINIMAL_DEBUG_MOD_GIMBAL
-    MinimalDebug_LogEventGimbal("mode=%u yaw_ref=%ld yaw_fdb=%ld pitch_ref=%ld pitch_fdb=%ld yaw_tgt=%ld pitch_tgt=%ld enc(y=%ld p=%ld) imu(y=%ld p=%ld)",
+    MinimalDebug_LogEventGimbal("mode=%u pitch_loop=%u yaw_ref=%ld yaw_fdb=%ld yaw_off=%ld pitch_ref=%ld pitch_fdb=%ld pitch_tgt=%ld enc(y=%ld p=%ld) imu(y=%ld p=%ld)",
                                 (unsigned)Gimbal_GetMode(),
+                                (unsigned)Gimbal_GetPitchCtrlMode(),
                                 (long)(Gimbal_GetYawSpeedRef()),
                                 (long)(Gimbal_GetYawSpeedFdb()),
+                                (long)(Gimbal_GetYawOffsetLogicDeg()),
                                 (long)(Gimbal_GetPitchSpeedRef()),
                                 (long)(Gimbal_GetPitchSpeedFdb()),
-                                (long)(Gimbal_GetYawTargetAngle()),
                                 (long)(Gimbal_GetPitchTargetAngle()),
                                 (long)(Gimbal_GetYawEncoderAngle()),
                                 (long)(Gimbal_GetPitchEncoderAngle()),
@@ -242,10 +258,10 @@ void MinimalDebug_PublishVofaFrame(void)
     ch[9] = Gimbal_GetYawSpeedFdb();
     ch[10] = Gimbal_GetPitchSpeedRef();
     ch[11] = Gimbal_GetPitchSpeedFdb();
-    ch[12] = Gimbal_GetPitchTargetAngle();
-    ch[13] = Shoot_GetLoaderRef();
-    ch[14] = Shoot_GetLoaderFeedback();
-    ch[15] = (float)Shoot_GetState();
+    ch[12] = Gimbal_GetYawOffsetLogicDeg();
+    ch[13] = Gimbal_GetPitchTargetAngle();
+    ch[14] = Shoot_GetLoaderRef();
+    ch[15] = Shoot_GetLoaderFeedback();
 
     memcpy(txbuf, ch, sizeof(ch));
     memcpy(txbuf + sizeof(ch), tail, sizeof(tail));

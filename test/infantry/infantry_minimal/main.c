@@ -147,8 +147,8 @@ int main(void)
             }
             
             // 3. 模块更新
-            Chassis_Update(&input);
             Gimbal_Update(&input, Chassis_GetWz());
+            Chassis_Update(&input);
             Shoot_Update(&input);
             
             // 4. 保存状态到全局上下文

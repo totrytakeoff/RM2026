@@ -1,52 +1,60 @@
 /**
  * @file minimal_chassis.c
- * @brief 底盘控制模块实现 - 十字全向轮
+ * @brief 底盘控制模块实现
+ *
+ * 迁移基准:
+ * - 输入平移指令始终定义在云台坐标系
+ * - 底盘使用 yaw 编码器相对角完成坐标变换
+ * - FOLLOW 模式通过相对夹角闭环追随云台
  */
 
 #include "minimal_chassis.h"
-#include "minimal_config.h"
-#include "minimal_types.h"
-#include "minimal_referee.h"
-#include "minimal_debug.h"
-#include "dji_motor.h"
-#include "user_lib.h"
-#include "can.h"
+
 #include <math.h>
 #include <string.h>
 
-/*============================================================================
- * 私有变量
- *============================================================================*/
+#include "can.h"
+#include "dji_motor.h"
+#include "minimal_config.h"
+#include "minimal_debug.h"
+#include "minimal_gimbal.h"
+#include "minimal_referee.h"
+#include "minimal_types.h"
+#include "user_lib.h"
+
 static DJIMotorInstance *motor_fr = NULL;
 static DJIMotorInstance *motor_fl = NULL;
 static DJIMotorInstance *motor_br = NULL;
 static DJIMotorInstance *motor_bl = NULL;
 
-static float last_wz = 0.0f;  // 供云台使用
+static float last_wz = 0.0f;
 static uint8_t chassis_enabled = 0U;
 static float last_wheel_ref[4] = {0.0f};
 static float last_power_scale = 1.0f;
 static float filtered_vx = 0.0f;
 static float filtered_vy = 0.0f;
 static float filtered_wz = 0.0f;
+static float follow_wz_integral = 0.0f;
+static uint32_t chassis_last_tick = 0U;
 
-/*============================================================================
- * 十字全向轮运动学
- *============================================================================*/
-/**
- * @brief 十字全向轮逆运动学
- * @param vx 横向速度 (m/s, 左为正)
- * @param vy 纵向速度 (m/s, 前为正)
- * @param wz 旋转角速度 (rad/s)
- * @param out 4个轮子速度输出 (rad/s): FR, FL, BR, BL
- */
+static float ClampFloat(float value, float min_value, float max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
 static void OmniInverseKinematics(float vx, float vy, float wz, float out[4])
 {
-    float L = CHASSIS_WHEEL_BASE / 2.0f;
-    float v_fr = vy - vx - (L * wz);
-    float v_fl = vy + vx - (L * wz);
-    float v_br = -vy + vx - (L * wz);
-    float v_bl = -vy - vx - (L * wz);
+    const float l = CHASSIS_WHEEL_BASE * 0.5f;
+    const float v_fr = vx - vy - l * wz;
+    const float v_fl = vx + vy - l * wz;
+    const float v_br = -vx - vy - l * wz;
+    const float v_bl = -vx + vy - l * wz;
 
     out[0] = v_fr / CHASSIS_WHEEL_RADIUS;
     out[1] = v_fl / CHASSIS_WHEEL_RADIUS;
@@ -54,12 +62,8 @@ static void OmniInverseKinematics(float vx, float vy, float wz, float out[4])
     out[3] = v_bl / CHASSIS_WHEEL_RADIUS;
 }
 
-/*============================================================================
- * 公共函数
- *============================================================================*/
 void Chassis_Init(void)
 {
-    // 底盘电机配置 - M3508速度环控制
     Motor_Init_Config_s config = {
         .motor_type = M3508,
         .can_init_config = {
@@ -92,34 +96,30 @@ void Chassis_Init(void)
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
         },
     };
-    
-    // 前右
+
     motor_fr = DJIMotorInit(&config);
-    if (motor_fr) {
+    if (motor_fr != NULL) {
         DJIMotorOuterLoop(motor_fr, CHASSIS_INIT_LOOP);
         DJIMotorStop(motor_fr);
     }
-    
-    // 前左
+
     config.can_init_config.tx_id = CHASSIS_MOTOR_FL_ID;
     motor_fl = DJIMotorInit(&config);
-    if (motor_fl) {
+    if (motor_fl != NULL) {
         DJIMotorOuterLoop(motor_fl, CHASSIS_INIT_LOOP);
         DJIMotorStop(motor_fl);
     }
-    
-    // 后右
+
     config.can_init_config.tx_id = CHASSIS_MOTOR_BR_ID;
     motor_br = DJIMotorInit(&config);
-    if (motor_br) {
+    if (motor_br != NULL) {
         DJIMotorOuterLoop(motor_br, CHASSIS_INIT_LOOP);
         DJIMotorStop(motor_br);
     }
-    
-    // 后左
+
     config.can_init_config.tx_id = CHASSIS_MOTOR_BL_ID;
     motor_bl = DJIMotorInit(&config);
-    if (motor_bl) {
+    if (motor_bl != NULL) {
         DJIMotorOuterLoop(motor_bl, CHASSIS_INIT_LOOP);
         DJIMotorStop(motor_bl);
     }
@@ -127,6 +127,16 @@ void Chassis_Init(void)
 
 void Chassis_Update(Input_Data_t *input)
 {
+    uint32_t now_ms;
+    float dt_s = MAIN_LOOP_PERIOD_MS / 1000.0f;
+    float yaw_offset_deg;
+    float theta_deg;
+    float cos_theta;
+    float sin_theta;
+    float manual_wz;
+    float follow_wz = 0.0f;
+    float wheel_speed_rad_s[4] = {0.0f};
+    float power_scale;
     Chassis_Cmd_t cmd = {0};
 
     if (input == NULL || !input->online || input->emergency_stop) {
@@ -140,88 +150,141 @@ void Chassis_Update(Input_Data_t *input)
         return;
     }
 
-    cmd.vx = input->vx;
-    cmd.vy = input->vy;
-    cmd.wz = input->wz;
+    now_ms = HAL_GetTick();
+    if (chassis_last_tick != 0U) {
+        dt_s = ClampFloat((float)(now_ms - chassis_last_tick) / 1000.0f, 0.001f, 0.05f);
+    }
+    chassis_last_tick = now_ms;
+
+    yaw_offset_deg = Gimbal_GetYawOffsetLogicDeg();
+    theta_deg = -yaw_offset_deg;
+    cos_theta = cosf(theta_deg * (float)M_PI / 180.0f);
+    sin_theta = sinf(theta_deg * (float)M_PI / 180.0f);
+
+    cmd.vx_cmd = input->vx;
+    cmd.vy_cmd = input->vy;
+    cmd.vx = cmd.vx_cmd * cos_theta + cmd.vy_cmd * sin_theta;
+    cmd.vy = -cmd.vx_cmd * sin_theta + cmd.vy_cmd * cos_theta;
+    cmd.yaw_offset_deg = yaw_offset_deg;
     cmd.mode = (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) ? CHASSIS_FOLLOW : CHASSIS_NO_FOLLOW;
+    cmd.spin_enable = input->spin_enable;
     cmd.control_mode = CTRL_ENABLE;
     cmd.ref_type = REF_SPEED;
-    g_robot.chassis = cmd;
-    
-    float vx = cmd.vx;
-    float vy = cmd.vy;
-    float wz = cmd.wz;
-    float power_scale = MinimalReferee_ChassisScale();
-    last_power_scale = power_scale;
+
+    if (fabsf(cmd.vx) < CHASSIS_DEADZONE_VX) {
+        cmd.vx = 0.0f;
+    }
+    if (fabsf(cmd.vy) < CHASSIS_DEADZONE_VY) {
+        cmd.vy = 0.0f;
+    }
+
+    manual_wz = input->wz;
+    if (input->active_input != INPUT_ACTIVE_VT) {
+        manual_wz = 0.0f;
+    }
 
     if (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) {
-        wz += input->yaw_speed * CHASSIS_FOLLOW_YAW_TO_WZ_GAIN;
-    }
-    
-    // 保存供云台使用
-    last_wz = wz;
-    
-    // 速度限幅
-    vx = float_constrain(vx, -CHASSIS_MAX_VX, CHASSIS_MAX_VX);
-    vy = float_constrain(vy, -CHASSIS_MAX_VY, CHASSIS_MAX_VY);
-    wz = float_constrain(wz, -CHASSIS_MAX_WZ, CHASSIS_MAX_WZ);
+        if (fabsf(CHASSIS_FOLLOW_WZ_KI) > 1e-6f) {
+            float integral_limit = CHASSIS_FOLLOW_WZ_I_MAX / fabsf(CHASSIS_FOLLOW_WZ_KI);
+            follow_wz_integral += yaw_offset_deg * dt_s;
+            follow_wz_integral = ClampFloat(follow_wz_integral, -integral_limit, integral_limit);
+        } else {
+            follow_wz_integral = 0.0f;
+        }
 
-    // 与omni_demo对齐: 输入死区 + 一阶滤波，避免抖动与突变
-    if (fabsf(vx) < CHASSIS_DEADZONE_VX && fabsf(vy) < CHASSIS_DEADZONE_VY && fabsf(wz) < CHASSIS_DEADZONE_WZ) {
-        vx = 0.0f;
-        vy = 0.0f;
-        wz = 0.0f;
+        follow_wz =
+            -(CHASSIS_FOLLOW_WZ_KP * yaw_offset_deg +
+              CHASSIS_FOLLOW_WZ_KI * follow_wz_integral +
+              CHASSIS_FOLLOW_WZ_KD * Gimbal_GetYawRelativeSpeedDeg()) *
+            ((float)M_PI / 180.0f);
+        follow_wz = ClampFloat(follow_wz, -CHASSIS_FOLLOW_WZ_MAX, CHASSIS_FOLLOW_WZ_MAX);
+        cmd.wz = follow_wz + manual_wz;
+    } else {
+        follow_wz_integral = 0.0f;
+        cmd.wz = manual_wz;
+        if (input->spin_enable != 0U) {
+            cmd.wz += SPIN_ROTATE_SPEED_RAD_S;
+        }
+    }
+
+    if (fabsf(cmd.wz) < CHASSIS_DEADZONE_WZ) {
+        cmd.wz = 0.0f;
+    }
+    cmd.wz = ClampFloat(cmd.wz, -CHASSIS_MAX_WZ, CHASSIS_MAX_WZ);
+
+    g_robot.chassis = cmd;
+    last_wz = cmd.wz;
+
+    power_scale = MinimalReferee_ChassisScale();
+    last_power_scale = power_scale;
+
+    if (fabsf(cmd.vx) < CHASSIS_DEADZONE_VX && fabsf(cmd.vy) < CHASSIS_DEADZONE_VY &&
+        fabsf(cmd.wz) < CHASSIS_DEADZONE_WZ) {
         filtered_vx = 0.0f;
         filtered_vy = 0.0f;
         filtered_wz = 0.0f;
     } else {
-        filtered_vx = filtered_vx * CHASSIS_SPEED_FILTER_COEF + vx * (1.0f - CHASSIS_SPEED_FILTER_COEF);
-        filtered_vy = filtered_vy * CHASSIS_SPEED_FILTER_COEF + vy * (1.0f - CHASSIS_SPEED_FILTER_COEF);
-        filtered_wz = filtered_wz * CHASSIS_SPEED_FILTER_COEF + wz * (1.0f - CHASSIS_SPEED_FILTER_COEF);
-        vx = filtered_vx;
-        vy = filtered_vy;
-        wz = filtered_wz;
+        filtered_vx = filtered_vx * CHASSIS_SPEED_FILTER_COEF + cmd.vx * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+        filtered_vy = filtered_vy * CHASSIS_SPEED_FILTER_COEF + cmd.vy * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+        filtered_wz = filtered_wz * CHASSIS_SPEED_FILTER_COEF + cmd.wz * (1.0f - CHASSIS_SPEED_FILTER_COEF);
     }
-    
-    // 全向轮逆运动学
-    float wheel_speeds[4];
-    OmniInverseKinematics(vx, vy, wz, wheel_speeds);
-    
-    // 转换为deg/s并发送给电机
-    for (int i = 0; i < 4; i++) {
-        wheel_speeds[i] = wheel_speeds[i] * 180.0f / PI;  // rad/s -> deg/s
-        wheel_speeds[i] *= CHASSIS_SPEED_SCALE * power_scale;
-        if (fabsf(wheel_speeds[i]) < CHASSIS_SPEED_DEADZONE) {
-            wheel_speeds[i] = 0.0f;
+
+    OmniInverseKinematics(filtered_vx, filtered_vy, filtered_wz, wheel_speed_rad_s);
+
+    for (uint8_t i = 0; i < 4U; i++) {
+        float speed_dps = wheel_speed_rad_s[i] * 180.0f / (float)M_PI;
+        float speed_deadzone =
+            (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) ? CHASSIS_FOLLOW_SPEED_DEADZONE : CHASSIS_SPEED_DEADZONE;
+        speed_dps *= CHASSIS_SPEED_SCALE * power_scale;
+        if (fabsf(speed_dps) < speed_deadzone) {
+            speed_dps = 0.0f;
         }
-        wheel_speeds[i] = float_constrain(wheel_speeds[i], -M3508_SPEED_MAX, M3508_SPEED_MAX);
-        last_wheel_ref[i] = wheel_speeds[i];
+        last_wheel_ref[i] = ClampFloat(speed_dps, -M3508_SPEED_MAX, M3508_SPEED_MAX);
     }
-    
-    // 设置电机参考速度
+
     if (!chassis_enabled) {
-        if (motor_fr) DJIMotorEnable(motor_fr);
-        if (motor_fl) DJIMotorEnable(motor_fl);
-        if (motor_br) DJIMotorEnable(motor_br);
-        if (motor_bl) DJIMotorEnable(motor_bl);
+        if (motor_fr != NULL) {
+            DJIMotorEnable(motor_fr);
+        }
+        if (motor_fl != NULL) {
+            DJIMotorEnable(motor_fl);
+        }
+        if (motor_br != NULL) {
+            DJIMotorEnable(motor_br);
+        }
+        if (motor_bl != NULL) {
+            DJIMotorEnable(motor_bl);
+        }
         chassis_enabled = 1U;
     }
-    if (motor_fr) {
+
+    if (motor_fr != NULL) {
         DJIMotorOuterLoop(motor_fr, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_fr, wheel_speeds[0]);
+        DJIMotorSetRef(motor_fr, last_wheel_ref[0]);
     }
-    if (motor_fl) {
+    if (motor_fl != NULL) {
         DJIMotorOuterLoop(motor_fl, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_fl, wheel_speeds[1]);
+        DJIMotorSetRef(motor_fl, last_wheel_ref[1]);
     }
-    if (motor_br) {
+    if (motor_br != NULL) {
         DJIMotorOuterLoop(motor_br, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_br, wheel_speeds[2]);
+        DJIMotorSetRef(motor_br, last_wheel_ref[2]);
     }
-    if (motor_bl) {
+    if (motor_bl != NULL) {
         DJIMotorOuterLoop(motor_bl, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_bl, wheel_speeds[3]);
+        DJIMotorSetRef(motor_bl, last_wheel_ref[3]);
     }
+
+    MDBG_CHS("mode=%u spin=%u off=%ld cmd(vx=%ld vy=%ld wz=%ld) filt(vx=%ld vy=%ld wz=%ld)",
+             (unsigned)cmd.mode,
+             (unsigned)cmd.spin_enable,
+             (long)(cmd.yaw_offset_deg * 10.0f),
+             (long)(cmd.vx * 1000.0f),
+             (long)(cmd.vy * 1000.0f),
+             (long)(cmd.wz * 1000.0f),
+             (long)(filtered_vx * 1000.0f),
+             (long)(filtered_vy * 1000.0f),
+             (long)(filtered_wz * 1000.0f));
 }
 
 void Chassis_Stop(void)
@@ -232,14 +295,29 @@ void Chassis_Stop(void)
     filtered_vx = 0.0f;
     filtered_vy = 0.0f;
     filtered_wz = 0.0f;
+    follow_wz_integral = 0.0f;
+    chassis_last_tick = 0U;
     memset(last_wheel_ref, 0, sizeof(last_wheel_ref));
+
     g_robot.chassis.control_mode = CTRL_ZERO_FORCE;
     g_robot.chassis.ref_type = REF_SPEED;
-    
-    if (motor_fr) DJIMotorStop(motor_fr);
-    if (motor_fl) DJIMotorStop(motor_fl);
-    if (motor_br) DJIMotorStop(motor_br);
-    if (motor_bl) DJIMotorStop(motor_bl);
+
+    if (motor_fr != NULL) {
+        DJIMotorSetRef(motor_fr, 0.0f);
+        DJIMotorStop(motor_fr);
+    }
+    if (motor_fl != NULL) {
+        DJIMotorSetRef(motor_fl, 0.0f);
+        DJIMotorStop(motor_fl);
+    }
+    if (motor_br != NULL) {
+        DJIMotorSetRef(motor_br, 0.0f);
+        DJIMotorStop(motor_br);
+    }
+    if (motor_bl != NULL) {
+        DJIMotorSetRef(motor_bl, 0.0f);
+        DJIMotorStop(motor_bl);
+    }
 }
 
 float Chassis_GetWz(void)

@@ -84,10 +84,11 @@ static uint8_t ET08_RequestTakeover(const Input_Data_t *et08_data)
         return 1U;
     }
 #endif
-    if (fabsf(et08_data->vx) > 0.01f || fabsf(et08_data->vy) > 0.01f || fabsf(et08_data->wz) > 0.01f) {
+    if (fabsf(et08_data->vx) > 0.01f || fabsf(et08_data->vy) > 0.01f || fabsf(et08_data->wz) > 0.01f ||
+        fabsf(et08_data->yaw_speed) > 0.01f || fabsf(et08_data->pitch_speed) > 0.01f) {
         return 1U;
     }
-    if (et08_data->friction == FRICTION_ON || et08_data->loader != LOADER_STOP) {
+    if (et08_data->friction == FRICTION_ON || et08_data->loader != LOADER_STOP || et08_data->spin_enable != 0U) {
         return 1U;
     }
     return 0U;
@@ -116,6 +117,7 @@ void Input_UpdateET08(Input_Data_t *et08_data)
     uint8_t sa_pos;
     uint8_t sb_pos;
     uint8_t sd_pos;
+    uint8_t sc_pos;
 
     if (et08_data == NULL) {
         return;
@@ -133,14 +135,13 @@ void Input_UpdateET08(Input_Data_t *et08_data)
     et08_data->active_input = INPUT_ACTIVE_ET08;
 
 #if RC_MAPPING_MODE == 0
-    et08_data->vx = (float)et08->left.x / RC_STICK_SCALE * CHASSIS_MAX_VX;
-    et08_data->vy = -(float)et08->left.y / RC_STICK_SCALE * CHASSIS_MAX_VY;
-    et08_data->wz = (float)et08->right.x / RC_STICK_SCALE * CHASSIS_MAX_WZ;
+    et08_data->vx = -(float)et08->left.x / RC_STICK_SCALE * CHASSIS_MAX_VX;
+    et08_data->vy = (float)et08->left.y / RC_STICK_SCALE * CHASSIS_MAX_VY;
 #else
-    et08_data->vx = (float)et08->right.y / RC_STICK_SCALE * CHASSIS_MAX_VX;
-    et08_data->vy = -(float)et08->right.x / RC_STICK_SCALE * CHASSIS_MAX_VY;
-    et08_data->wz = (float)et08->left.x / RC_STICK_SCALE * CHASSIS_MAX_WZ;
+    et08_data->vx = -(float)et08->right.x / RC_STICK_SCALE * CHASSIS_MAX_VX;
+    et08_data->vy = (float)et08->right.y / RC_STICK_SCALE * CHASSIS_MAX_VY;
 #endif
+    et08_data->wz = 0.0f;
 
     sa_sb_state = et08->switch_sa_sb_state;
     sd_sc_state = et08->switch_sd_sc_state;
@@ -150,16 +151,26 @@ void Input_UpdateET08(Input_Data_t *et08_data)
             sa_sb_state = raw_state;
         }
     }
+    {
+        uint8_t raw_state = ET08_MapSwitchState(et08->switch_sd_sc_raw);
+        if (raw_state != ET08_POS_INVALID) {
+            sd_sc_state = raw_state;
+        }
+    }
 
     sa_pos = ET08_MapUpperSwitchPos(sa_sb_state);
     sb_pos = ET08_MapLowerSwitchPos(sa_sb_state);
     sd_pos = ET08_MapUpperSwitchPos(sd_sc_state);
+    sc_pos = ET08_MapLowerSwitchPos(sd_sc_state);
 
     if (sb_pos == ET08_POS_INVALID) {
         sb_pos = ET08_POS_MID;
     }
     if (sd_pos == ET08_POS_INVALID) {
         sd_pos = ET08_POS_DOWN;
+    }
+    if (sc_pos == ET08_POS_INVALID) {
+        sc_pos = ET08_POS_MID;
     }
 
     et08_data->friction = (sa_pos == ET08_POS_UP) ? FRICTION_ON : FRICTION_OFF;
@@ -172,13 +183,16 @@ void Input_UpdateET08(Input_Data_t *et08_data)
     }
 
     et08_data->gimbal_mode = (sd_pos == ET08_POS_UP) ? GIMBAL_FOLLOW_CHASSIS : GIMBAL_SEPARATE;
+    et08_data->spin_enable = (sc_pos == ET08_POS_UP) ? 1U : 0U;
     if (fabsf((float)et08->right.x) >= GIMBAL_RC_DEADZONE) {
-        et08_data->yaw_speed = (float)et08->right.x / RC_STICK_SCALE * GM6020_SPEED_MAX;
+        et08_data->yaw_speed =
+            (float)et08->right.x / RC_STICK_SCALE * GM6020_SPEED_MAX * ET08_GIMBAL_YAW_SPEED_SCALE;
     } else {
         et08_data->yaw_speed = 0.0f;
     }
     if (fabsf((float)et08->right.y) >= GIMBAL_RC_DEADZONE) {
-        et08_data->pitch_speed = (float)et08->right.y / RC_STICK_SCALE * GM6020_SPEED_MAX * PITCH_SPEED_SCALE;
+        et08_data->pitch_speed =
+            (float)et08->right.y / RC_STICK_SCALE * GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
     } else {
         et08_data->pitch_speed = 0.0f;
     }
@@ -190,6 +204,7 @@ void Input_UpdateET08(Input_Data_t *et08_data)
     et08_data->rc_raw.sa_pos = sa_pos;
     et08_data->rc_raw.sb_pos = sb_pos;
     et08_data->rc_raw.sd_pos = sd_pos;
+    et08_data->rc_raw.sc_pos = sc_pos;
     et08_data->rc_raw.online = 1U;
     FillShootState(et08_data);
 }
@@ -216,15 +231,36 @@ void Input_UpdateVT(Input_Data_t *vt_data)
     vt_data->active_input = INPUT_ACTIVE_VT;
     vt_data->gear = vt->gear;
     vt_data->emergency_stop = vt->pause_pressed ? 1U : 0U;
+    vt_data->vt_raw.ch0_c = vt->ch0_right_x.centered;
+    vt_data->vt_raw.ch1_c = vt->ch1_right_y.centered;
+    vt_data->vt_raw.ch2_c = vt->ch2_left_y.centered;
+    vt_data->vt_raw.ch3_c = vt->ch3_left_x.centered;
+    vt_data->vt_raw.dial_c = vt->dial.centered;
+    vt_data->vt_raw.gear = vt->gear;
+    vt_data->vt_raw.pause = vt->pause_pressed;
+    vt_data->vt_raw.custom_l = vt->custom_left_pressed;
+    vt_data->vt_raw.custom_r = vt->custom_right_pressed;
+    vt_data->vt_raw.trigger = vt->trigger_pressed;
+    vt_data->vt_raw.mouse_x = vt->mouse_x;
+    vt_data->vt_raw.mouse_y = vt->mouse_y;
+    vt_data->vt_raw.mouse_z = vt->mouse_z;
+    vt_data->vt_raw.mouse_l = vt->mouse_left_pressed;
+    vt_data->vt_raw.mouse_r = vt->mouse_right_pressed;
+    vt_data->vt_raw.mouse_m = vt->mouse_middle_pressed;
+    vt_data->vt_raw.keyboard = vt->keyboard_value;
+    vt_data->vt_raw.online = 1U;
 
     if (vt_data->emergency_stop) {
         return;
     }
 
+    vt_data->spin_enable = 0U;
+
     if (vt->gear != VT_GEAR_S) {
         vt_data->friction = FRICTION_OFF;
         vt_data->loader = LOADER_STOP;
         vt_data->gimbal_mode = vt_gimbal_mode_state;
+        vt_data->spin_enable = 0U;
         FillShootState(vt_data);
         return;
     }
@@ -262,11 +298,11 @@ void Input_UpdateVT(Input_Data_t *vt_data)
     vt_data->gimbal_mode = vt_gimbal_mode_state;
 
     if (vt->mouse_x != 0 || vt->mouse_y != 0) {
-        vt_data->yaw_speed = (float)vt->mouse_x * VT_YAW_SENSITIVITY;
-        vt_data->pitch_speed = -(float)vt->mouse_y * VT_PITCH_SENSITIVITY;
+        vt_data->yaw_speed = (float)vt->mouse_x * VT_MOUSE_YAW_SENSITIVITY;
+        vt_data->pitch_speed = -(float)vt->mouse_y * VT_MOUSE_PITCH_SENSITIVITY;
     } else {
-        vt_data->yaw_speed = (float)vt->ch3_left_x.centered / 660.0f * 36.0f;
-        vt_data->pitch_speed = (float)vt->ch2_left_y.centered / 660.0f * GM6020_SPEED_MAX * PITCH_SPEED_SCALE;
+        vt_data->yaw_speed = (float)vt->ch3_left_x.centered / 660.0f * VT_STICK_YAW_SPEED_SCALE;
+        vt_data->pitch_speed = (float)vt->ch2_left_y.centered * VT_STICK_PITCH_SPEED_SCALE;
     }
 
     r_now = (vt->keyboard_value & VT_KEY_R) ? 1U : 0U;
@@ -286,24 +322,6 @@ void Input_UpdateVT(Input_Data_t *vt_data)
         vt_data->loader = LOADER_STOP;
     }
 
-    vt_data->vt_raw.ch0_c = vt->ch0_right_x.centered;
-    vt_data->vt_raw.ch1_c = vt->ch1_right_y.centered;
-    vt_data->vt_raw.ch2_c = vt->ch2_left_y.centered;
-    vt_data->vt_raw.ch3_c = vt->ch3_left_x.centered;
-    vt_data->vt_raw.dial_c = vt->dial.centered;
-    vt_data->vt_raw.gear = vt->gear;
-    vt_data->vt_raw.pause = vt->pause_pressed;
-    vt_data->vt_raw.custom_l = vt->custom_left_pressed;
-    vt_data->vt_raw.custom_r = vt->custom_right_pressed;
-    vt_data->vt_raw.trigger = vt->trigger_pressed;
-    vt_data->vt_raw.mouse_x = vt->mouse_x;
-    vt_data->vt_raw.mouse_y = vt->mouse_y;
-    vt_data->vt_raw.mouse_z = vt->mouse_z;
-    vt_data->vt_raw.mouse_l = vt->mouse_left_pressed;
-    vt_data->vt_raw.mouse_r = vt->mouse_right_pressed;
-    vt_data->vt_raw.mouse_m = vt->mouse_middle_pressed;
-    vt_data->vt_raw.keyboard = vt->keyboard_value;
-    vt_data->vt_raw.online = 1U;
     FillShootState(vt_data);
 }
 

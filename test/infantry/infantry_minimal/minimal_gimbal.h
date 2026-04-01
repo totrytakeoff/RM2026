@@ -40,5 +40,10 @@ float Gimbal_GetYawEncoderAngle(void);
 float Gimbal_GetPitchEncoderAngle(void);
 float Gimbal_GetYawIMUAngle(void);
 float Gimbal_GetPitchIMUAngle(void);
+float Gimbal_GetYawOffsetRawDeg(void);
+float Gimbal_GetYawOffsetLogicDeg(void);
+float Gimbal_GetYawRelativeSpeedDeg(void);
+float Gimbal_GetYawLogicAngle(void);
+AxisCtrlMode_e Gimbal_GetPitchCtrlMode(void);
 
 #endif /* MINIMAL_GIMBAL_H */

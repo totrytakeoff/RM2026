@@ -12,7 +12,7 @@
 /*============================================================================
  * 最小框架调试系统配置
  *============================================================================*/
-#define MINIMAL_DEBUG_ENABLE                        1U
+#define MINIMAL_DEBUG_ENABLE                        1U //控制日志开关,注意VT冲突
 
 #define MINIMAL_DEBUG_MODE_TEXT                     (1U << 0)
 #define MINIMAL_DEBUG_MODE_VOFA                     (1U << 1)
@@ -20,18 +20,18 @@
 #define MINIMAL_DEBUG_MODE                          (MINIMAL_DEBUG_MODE_TEXT )
 // #define MINIMAL_DEBUG_MODE                          (MINIMAL_DEBUG_MODE_VOFA )
 
-#define MINIMAL_DEBUG_UART_PORT                     6U   /* 1/3/6 */
+#define MINIMAL_DEBUG_UART_PORT                     1U   /* 1/3/6 */
 #define MINIMAL_DEBUG_UART_TIMEOUT_MS               20U
 #define MINIMAL_DEBUG_UART_BAUDRATE                 115200U
 #define MINIMAL_DEBUG_ALLOW_MIXED_STREAM            0U   /* 0: 单串口禁止Text+VOFA混发 */
 
 #define MINIMAL_DEBUG_MOD_SYSTEM                    0U
-#define MINIMAL_DEBUG_MOD_INPUT                     0U
+#define MINIMAL_DEBUG_MOD_INPUT                     1U
 #define MINIMAL_DEBUG_MOD_CHASSIS                   0U
-#define MINIMAL_DEBUG_MOD_GIMBAL                    1U
+#define MINIMAL_DEBUG_MOD_GIMBAL                    0U
 #define MINIMAL_DEBUG_MOD_SHOOT                     0U
 
-#define MINIMAL_DEBUG_TEXT_PERIOD_MS                100U /* 10Hz */
+#define MINIMAL_DEBUG_TEXT_PERIOD_MS                50U  /* 20Hz */
 #define MINIMAL_DEBUG_VOFA_PERIOD_MS                20U  /* 50Hz */
 #define GIMBAL_DEBUG_DETAIL_PERIOD_MS               50U  /* 20Hz */
 
@@ -86,10 +86,10 @@
  *============================================================================*/
 /* 底盘电机 - CAN1, M3508 */
 #define CHASSIS_CAN             hcan1
-#define CHASSIS_MOTOR_FR_ID     1U      // 前右
+#define CHASSIS_MOTOR_FR_ID     3U      // 前右
 #define CHASSIS_MOTOR_FL_ID     2U      // 前左
-#define CHASSIS_MOTOR_BR_ID     3U      // 后右
-#define CHASSIS_MOTOR_BL_ID     4U      // 后左
+#define CHASSIS_MOTOR_BR_ID     4U      // 后右
+#define CHASSIS_MOTOR_BL_ID     1U      // 后左
 
 /* 云台电机 - GM6020 */
 #define YAW_CAN                 hcan1
@@ -114,6 +114,7 @@
 
 /* 摇杆映射模式: 0=左CH3/CH4, 1=左CH1/CH2 */
 #define RC_MAPPING_MODE         0U
+#define ET08_GIMBAL_YAW_SPEED_SCALE 0.23f
 
 /*============================================================================
  * 图传链路配置 - VT03/VT13 (USART6, 921600bps)
@@ -148,16 +149,19 @@
 #define VT_CHASSIS_SLOW_MULT    0.4f    // Ctrl减速倍数
 #define VT_CHASSIS_ROTATE_SPEED 4.0f    // Q/E旋转速度 (rad/s)
 
-/* 云台鼠标灵敏度 */
-#define VT_YAW_SENSITIVITY      0.015f  // Yaw鼠标灵敏度
-#define VT_PITCH_SENSITIVITY    0.012f  // Pitch鼠标灵敏度
+/* VT云台灵敏度 */
+#define VT_MOUSE_YAW_SENSITIVITY      0.30f   // Yaw鼠标灵敏度(deg/s per count)
+#define VT_MOUSE_PITCH_SENSITIVITY    0.24f   // Pitch鼠标灵敏度(deg/s per count)
+#define VT_MOUSE_PITCH_MODE_FULL_SCALE 400.0f // 鼠标Pitch进入速度环判定满量程
+#define VT_STICK_YAW_SPEED_SCALE      36.0f   // VT摇杆Yaw速度增益(deg/s)
+#define VT_STICK_PITCH_SPEED_SCALE    (GM6020_SPEED_MAX * 0.15f / 660.0f)
 #define VT_PITCH_MAX_ANGLE      35.0f   // Pitch最大角度限制
 #define VT_PITCH_MIN_ANGLE      -25.0f  // Pitch最小角度限制
 
 /*============================================================================
  * 裁判系统(只读联锁)配置
  *============================================================================*/
-#define REFEREE_ENABLE                   1U
+#define REFEREE_ENABLE                   0U
 #define REFEREE_UART                     huart1
 #define REFEREE_CHASSIS_POWER_NOMINAL    80.0f
 #define REFEREE_CHASSIS_SCALE_MIN        0.30f
@@ -192,18 +196,41 @@
 #define CHASSIS_RUN_LOOP_STOP          SPEED_LOOP
 #define CHASSIS_RUN_LOOP_NORMAL        SPEED_LOOP
 
+/* 底盘-云台相对姿态标定 */
+#define YAW_CHASSIS_ALIGN_ECD          2711U
+#define YAW_ALIGN_ANGLE_DEG            (YAW_CHASSIS_ALIGN_ECD * ECD_ANGLE_COEF_DJI)
+#define IMU_YAW_LOGIC_ZERO_TOTAL_DEG   364.30f
+#define YAW_OFFSET_LOGIC_ZERO_DEG      (-118.915f)
+
+/* FOLLOW模式: 相对夹角闭环生成底盘角速度 */
+#define CHASSIS_FOLLOW_WZ_KP           (-25.0f)
+#define CHASSIS_FOLLOW_WZ_KI           3.0f
+#define CHASSIS_FOLLOW_WZ_KD           0.15f
+#define CHASSIS_FOLLOW_WZ_MAX          50.0f
+#define CHASSIS_FOLLOW_WZ_I_MAX        15.0f
+#define CHASSIS_FOLLOW_SPEED_DEADZONE  20.0f
+
+/* 小陀螺 */
+#define SPIN_ROTATE_SPEED_RAD_S        40.0f
+
 /*============================================================================
  * 云台参数
  *============================================================================*/
-#define GIMBAL_SPEED_DEADZONE   30.0f
+#define GIMBAL_SPEED_DEADZONE_ET08   30.0f
+#define GIMBAL_SPEED_DEADZONE_VT_MOUSE 1.0f
+#define GIMBAL_SPEED_DEADZONE_VT_STICK 30.0f
 #define GIMBAL_RC_DEADZONE      50
-#define YAW_SPEED_SCALE         0.35f
-#define PITCH_SPEED_SCALE       0.15f
+#define ET08_PITCH_SPEED_SCALE  0.15f
 #define GIMBAL_NO_FOLLOW_SCALE  4.5f
 
 #define YAW_BRAKE_SPEED_EPS     10.0f
 #define YAW_BRAKE_STABLE_COUNT  10U
 #define YAW_BRAKE_TIMEOUT_MS    220U
+
+#define PITCH_BRAKE_SPEED_EPS   20.0f
+#define PITCH_BRAKE_STABLE_COUNT 3U
+#define PITCH_BRAKE_TIMEOUT_MS  120U
+#define PITCH_RELEASE_SPEED_PREDICT_GAIN 0.02f
 
 /* 云台电机PID */
 #define YAW_FOLLOW_ANGLE_KP     10.0f
@@ -243,7 +270,7 @@
  * - Pitch角度正方向为正
  * 调参时优先改 K 的大小; 若整体方向反了, 再改符号。
  */
-#define PITCH_GRAVITY_FF_K      (-15000.0f)
+#define PITCH_GRAVITY_FF_K      (+15000.0f)
 #define PITCH_GRAVITY_FF_MAX    120000.0f
 #define PITCH_GRAVITY_FF_OFFSET_DEG 15.0f
 #define PITCH_FF_LPF            0.9f
@@ -264,9 +291,6 @@
 #define GIMBAL_SEPARATE_YAW_MAX_ANGLE    1080.0f
 #define GIMBAL_SEPARATE_PITCH_MAX_ANGLE  VT_PITCH_MAX_ANGLE
 #define GIMBAL_SEPARATE_PITCH_MIN_ANGLE  VT_PITCH_MIN_ANGLE
-
-/* 底盘-云台耦合: follow模式下yaw指令映射到底盘wz */
-#define CHASSIS_FOLLOW_YAW_TO_WZ_GAIN    (CHASSIS_MAX_WZ / GM6020_SPEED_MAX)
 
 /*============================================================================
  * 发射参数
