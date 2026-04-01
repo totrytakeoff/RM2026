@@ -178,8 +178,8 @@
 #define CHASSIS_SPEED_DEADZONE  120.0f  // 速度死区
 #define CHASSIS_DEADZONE_VX     0.08f   // 底盘输入死区(vx)
 #define CHASSIS_DEADZONE_VY     0.08f   // 底盘输入死区(vy)
-#define CHASSIS_DEADZONE_WZ     0.15f   // 底盘输入死区(wz)
-#define CHASSIS_SPEED_FILTER_COEF 0.70f // 一阶低通滤波系数
+#define CHASSIS_DEADZONE_WZ     0.10f   // 底盘输入死区(wz)
+#define CHASSIS_SPEED_FILTER_COEF 0.50f // 一阶低通滤波系数
 
 /* 底盘电机PID */
 #define CHASSIS_SPEED_KP        4.0f
