@@ -1,14 +1,14 @@
 # =============================================================================
-# @file test/infantry/infantry_chassis_et08_demo/CMakeLists.txt
-# @brief Infantry ET08 纯底盘最小解算测试 CMake 配置
+# @file test/infantry/infantry_chassis_gimbal_et08_demo/CMakeLists.txt
+# @brief Infantry ET08 底盘云台融合测试 CMake 配置
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.16)
-project(infantry_chassis_et08_demo C ASM)
+project(infantry_chassis_gimbal_et08_demo C ASM)
 
 include(${CMAKE_SOURCE_DIR}/cmake/TestFunctions.cmake)
 
-create_embedded_test(infantry_chassis_et08_demo
+create_embedded_test(infantry_chassis_gimbal_et08_demo
     SOURCES
         main.c
     INCLUDE_DIRS
