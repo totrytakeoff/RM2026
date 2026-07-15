@@ -20,14 +20,8 @@
 #include "usart.h"
 #include "usb_device.h"
 
-#include "minimal_config.h"
-#include "minimal_types.h"
-#include "minimal_chassis.h"
-#include "minimal_gimbal.h"
-#include "minimal_shoot.h"
-#include "minimal_input.h"
-#include "minimal_referee.h"
-#include "minimal_debug.h"
+#include "infantry_app.h"
+#include "infantry_config.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
 #include "daemon.h"
@@ -42,22 +36,9 @@ void Error_Handler(void);
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
 
 /*============================================================================
- * 全局上下文
- *============================================================================*/
-Robot_Context_t g_robot = {0};
-
-/*============================================================================
  * 私有变量
  *============================================================================*/
 static uint32_t last_tick = 0;
-static uint8_t safe_stop_latched = 0U;
-
-static void ForceSafeStop(void)
-{
-    Chassis_Stop();
-    Gimbal_Stop();
-    Shoot_Stop();
-}
 
 /*============================================================================
  * 主函数
@@ -95,22 +76,9 @@ int main(void)
 #if MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0)
     BSPLogInit();
 #endif
-    MinimalDebug_Init();
-    
-    // 等待电机稳定上电
-    HAL_Delay(MOTOR_STABILIZE_TIME_MS);
-    
-    // 模块初始化
-    Input_Init();
-    MinimalReferee_Init();
-    Chassis_Init();
-    Gimbal_Init();
-    Shoot_Init();
+    InfantryApp_Init();
     
     last_tick = DWT_GetTimeline_ms();
-    g_robot.initialized = 1;
-    MDBG_SYS("minimal initialized");
-    
     // 主循环
     while (1) {
         INS_Task();
@@ -124,37 +92,9 @@ int main(void)
         if (dt >= MAIN_LOOP_PERIOD_MS) {
             last_tick = now;
             
-            // 1. 获取输入数据 (ET08或VT键鼠)
-            Input_Data_t input;
-            Input_GetData(&input);
-            MinimalReferee_Update();
-            g_robot.referee = *MinimalReferee_GetData();
-            
-            // 2. 检查急停或离线
-            if (input.emergency_stop || !input.online) {
-                if (!safe_stop_latched) {
-                    MDBG_SYS("ForceSafeStop trigger estop=%u online=%u", (unsigned)input.emergency_stop, (unsigned)input.online);
-                    safe_stop_latched = 1U;
-                }
-                ForceSafeStop();
-                g_robot.input = input;
-                MinimalDebug_UpdatePeriodic(now);
-                continue;
-            }
-            if (safe_stop_latched) {
-                MDBG_SYS("ForceSafeStop release");
-                safe_stop_latched = 0U;
-            }
-            
-            // 3. 模块更新
-            Gimbal_Update(&input, Chassis_GetWz());
-            Chassis_Update(&input);
-            Shoot_Update(&input);
-            
-            // 4. 保存状态到全局上下文
-            g_robot.input = input;
+            InfantryApp_ControlStep(now);
         }
-        MinimalDebug_UpdatePeriodic(now);
+        InfantryApp_DiagnosticsStep(now);
 
         /* 与omni_demo对齐: 限制电机控制发送频率，避免CAN邮箱打满 */
         HAL_Delay(5);

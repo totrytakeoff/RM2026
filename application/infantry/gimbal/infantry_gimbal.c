@@ -8,16 +8,16 @@
  * - 底盘通过公开接口读取云台相对底盘夹角，不再直接耦合电机对象
  */
 
-#include "minimal_gimbal.h"
+#include "infantry_gimbal.h"
 
 #include <math.h>
 
 #include "can.h"
 #include "dji_motor.h"
 #include "ins_task.h"
-#include "minimal_config.h"
-#include "minimal_debug.h"
-#include "minimal_types.h"
+#include "infantry_config.h"
+#include "infantry_debug.h"
+#include "infantry_types.h"
 #include "user_lib.h"
 
 static DJIMotorInstance *motor_yaw = NULL;

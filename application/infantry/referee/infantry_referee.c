@@ -3,9 +3,9 @@
  * @brief 最小裁判系统只读封装(无UI/无任务)
  */
 
-#include "minimal_referee.h"
+#include "infantry_referee.h"
 
-#include "minimal_config.h"
+#include "infantry_config.h"
 #include "usart.h"
 
 #if REFEREE_ENABLE

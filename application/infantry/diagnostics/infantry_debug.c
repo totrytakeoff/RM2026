@@ -3,18 +3,18 @@
  * @brief 最小框架统一调试输出层实现
  */
 
-#include "minimal_debug.h"
+#include "infantry_debug.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "usart.h"
-#include "minimal_types.h"
-#include "minimal_input.h"
-#include "minimal_chassis.h"
-#include "minimal_gimbal.h"
-#include "minimal_shoot.h"
+#include "infantry_types.h"
+#include "infantry_input.h"
+#include "infantry_chassis.h"
+#include "infantry_gimbal.h"
+#include "infantry_shoot.h"
 
 static uint32_t last_text_tick = 0U;
 static uint32_t last_vofa_tick = 0U;

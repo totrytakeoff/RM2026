@@ -47,10 +47,15 @@ add_subdirectory(lib)
 # 2. 编译 HAL (HAL_Lib: 包含 CubeMX 生成的配置代码 + 启动文件)
 add_subdirectory(hal)
 
-# 3. 编译 Src (App: 包含 main.c 和 application 逻辑)
+# 3. 编译自有应用、系统与固件组合层
+add_subdirectory(application)
+add_subdirectory(system)
+add_subdirectory(firmware)
+
+# 4. 编译 Src (CubeMX main入口)
 add_subdirectory(Src)
 
-# 4. 编译 Test (测试代码)
+# 5. 编译 Test (测试代码)
 # 定义所有测试项目的输出根目录, 以便 TestFunctions.cmake 使用
 set(TEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests CACHE INTERNAL "Root directory for test outputs")
 add_subdirectory(test)

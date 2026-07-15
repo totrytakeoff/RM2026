@@ -1,12 +1,12 @@
 /**
- * @file minimal_gimbal.h
+ * @file infantry_gimbal.h
  * @brief 云台控制模块 - 支持跟随/分离模式
  */
 
-#ifndef MINIMAL_GIMBAL_H
-#define MINIMAL_GIMBAL_H
+#ifndef INFANTRY_GIMBAL_H
+#define INFANTRY_GIMBAL_H
 
-#include "minimal_types.h"
+#include "infantry_types.h"
 
 /**
  * @brief 云台初始化
@@ -46,4 +46,4 @@ float Gimbal_GetYawRelativeSpeedDeg(void);
 float Gimbal_GetYawLogicAngle(void);
 AxisCtrlMode_e Gimbal_GetPitchCtrlMode(void);
 
-#endif /* MINIMAL_GIMBAL_H */
+#endif /* INFANTRY_GIMBAL_H */

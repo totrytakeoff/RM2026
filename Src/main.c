@@ -35,7 +35,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "robot.h"
+#include "infantry_firmware.h"
 #include "bsp_log.h"
 /* USER CODE END Includes */
 
@@ -120,8 +120,10 @@ int main(void)
   MX_CRC_Init();
   MX_DAC_Init();
   /* USER CODE BEGIN 2 */
-	RobotInit(); // 唯一的初始化函数
-  LOGINFO("[main] SystemInit() and RobotInit() done");
+	if (!InfantryFirmware_Init()) {
+    Error_Handler();
+  }
+  LOGINFO("[main] infantry firmware initialized");
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in freertos.c) */

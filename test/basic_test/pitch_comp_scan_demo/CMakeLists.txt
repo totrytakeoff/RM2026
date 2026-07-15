@@ -15,6 +15,7 @@ create_embedded_test(pitch_comp_scan_demo
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/test/infantry/infantry_minimal
     LINK_LIBRARIES
+        rm_infantry_config
         HNUYueLuRM_modules
         HNUYueLuRM_bsp
         HNUYueLuRM_middlewares

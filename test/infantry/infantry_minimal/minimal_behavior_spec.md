@@ -7,8 +7,8 @@
 - 任一输入离线后不直接执行危险动作，统一进入安全停止路径。
 
 ## 2. 安全与失效处理
-- 全局安全停止函数 `ForceSafeStop()` 负责统一停止底盘、云台、发射。
-- 输入离线、急停触发、关键联锁拒绝时，都进入 `ForceSafeStop()`。
+- 统一安全停止函数 `InfantryApp_ForceSafeStop()` 负责停止底盘、云台、发射。
+- 输入离线、急停触发、关键联锁拒绝时，都进入统一安全停止路径。
 - 主循环保持 `DaemonTask()` 与 `DJIMotorControl()` 常驻调用。
 
 ## 3. 闭环与环路策略
@@ -20,7 +20,7 @@
   - 摩擦轮速度环；
   - 拨盘单发采用角度环目标；
   - 拨盘连发采用速度环。
-- 所有执行器在 `minimal_config.h` 用统一宏指定 init/run loop，避免硬编码分散。
+- 所有执行器在 `application/infantry/config/infantry_config.h` 用统一宏指定 init/run loop，避免硬编码分散。
 
 ## 4. 裁判系统只读联锁
 - 仅接入关键字段：`robot_id`、`chassis_power_limit`、`shooter_heat_limit`、`shooter_heat`、`allowance_17mm`、功率输出使能位。

@@ -3,8 +3,8 @@
  * @brief 最小裁判数据类型
  */
 
-#ifndef MINIMAL_REFEREE_TYPES_H
-#define MINIMAL_REFEREE_TYPES_H
+#ifndef INFANTRY_REFEREE_TYPES_H
+#define INFANTRY_REFEREE_TYPES_H
 
 #include <stdint.h>
 
@@ -20,4 +20,4 @@ typedef struct {
     uint8_t power_management_shooter_output;
 } MinimalRefereeData_t;
 
-#endif /* MINIMAL_REFEREE_TYPES_H */
+#endif /* INFANTRY_REFEREE_TYPES_H */

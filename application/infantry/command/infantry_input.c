@@ -3,14 +3,14 @@
  * @brief 双输入统一仲裁(VT主控 + ET08热备)
  */
 
-#include "minimal_input.h"
+#include "infantry_input.h"
 
 #include <math.h>
 #include <string.h>
 
-#include "minimal_config.h"
-#include "minimal_shoot.h"
-#include "minimal_debug.h"
+#include "infantry_config.h"
+#include "infantry_shoot.h"
+#include "infantry_debug.h"
 #include "et08_remote.h"
 #include "vt_remote.h"
 #include "usart.h"

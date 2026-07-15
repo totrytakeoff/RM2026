@@ -45,16 +45,17 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-
+static StaticTask_t xUsbInitTaskTCBBuffer;
+static StackType_t xUsbInitTaskStack[configMINIMAL_STACK_SIZE];
 /* USER CODE END Variables */
-osThreadId defaultTaskHandle;
+TaskHandle_t defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const * argument);
+void StartDefaultTask(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -102,9 +103,15 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+  /* USB initialization uses static storage and terminates after one run. */
+  defaultTaskHandle = xTaskCreateStatic(StartDefaultTask,
+                                        "usb_init",
+                                        configMINIMAL_STACK_SIZE,
+                                        NULL,
+                                        tskIDLE_PRIORITY + 1U,
+                                        xUsbInitTaskStack,
+                                        &xUsbInitTaskTCBBuffer);
+  configASSERT(defaultTaskHandle != NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -120,12 +127,13 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
+void StartDefaultTask(void *argument)
 {
+  (void)argument;
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartDefaultTask */
-  osThreadTerminate(NULL); // 避免空置和切换占用cpu
+  vTaskDelete(NULL); // 避免空置和切换占用cpu
   /* USER CODE END StartDefaultTask */
 }
 

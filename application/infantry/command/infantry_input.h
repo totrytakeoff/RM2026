@@ -1,12 +1,12 @@
 /**
- * @file minimal_input.h
+ * @file infantry_input.h
  * @brief 统一输入模块 - 支持ET08遥控和VT图传键鼠
  */
 
-#ifndef MINIMAL_INPUT_H
-#define MINIMAL_INPUT_H
+#ifndef INFANTRY_INPUT_H
+#define INFANTRY_INPUT_H
 
-#include "minimal_types.h"
+#include "infantry_types.h"
 
 /**
  * @brief 输入模块初始化
@@ -29,4 +29,4 @@ void Input_GetData(Input_Data_t *data);
 uint8_t Input_IsOnline(void);
 uint8_t Input_IsVTAllowed(void);
 
-#endif /* MINIMAL_INPUT_H */
+#endif /* INFANTRY_INPUT_H */

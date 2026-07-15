@@ -1,13 +1,13 @@
 /**
- * @file minimal_debug.h
+ * @file infantry_debug.h
  * @brief 最小框架统一调试输出层
  */
 
-#ifndef MINIMAL_DEBUG_H
-#define MINIMAL_DEBUG_H
+#ifndef INFANTRY_DEBUG_H
+#define INFANTRY_DEBUG_H
 
 #include <stdint.h>
-#include "minimal_config.h"
+#include "infantry_config.h"
 
 #define MINIMAL_DEBUG_TEXT_STREAM_ACTIVE \
     (MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0) && \
@@ -55,4 +55,4 @@ void MinimalDebug_PublishVofaFrame(void);
 #define MDBG_SHT(...)
 #endif
 
-#endif /* MINIMAL_DEBUG_H */
+#endif /* INFANTRY_DEBUG_H */

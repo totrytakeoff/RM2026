@@ -1,12 +1,12 @@
 /**
- * @file minimal_shoot.h
+ * @file infantry_shoot.h
  * @brief 发射控制模块
  */
 
-#ifndef MINIMAL_SHOOT_H
-#define MINIMAL_SHOOT_H
+#ifndef INFANTRY_SHOOT_H
+#define INFANTRY_SHOOT_H
 
-#include "minimal_types.h"
+#include "infantry_types.h"
 
 /*============================================================================
  * 发射状态枚举
@@ -39,4 +39,4 @@ float Shoot_GetLoaderFeedback(void);
 uint8_t Shoot_IsSingleActive(void);
 uint8_t Shoot_GetPendingShots(void);
 
-#endif /* MINIMAL_SHOOT_H */
+#endif /* INFANTRY_SHOOT_H */

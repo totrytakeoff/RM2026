@@ -22,18 +22,12 @@ if(NOT DEFINED GLOBAL_OUTPUT_DIR)
     set(GLOBAL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/output)
 endif()
 
-# 1. 收集 main.c
+# 正式入口。应用源码由分层target显式提供，不再递归收集旧application目录。
 set(APP_SOURCES "main.c")
-
-# 2. 递归收集 application 下的所有源文件
-file(GLOB_RECURSE APP_LOGIC_SOURCES "application/*.c" "application/*.cpp")
-list(APPEND APP_SOURCES ${APP_LOGIC_SOURCES})
 
 # 创建可执行文件
 add_executable(app.elf ${APP_SOURCES})
 
-# 包含路径 (application 内部的头文件)
-target_include_directories_recursively(app.elf ${CMAKE_CURRENT_SOURCE_DIR}/application)
 target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 
 # 链接库
@@ -43,6 +37,9 @@ target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 target_link_libraries(app.elf 
     PRIVATE
     -Wl,--start-group
+    rm_firmware_infantry
+    rm_system_freertos
+    rm_app_infantry
     HNUYueLuRM_modules
     HNUYueLuRM_bsp
     HNUYueLuRM_middlewares

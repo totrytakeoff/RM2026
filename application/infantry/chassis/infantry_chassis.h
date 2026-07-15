@@ -1,12 +1,12 @@
 /**
- * @file minimal_chassis.h
+ * @file infantry_chassis.h
  * @brief 底盘控制模块
  */
 
-#ifndef MINIMAL_CHASSIS_H
-#define MINIMAL_CHASSIS_H
+#ifndef INFANTRY_CHASSIS_H
+#define INFANTRY_CHASSIS_H
 
-#include "minimal_types.h"
+#include "infantry_types.h"
 
 /**
  * @brief 底盘初始化
@@ -33,4 +33,4 @@ float Chassis_GetFRSpeedRef(void);
 float Chassis_GetFRSpeedFdb(void);
 float Chassis_GetPowerScale(void);
 
-#endif /* MINIMAL_CHASSIS_H */
+#endif /* INFANTRY_CHASSIS_H */

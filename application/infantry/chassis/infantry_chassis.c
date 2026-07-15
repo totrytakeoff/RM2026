@@ -8,18 +8,18 @@
  * - FOLLOW 模式通过相对夹角闭环追随云台
  */
 
-#include "minimal_chassis.h"
+#include "infantry_chassis.h"
 
 #include <math.h>
 #include <string.h>
 
 #include "can.h"
 #include "dji_motor.h"
-#include "minimal_config.h"
-#include "minimal_debug.h"
-#include "minimal_gimbal.h"
-#include "minimal_referee.h"
-#include "minimal_types.h"
+#include "infantry_config.h"
+#include "infantry_debug.h"
+#include "infantry_gimbal.h"
+#include "infantry_referee.h"
+#include "infantry_types.h"
 #include "user_lib.h"
 
 static DJIMotorInstance *motor_fr = NULL;

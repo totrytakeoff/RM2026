@@ -11,15 +11,10 @@ include(${CMAKE_SOURCE_DIR}/cmake/TestFunctions.cmake)
 create_embedded_test(infantry_minimal
     SOURCES
         main.c
-        minimal_input.c
-        minimal_debug.c
-        minimal_chassis.c
-        minimal_gimbal.c
-        minimal_shoot.c
-        minimal_referee.c
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}
     LINK_LIBRARIES
+        rm_app_infantry
         HNUYueLuRM_modules
         HNUYueLuRM_bsp
         HNUYueLuRM_common

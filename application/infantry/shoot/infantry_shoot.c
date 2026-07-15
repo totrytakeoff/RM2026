@@ -3,11 +3,11 @@
  * @brief 射击控制模块实现 - 摩擦轮+拨弹电机
  */
 
-#include "minimal_shoot.h"
-#include "minimal_config.h"
-#include "minimal_types.h"
-#include "minimal_referee.h"
-#include "minimal_debug.h"
+#include "infantry_shoot.h"
+#include "infantry_config.h"
+#include "infantry_types.h"
+#include "infantry_referee.h"
+#include "infantry_debug.h"
 #include "dji_motor.h"
 #include "user_lib.h"
 #include "can.h"

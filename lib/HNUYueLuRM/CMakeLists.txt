@@ -38,6 +38,11 @@ file(GLOB_RECURSE HNU_MIDDLEWARE_SOURCES
     "${HNU_BASE}/Middlewares/Third_Party/SEGGER/RTT/*.c"
 )
 
+# RM2026 uses statically allocated RTOS objects. heap_4.c rejects builds when
+# configSUPPORT_DYNAMIC_ALLOCATION is disabled, so do not compile it into the
+# transitional middleware archive.
+list(FILTER HNU_MIDDLEWARE_SOURCES EXCLUDE REGEX "/portable/MemMang/heap_4\\.c$")
+
 add_library(HNUYueLuRM_middlewares STATIC ${HNU_MIDDLEWARE_SOURCES})
 add_library(HNUYueLuRM::middlewares ALIAS HNUYueLuRM_middlewares)
 

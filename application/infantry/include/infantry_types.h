@@ -1,16 +1,16 @@
 /**
- * @file minimal_types.h
+ * @file infantry_types.h
  * @brief 最小框架类型定义
  */
 
-#ifndef MINIMAL_TYPES_H
-#define MINIMAL_TYPES_H
+#ifndef INFANTRY_TYPES_H
+#define INFANTRY_TYPES_H
 
 #include <stdint.h>
-#include "minimal_config.h"  // 先包含配置文件,获取INPUT_SOURCE等宏定义
-#include "minimal_referee_types.h"
+#include "infantry_config.h"  // 先包含配置文件,获取INPUT_SOURCE等宏定义
+#include "infantry_referee_types.h"
 
-/* INPUT_SOURCE相关宏已在minimal_config.h中定义 */
+/* INPUT_SOURCE相关宏已在infantry_config.h中定义 */
 
 /*============================================================================
  * 控制模式枚举
@@ -204,4 +204,4 @@ typedef struct {
 /* 全局上下文声明 */
 extern Robot_Context_t g_robot;
 
-#endif /* MINIMAL_TYPES_H */
+#endif /* INFANTRY_TYPES_H */
