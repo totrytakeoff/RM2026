@@ -809,17 +809,17 @@ static bool GimbalUpdateFromET08(void)
 
     {
         float yaw_ratio = ClampFloat((float)yaw_in / RC_STICK_SCALE, -1.0f, 1.0f);
-        yaw_speed_ref = yaw_ratio * GM6020_SPEED_MAX * YAW_SPEED_SCALE;
+        yaw_speed_ref = yaw_ratio * GM6020_SPEED_MAX * ET08_GIMBAL_YAW_SPEED_SCALE;
         yaw_speed_ref = ClampFloat(yaw_speed_ref, GM6020_SPEED_MIN, GM6020_SPEED_MAX);
     }
-    if (fabsf(yaw_speed_ref) < GIMBAL_SPEED_DEADZONE) {
+    if (fabsf(yaw_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
         yaw_speed_ref = 0.0f;
     }
 
     {
         float pitch_ratio = ClampFloat((float)pitch_in / RC_STICK_SCALE, -1.0f, 1.0f);
-        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * PITCH_SPEED_SCALE;
-        if (fabsf(pitch_speed_ref) < GIMBAL_SPEED_DEADZONE) {
+        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
+        if (fabsf(pitch_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
             pitch_speed_ref = 0.0f;
         }
     }

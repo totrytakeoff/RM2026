@@ -102,16 +102,6 @@
 #define CHASSIS_MOTOR_ID_BL 3U
 #define CHASSIS_MOTOR_ID_BR 4U
 
-/*
- * FOLLOW模式: 由云台相对底盘夹角(单位deg)生成底盘角速度参考(单位rad/s).
- * PID控制: P项快速响应, I项消除稳态误差, D项阻尼.
- */
-#define CHASSIS_FOLLOW_WZ_KP -25.00f
-#define CHASSIS_FOLLOW_WZ_KI 3.0f
-#define CHASSIS_FOLLOW_WZ_KD 0.15f
-#define CHASSIS_FOLLOW_WZ_MAX 50.0f
-#define CHASSIS_FOLLOW_SPEED_DEADZONE 20.0f
-#define CHASSIS_FOLLOW_WZ_I_MAX 15.0f
 #define GIMBAL_YAW_SPEED_SCALE_DEMO 0.23f
 
 #define YAW_OFFSET_TURN -1.0f //此处决定底盘offset的方向,是顺时追还是逆时追
@@ -593,7 +583,7 @@ static bool GimbalUpdateFromET08(float dt_s)
     {
         float yaw_ratio = ClampFloat((float)yaw_in / RC_STICK_SCALE, -1.0f, 1.0f);
         yaw_speed_ref = yaw_ratio * GM6020_SPEED_MAX * GIMBAL_YAW_SPEED_SCALE_DEMO;
-        if (fabsf(yaw_speed_ref) < GIMBAL_SPEED_DEADZONE) {
+        if (fabsf(yaw_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
             yaw_speed_ref = 0.0f;
         }
         yaw_hold_ref += yaw_speed_ref * dt_s;
@@ -606,8 +596,8 @@ static bool GimbalUpdateFromET08(float dt_s)
 
     {
         float pitch_ratio = ClampFloat((float)pitch_in / RC_STICK_SCALE, -1.0f, 1.0f);
-        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * PITCH_SPEED_SCALE;
-        if (fabsf(pitch_speed_ref) < GIMBAL_SPEED_DEADZONE) {
+        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
+        if (fabsf(pitch_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
             pitch_speed_ref = 0.0f;
         }
     }
