@@ -144,10 +144,10 @@
 #define VT_KEY_B                (1U << 15)
 
 /* 底盘速度参数 */
-#define VT_CHASSIS_BASE_SPEED   3.0f    // 基础速度 (m/s)
-#define VT_CHASSIS_FAST_MULT    2.0f    // Shift加速倍数
+#define VT_CHASSIS_BASE_SPEED   8.0f    // 基础速度 (m/s)
+#define VT_CHASSIS_FAST_MULT    1.5f    // Shift加速倍数
 #define VT_CHASSIS_SLOW_MULT    0.4f    // Ctrl减速倍数
-#define VT_CHASSIS_ROTATE_SPEED 4.0f    // Q/E旋转速度 (rad/s)
+#define VT_CHASSIS_ROTATE_SPEED 6.0f    // Q/E旋转速度 (rad/s)
 
 /* VT云台灵敏度 */
 #define VT_MOUSE_YAW_SENSITIVITY      0.30f   // Yaw鼠标灵敏度(deg/s per count)
@@ -178,7 +178,7 @@
 #define CHASSIS_MAX_VY          20.0f   // 最大横向速度(m/s)
 #define CHASSIS_MAX_WZ          47.0f   // 最大旋转角速度(rad/s)
 
-#define CHASSIS_SPEED_SCALE     1.5f    // 速度缩放系数
+#define CHASSIS_SPEED_SCALE     3.0f    // 速度缩放系数
 #define CHASSIS_SPEED_DEADZONE  120.0f  // 速度死区
 #define CHASSIS_DEADZONE_VX     0.08f   // 底盘输入死区(vx)
 #define CHASSIS_DEADZONE_VY     0.08f   // 底盘输入死区(vy)
@@ -189,7 +189,7 @@
 #define CHASSIS_SPEED_KP        4.0f
 #define CHASSIS_SPEED_KI        0.04f
 #define CHASSIS_SPEED_KD        0.0f
-#define CHASSIS_SPEED_MAX_OUT   10000.0f
+#define CHASSIS_SPEED_MAX_OUT   15000.0f
 
 /* 底盘环路策略 */
 #define CHASSIS_INIT_LOOP              SPEED_LOOP

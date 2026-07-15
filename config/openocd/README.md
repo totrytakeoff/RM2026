@@ -6,6 +6,7 @@
 
 - `openocd_dap.cfg` - 使用CMSIS-DAP调试器的配置
 - `openocd_jlink.cfg` - 使用J-Link调试器的配置
+- `openocd_stlink.cfg` - 使用ST-Link调试器的配置
 
 ## 使用方法
 
@@ -17,4 +18,7 @@ openocd -f config/openocd_dap.cfg -c "program firmware.bin verify reset exit"
 
 # 使用J-Link
 openocd -f config/openocd_jlink.cfg -c "program firmware.bin verify reset exit"
+
+# 使用ST-Link
+openocd -f config/openocd_stlink.cfg -c "program firmware.bin verify reset exit"
 ```

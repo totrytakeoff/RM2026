@@ -85,7 +85,7 @@ void Chassis_Init(void)
                 .Kd = 0.0f,
                 .IntegralLimit = 1000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit,
-                .MaxOut = 8000.0f,
+                .MaxOut = 15000.0f,
             },
         },
         .controller_setting_init_config = {

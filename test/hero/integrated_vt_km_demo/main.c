@@ -45,10 +45,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bsp_dwt.h"
 #include "bsp_init.h"
 #include "bsp_log.h"
 #include "daemon.h"
 #include "dji_motor.h"
+#include "ins_task.h"
 #include "vt_remote.h"
 #include "user_lib.h"
 
@@ -144,6 +146,7 @@ static void ChassisCmdDiag(void);
 
 /* ============================== 云台 ============================== */
 #define GIMBAL_UPDATE_INTERVAL_MS 20U
+#define INS_TASK_PERIOD_MS 1U
 #define YAW_SPEED_MAX 3600.0f
 #define YAW_SPEED_MIN (-YAW_SPEED_MAX)
 #define PITCH_SPEED_MAX_UP 2000.0f
@@ -180,6 +183,8 @@ static void ChassisCmdDiag(void);
 
 static DJIMotorInstance *yaw_motor = NULL;
 static DJIMotorInstance *pitch_motor = NULL;
+static attitude_t *gimbal_imu = NULL;
+static float yaw_imu_speed_fdb = 0.0f;
 static float yaw_speed_ref = 0.0f;
 static float pitch_speed_ref = 0.0f;
 static uint8_t gimbal_zero_speed = 1;
@@ -470,6 +475,8 @@ static void ChassisUpdateKinematics(void)
 /* ============================== 云台实现 ============================== */
 static void GimbalMotorsInit(void)
 {
+    gimbal_imu = INS_Init();
+
     Motor_Init_Config_s config = {
         .can_init_config = {
             .can_handle = &hcan1,
@@ -493,6 +500,8 @@ static void GimbalMotorsInit(void)
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .MaxOut = YAW_SPEED_PID_MAXOUT,
             },
+            .other_angle_feedback_ptr = (gimbal_imu != NULL) ? &gimbal_imu->YawTotalAngle : NULL,
+            .other_speed_feedback_ptr = &yaw_imu_speed_fdb,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
@@ -509,11 +518,13 @@ static void GimbalMotorsInit(void)
     config.can_init_config.can_handle = &hcan2;
     config.can_init_config.tx_id = PITCH_MOTOR_ID;
     config.controller_param_init_config.speed_PID.MaxOut = PITCH_SPEED_PID_MAXOUT;
+    config.controller_param_init_config.other_angle_feedback_ptr = NULL;
     pitch_motor = DJIMotorInit(&config);
 
     if (yaw_motor != NULL) {
         DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
         DJIMotorStop(yaw_motor);
+        yaw_hold_angle = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : YAW_HOLD_TARGET_ANGLE;
     }
     if (pitch_motor != NULL) {
         DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
@@ -528,8 +539,8 @@ static void GimbalProcessRC(void)
         pitch_speed_ref = 0.0f;
         GimbalEnterHoldTarget();
         if (yaw_motor != NULL && pitch_motor != NULL) {
-            float yaw_err =
-                WrapAngle180(yaw_hold_angle - yaw_motor->measure.angle_single_round);
+            float yaw_current = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : yaw_motor->measure.total_angle;
+            float yaw_err = WrapAngle180(yaw_hold_angle - yaw_current);
             float pitch_err =
                 WrapAngle180(pitch_hold_angle - pitch_motor->measure.angle_single_round);
             uint8_t yaw_ready = (fabsf(yaw_err) <= GIMBAL_STARTUP_HOLD_TOLERANCE_DEG);
@@ -588,13 +599,15 @@ static void GimbalProcessRC(void)
                            (abs(vt_data->ch2_left_y.centered) >= KM_STICK_DEADZONE);
 
     if (!mouse_active && !stick_active) {
+        yaw_hold_angle = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : yaw_motor->measure.total_angle;
         yaw_speed_ref = 0.0f;
         pitch_speed_ref = 0.0f;
-        gimbal_zero_speed = 1;
-        pitch_hold_enabled = 0;
-        yaw_hold_enabled = 0;
-        pitch_hold_active = 0;
-        yaw_hold_active = 0;
+        gimbal_zero_speed = 0;
+        pitch_hold_enabled = 1;
+        yaw_hold_enabled = 1;
+        pitch_hold_active = 1;
+        yaw_hold_active = 1;
+        yaw_hold_i = 0.0f;
         return;
     }
 
@@ -627,7 +640,7 @@ static void GimbalEnterHoldTarget(void)
         pitch_hold_active = 1;
     }
     if (!yaw_hold_active && yaw_motor != NULL) {
-        yaw_hold_angle = YAW_HOLD_TARGET_ANGLE;
+        yaw_hold_angle = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : YAW_HOLD_TARGET_ANGLE;
         yaw_hold_i = 0.0f;
         yaw_hold_active = 1;
     }
@@ -635,12 +648,19 @@ static void GimbalEnterHoldTarget(void)
 
 static void GimbalUpdate(void)
 {
+    if (gimbal_imu != NULL) {
+        yaw_imu_speed_fdb = gimbal_imu->Gyro[2];
+    }
+
     if (gimbal_startup_hold_active) {
         if (yaw_motor != NULL) {
+            float current_yaw = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : yaw_motor->measure.total_angle;
             float target_total = CalcTargetTotalAngle(
-                YAW_HOLD_TARGET_ANGLE,
-                yaw_motor->measure.angle_single_round,
-                yaw_motor->measure.total_angle);
+                yaw_hold_angle,
+                current_yaw,
+                current_yaw);
+            DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
+            DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
             DJIMotorOuterLoop(yaw_motor, ANGLE_LOOP);
             DJIMotorEnable(yaw_motor);
             DJIMotorSetRef(yaw_motor, target_total);
@@ -659,8 +679,11 @@ static void GimbalUpdate(void)
 
     if (gimbal_zero_speed) {
         if (yaw_motor != NULL) {
-            DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
-            DJIMotorSetRef(yaw_motor, 0.0f);
+            DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
+            DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
+            DJIMotorOuterLoop(yaw_motor, ANGLE_LOOP);
+            float current_yaw = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : yaw_motor->measure.total_angle;
+            DJIMotorSetRef(yaw_motor, current_yaw);
         }
         if (pitch_motor != NULL) {
             DJIMotorOuterLoop(pitch_motor, SPEED_LOOP);
@@ -676,9 +699,8 @@ static void GimbalUpdate(void)
     pitch_speed_ref = float_constrain(pitch_speed_ref, -PITCH_SPEED_MAX_UP, PITCH_SPEED_MAX_DOWN);
 
     if (yaw_motor != NULL) {
-        DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
         if (yaw_hold_enabled) {
-            float current = yaw_motor->measure.angle_single_round;
+            float current = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : yaw_motor->measure.total_angle;
             float error = WrapAngle180(yaw_hold_angle - current);
             if ((error * yaw_hold_error_prev) < 0.0f) {
                 yaw_hold_i = 0.0f;
@@ -692,6 +714,9 @@ static void GimbalUpdate(void)
             yaw_speed_ref = float_constrain(hold_speed, -speed_max, speed_max);
             yaw_hold_error_prev = error;
         }
+        DJIMotorChangeFeed(yaw_motor, ANGLE_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
+        DJIMotorChangeFeed(yaw_motor, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
+        DJIMotorOuterLoop(yaw_motor, SPEED_LOOP);
         DJIMotorEnable(yaw_motor);
         DJIMotorSetRef(yaw_motor, yaw_speed_ref);
     }
@@ -1114,6 +1139,7 @@ int main(void)
     HAL_Init();
     Debug_DisableWatchdogs();
     SystemClock_Config();
+    DWT_Init(168);
 
     MX_GPIO_Init();
     MX_DMA_Init();
@@ -1159,12 +1185,17 @@ int main(void)
     uint32_t last_chassis = 0;
     uint32_t last_gimbal = 0;
     uint32_t last_shoot = 0;
+    uint32_t last_ins = 0;
 
     while (1) {
         DaemonTask();
         DJIMotorControl();
 
         uint32_t now = HAL_GetTick();
+        if (now - last_ins >= INS_TASK_PERIOD_MS) {
+            last_ins = now;
+            INS_Task();
+        }
         if (now - last_chassis >= CHASSIS_UPDATE_INTERVAL_MS) {
             last_chassis = now;
             ChassisProcessRC();
