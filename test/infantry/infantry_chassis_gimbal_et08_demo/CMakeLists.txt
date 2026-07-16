@@ -16,10 +16,10 @@ create_embedded_test(infantry_chassis_gimbal_et08_demo
         ${CMAKE_SOURCE_DIR}/test/infantry/infantry_minimal
     LINK_LIBRARIES
         rm_infantry_config
-        HNUYueLuRM_modules
-        HNUYueLuRM_bsp
-        HNUYueLuRM_common
-        HNUYueLuRM_drivers
+        rm_components
+        rm_platform_stm32f4
+        rm_common
+        rm_vendor_stm32_hal
         HAL_Lib
     LINKER_SCRIPT ${MCU_LINKER_SCRIPT}
 )

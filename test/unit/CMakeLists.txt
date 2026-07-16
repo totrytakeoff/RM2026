@@ -5,10 +5,10 @@ project(rm2026_host_unit_tests C)
 enable_testing()
 
 add_library(rm_safety_host STATIC
-    ../../services/safety/safety_manager.c
+    ../../components/services/safety/safety_manager.c
 )
 target_include_directories(rm_safety_host PUBLIC
-    ../../services/safety
+    ../../components/services/safety
 )
 target_compile_features(rm_safety_host PUBLIC c_std_11)
 target_compile_options(rm_safety_host PRIVATE

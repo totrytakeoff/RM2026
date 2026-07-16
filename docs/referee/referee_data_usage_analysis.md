@@ -32,8 +32,8 @@
 当前链路如下：
 
 1. [chassis.c](/home/myself/workspace/RM2026/Src/application/chassis/chassis.c) 在 `ChassisInit()` 中调用 `UITaskInit(&CHASSIS_REFEREE_UART_HANDLE, &ui_data)`。
-2. [referee_task.c](/home/myself/workspace/RM2026/lib/HNUYueLuRM/modules/referee/referee_task.c) 中 `UITaskInit()` 再调用 `RefereeInit()`。
-3. [rm_referee.c](/home/myself/workspace/RM2026/lib/HNUYueLuRM/modules/referee/rm_referee.c) 中 `RefereeInit()` 完成串口注册、daemon 注册。
+2. [referee_task.c](/home/myself/workspace/RM2026/components/devices/referee/referee_task.c) 中 `UITaskInit()` 再调用 `RefereeInit()`。
+3. [rm_referee.c](/home/myself/workspace/RM2026/components/devices/referee/rm_referee.c) 中 `RefereeInit()` 完成串口注册、daemon 注册。
 4. 裁判串口接收回调 `RefereeRxCallback()` 中调用 `JudgeReadData()`。
 5. `JudgeReadData()` 根据 `CmdID` 把 payload 拷贝到 `referee_info_t` 的各字段。
 
@@ -63,7 +63,7 @@
 14. `0x0209 RfidStatus`
 15. `0x0301 ReceiveData`
 
-对应定义见 [rm_referee.h](/home/myself/workspace/RM2026/lib/HNUYueLuRM/modules/referee/rm_referee.h)。
+对应定义见 [rm_referee.h](/home/myself/workspace/RM2026/components/devices/referee/rm_referee.h)。
 
 ---
 
@@ -77,7 +77,7 @@
 
 具体用途：
 
-1. 在 [referee_task.c](/home/myself/workspace/RM2026/lib/HNUYueLuRM/modules/referee/referee_task.c) 的 `DeterminRobotID()` 中，用于判断红蓝方和计算 UI 客户端 ID。
+1. 在 [referee_task.c](/home/myself/workspace/RM2026/components/devices/referee/referee_task.c) 的 `DeterminRobotID()` 中，用于判断红蓝方和计算 UI 客户端 ID。
 2. 在 `MyUIInit()` 中，用于等待裁判数据上线：`while (referee_recv_info->GameRobotState.robot_id == 0)`.
 
 注意：
@@ -106,7 +106,7 @@
 
 当前 UI 逻辑和真实业务状态之间存在明显脱节：
 
-1. [referee_task.c](/home/myself/workspace/RM2026/lib/HNUYueLuRM/modules/referee/referee_task.c) 中 `UITask()` 每次都会先调用 `RobotModeTest()`。
+1. [referee_task.c](/home/myself/workspace/RM2026/components/devices/referee/referee_task.c) 中 `UITask()` 每次都会先调用 `RobotModeTest()`。
 2. `RobotModeTest()` 会周期性修改：
    `chassis_mode`
    `gimbal_mode`

@@ -1,44 +1,42 @@
-# =============================================================================
-# @file test/CMakeLists.txt
-# @brief 嵌入式测试项目聚合配置
-# @project RM2026
-# @author YZ-Control/myself
-# @version 1.0.0
-# @date 2025-12-07
-# @details 自动遍历 test 子目录并调用各自的 CMakeLists，以便统一创建 test_<name> 目标和输出目录。
-# =============================================================================
+# Embedded regression and bring-up images.  Keep this list explicit: adding a
+# directory must not silently add a new firmware image to every build.
 
-# 递归查找 test/ 下所有子目录中的 CMakeLists.txt（不包含当前文件自身）
-file(GLOB_RECURSE TEST_CMAKELIST_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*/CMakeLists.txt")
+set(RM_EMBEDDED_TEST_DIRS
+    basic_test/et08_sbus_demo
+    basic_test/gimbal_demo
+    basic_test/mecanum_chassis_demo
+    basic_test/motor_test
+    basic_test/omni_chassis_demo
+    basic_test/pitch_comp_scan_demo
+    basic_test/relay_test
+    basic_test/remote_control_demo
+    basic_test/shoot_test
+    basic_test/test_dm_imu
+    basic_test/test_imu
+    basic_test/vt_link_monitor_demo
+    hero/hero_shoot_test
+    hero/integrated_demo
+    hero/integrated_vt_km_demo
+    infantry/infantry_chassis_et08_demo
+    infantry/infantry_chassis_gimbal_et08_demo
+    infantry/infantry_chassis_gimbal_et08_demo1
+    infantry/infantry_gimbal_et08_demo
+    infantry/infantry_minimal
+    infantry/infantry_omni_demo
+    infantry/infantry_shoot_et08_demo
+    infantry/infantry_shoot_test
+    leg/wheelleg_all_test
+    leg/wheelleg_balance_test
+    leg/wheelleg_basic_test
+    leg/wheelleg_imu_test
+    leg/wheelleg_joint_pos_test
+    leg/wheelleg_joint_test
+    leg/wheelleg_shoot_test
+)
 
-# 排序保证输出稳定，便于排查问题
-list(SORT TEST_CMAKELIST_FILES)
-
-set(TEST_SUBDIRS "")
-
-foreach(CMAKELIST_FILE ${TEST_CMAKELIST_FILES})
-    # 从 "xxx/CMakeLists.txt" 提取目录 "xxx"
-    get_filename_component(SUBDIR ${CMAKELIST_FILE} DIRECTORY)
-
-    # 跳过空目录（理论不会出现）
-    if(SUBDIR STREQUAL "")
-        continue()
-    endif()
-
-    # unit/ 是独立的主机 CMake 工程，不能使用 ARM 工具链加入固件构建。
-    # 同时过滤常见构建目录，避免误收集临时产物中的 CMakeLists。
-    if(SUBDIR MATCHES "(^|/)(unit|build|cmake-build[^/]*)($|/)")
-        message(STATUS "Skip non-embedded directory in test/: ${SUBDIR}")
-        continue()
-    endif()
-
-    list(APPEND TEST_SUBDIRS ${SUBDIR})
+foreach(test_dir IN LISTS RM_EMBEDDED_TEST_DIRS)
+    add_subdirectory(${test_dir})
 endforeach()
 
-list(REMOVE_DUPLICATES TEST_SUBDIRS)
-
-# 将所有测试子目录加入构建，支持多级分类目录
-foreach(SUBDIR ${TEST_SUBDIRS})
-    add_subdirectory(${SUBDIR})
-    message(STATUS "Added Test Project Dir: ${SUBDIR}")
-endforeach()
+# test/unit is intentionally a standalone host project and is never loaded by
+# the ARM cross-compilation tree.

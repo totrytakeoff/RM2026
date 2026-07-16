@@ -15,18 +15,18 @@ include(${CMAKE_SOURCE_DIR}/cmake/TestFunctions.cmake)
 
 # This test only needs its own source files.
 # All other dependencies are handled by linking against the framework libraries.
-file(GLOB SOURCES "*.c" "*.cpp")
+set(SOURCES main.c)
 
 # Create the test executable by calling the correct function.
-# It will link against HAL_Lib and HNUYueLuRM_Lib, inheriting their PUBLIC include directories.
+# It links the explicit component, platform, vendor, and board targets below.
 create_embedded_test(${PROJECT_NAME}
     SOURCES ${SOURCES}
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}
     LINK_LIBRARIES
-        HNUYueLuRM_modules
-        HNUYueLuRM_bsp
-        HNUYueLuRM_middlewares
-        HNUYueLuRM_common
-        HNUYueLuRM_drivers
+        rm_components
+        rm_platform_stm32f4
+        rm_vendor_runtime
+        rm_common
+        rm_vendor_stm32_hal
 )

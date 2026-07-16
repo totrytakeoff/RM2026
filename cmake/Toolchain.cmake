@@ -39,7 +39,7 @@ set(MCU_FLAGS "-mcpu=cortex-m4;-mthumb;-mthumb-interwork;-mfloat-abi=hard;-mfpu=
 set(MCU_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/config/linker/STM32F407IGHx_FLASH.ld"
     CACHE FILEPATH "Linker script for STM32F407IGHx")
 
-set(DSP_LIB "${CMAKE_SOURCE_DIR}/lib/HNUYueLuRM/Middlewares/ST/ARM/DSP/Lib/libarm_cortexM4lf_math.a"
+set(DSP_LIB "${CMAKE_SOURCE_DIR}/third_party/cmsis_dsp/Lib/libarm_cortexM4lf_math.a"
     CACHE FILEPATH "ARM CMSIS-DSP static library")
 
 set(CMAKE_C_STANDARD 11)

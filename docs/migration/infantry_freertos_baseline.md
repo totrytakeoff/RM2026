@@ -96,8 +96,9 @@ the comparison firmware for tuning:
 
 ## Known transitional debt
 
-- Application modules still call motor, input, INS, referee, daemon, BSP, and
-  algorithm implementations from `lib/HNUYueLuRM`.
+- Application modules still call transitional motor, input, INS, referee,
+  device-health, platform, and algorithm APIs from `components/` and
+  `platform/`.
 - Module APIs and configuration macros retain some `Minimal*` naming.
 - The mutable `g_robot` context is still shared with diagnostic code.
 - A hardware watchdog is not implemented yet; the software health task cannot

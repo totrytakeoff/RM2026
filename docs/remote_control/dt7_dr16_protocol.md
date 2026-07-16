@@ -1,6 +1,6 @@
 # DT7 & DR16 通信协议说明
 
-本说明文档整理自 DJI 《DT7&DR16 2.4 GHz 遥控接收系统用户手册》以及工程中 `lib/HNUYueLuRM/modules/remote/remote_control.*` 的实现，解释 DT7 遥控器与 DR16 接收机之间通过 **D-BUS**（亦称 SBUS）接口交换的 18 Byte 帧结构，方便进行固件开发与调试。
+本说明文档整理自 DJI 《DT7&DR16 2.4 GHz 遥控接收系统用户手册》以及工程中 `components/devices/remote/remote_control.*` 的实现，解释 DT7 遥控器与 DR16 接收机之间通过 **D-BUS**（亦称 SBUS）接口交换的 18 Byte 帧结构，方便进行固件开发与调试。
 
 > 参阅原厂文档：`docs/ref_docs/DT7&DR16_RC_System_User_Manual_v2.00_cn.pdf`
 

@@ -25,11 +25,12 @@ Primary outputs are collected in `build/output`.
 ## Repository layers
 
 - `application/`: robot behavior and configuration.
-- `services/`: platform-independent control and safety services.
+- `components/`: reusable algorithms, services, and device drivers.
+- `platform/`: STM32F4 platform adapters and board-support code.
+- `third_party/`: external dependencies with their original licenses.
 - `firmware/`: concrete firmware composition and startup.
 - `system/`: FreeRTOS tasks and reliability hooks.
-- `hal/`: CubeMX-generated peripheral initialization.
-- `lib/`: transitional upstream and vendor dependencies being separated.
+- `hal/`: transitional CubeMX-generated peripheral initialization.
 - `test/`: standalone board-level and comparison firmware.
 - `docs/migration/`: migration status, gates, and hardware acceptance records.
 

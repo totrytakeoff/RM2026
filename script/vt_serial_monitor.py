@@ -2,7 +2,7 @@
 """
 VT03/VT13 图传遥控串口协议监听与链路状态监测工具。
 
-协议实现参考：lib/HNUYueLuRM/modules/remote/VT/vt_remote.c
+协议实现参考：components/devices/remote/vt/vt_remote.c
 """
 
 from __future__ import annotations

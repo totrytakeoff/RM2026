@@ -11,8 +11,8 @@
 ## 2. 关键文件
 - 入口：`test/infantry_omni_demo/main.c`
 - CAN 配置：`hal/can.c`
-- DJI 电机驱动：`lib/HNUYueLuRM/modules/motor/DJImotor/dji_motor.c`
-- CAN BSP：`lib/HNUYueLuRM/bsp/can/bsp_can.c`
+- DJI 电机驱动：`components/devices/motor/dji/dji_motor.c`
+- CAN BSP：`platform/stm32f4/can/bsp_can.c`
 
 ## 3. CAN 总线与电机 ID
 ### 3.1 发送分组说明（DJI 电机驱动）

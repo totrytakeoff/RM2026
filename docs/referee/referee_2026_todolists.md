@@ -18,7 +18,7 @@
 
 建议修改位置：
 
-1. `lib/HNUYueLuRM/modules/referee/referee_task.c` 的 `DeterminRobotID()`
+1. `components/devices/referee/referee_task.c` 的 `DeterminRobotID()`
 2. 可新增 `static uint16_t RefereeMapClientId(uint8_t robot_id)` 辅助函数
 
 验收标准：
@@ -59,9 +59,9 @@
 
 建议修改位置：
 
-1. `lib/HNUYueLuRM/modules/referee/referee_protocol.h`
-2. `lib/HNUYueLuRM/modules/referee/rm_referee.h`
-3. `lib/HNUYueLuRM/modules/referee/rm_referee.c`
+1. `components/devices/referee/referee_protocol.h`
+2. `components/devices/referee/rm_referee.h`
+3. `components/devices/referee/rm_referee.c`
 
 验收标准：
 
@@ -78,7 +78,7 @@
 
 建议修改位置：
 
-1. `lib/HNUYueLuRM/modules/referee/referee_protocol.h`
+1. `components/devices/referee/referee_protocol.h`
 2. 相关调用点全局检索核对
 
 验收标准：
@@ -97,7 +97,7 @@
 
 建议修改位置：
 
-1. `lib/HNUYueLuRM/modules/referee/rm_referee.c`
+1. `components/devices/referee/rm_referee.c`
 2. 可配宏放到 `Src/application/robot_def.h` 或 referee 配置头
 
 验收标准：

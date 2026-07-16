@@ -14,12 +14,12 @@ create_embedded_test(dm_imu
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}
     LINK_LIBRARIES
-        DM_IMU
-        HNUYueLuRM_modules
-        HNUYueLuRM_bsp
-        HNUYueLuRM_middlewares
-        HNUYueLuRM_common
-        HNUYueLuRM_drivers
+        rm_device_dm_imu
+        rm_components
+        rm_platform_stm32f4
+        rm_vendor_runtime
+        rm_common
+        rm_vendor_stm32_hal
         HAL_Lib
     LINKER_SCRIPT ${MCU_LINKER_SCRIPT}
 )

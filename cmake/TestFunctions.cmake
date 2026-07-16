@@ -69,7 +69,7 @@ function(create_embedded_test test_name)
         HAL_Lib
         $<TARGET_OBJECTS:HAL_IRQ>
         -Wl,--end-group
-        ${DSP_LIB}
+        rm_vendor_cmsis_dsp
         m
         c
     )

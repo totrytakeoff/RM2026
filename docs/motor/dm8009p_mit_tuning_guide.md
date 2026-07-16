@@ -4,8 +4,8 @@
 目标：在不同负载下获得“稳、快、不抖、不撞限”的位置控制效果，并能快速定位“该改哪个参数”。
 
 相关代码位置（以现在工程为准）：
-- 通用驱动（MIT 打包/发送、模式命令、反馈解码）：`lib/HNUYueLuRM/modules/motor/DMmotor/dmmotor.h`
-- DM8009P 兼容层（仅默认值 + 薄封装）：`lib/HNUYueLuRM/modules/motor/DMmotor/dm8009p.h`
+- 通用驱动（MIT 打包/发送、模式命令、反馈解码）：`components/devices/motor/dm/dmmotor.h`
+- DM8009P 兼容层（仅默认值 + 薄封装）：`components/devices/motor/dm/dm8009p.h`
 - 可直接烧录/调参的 demo：`test/motor_test/main.c`（`volatile g_dm_*`，支持 GDB 在线改参）
 
 ---
@@ -121,7 +121,7 @@ MIT 给了 `v_des`，但它不是“限速开关”，它参与控制律。
 
 ### 6.1 “标准 MIT 直通接口”是哪一个？
 
-`lib/HNUYueLuRM/modules/motor/DMmotor/dmmotor.h`：
+`components/devices/motor/dm/dmmotor.h`：
 - `DMMotor_SendMIT(motor, p, v, kp, kd, t)`：标准 MIT（p/v/kp/kd/t）8 字节打包发送
 - `DMMotor_Enable/Disable/ClearError/SaveZero(motor, DM_MODE_MIT)`：MIT 模式命令
 
@@ -163,7 +163,7 @@ GDB 常用命令示例（推荐“改变量让主循环持续发帧”，不要�
 ```
 
 角度/弧度换算工具（在通用驱动里提供）：
-- `DM_DegToRad(deg)` / `DM_RadToDeg(rad)`：`lib/HNUYueLuRM/modules/motor/DMmotor/dmmotor.h`
+- `DM_DegToRad(deg)` / `DM_RadToDeg(rad)`：`components/devices/motor/dm/dmmotor.h`
 
 ---
 

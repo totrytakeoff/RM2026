@@ -33,6 +33,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-STM32 HAL, CMSIS, FreeRTOS, STM32 USB Device, CMSIS-DSP, and SEGGER sources
-retain their own license notices and will be placed under `third_party/` as the
-dependency migration proceeds.
+STM32 HAL, CMSIS, FreeRTOS, STM32 USB Device, CMSIS-DSP, and SEGGER sources are
+kept under `third_party/` with their own authoritative license notices.

@@ -379,17 +379,17 @@ static Master_Vision_Send_s vision_send_data;  // 视觉发送数据
 
 ## 8. 修改文件清单
 
-1. `/framework/lib/HNUYueLuRM/common/robot_types.h`
+1. `/framework/components/common/robot_types.h`
    - 重命名`Vision_Recv_s`为`Base_Vision_Recv_s`
    - 重命名`Vision_Send_s`为`Base_Vision_Send_s`
 
-2. `/framework/lib/HNUYueLuRM/modules/master_machine/master_process.h`
+2. `/framework/components/devices/vision/master_process.h`
    - 重命名`Vision_Recv_s`为`Master_Vision_Recv_s`
    - 重命名`Vision_Send_s`为`Master_Vision_Send_s`
    - 移除重复的枚举定义
    - 更新函数声明
 
-3. `/framework/lib/HNUYueLuRM/modules/master_machine/master_process.c`
+3. `/framework/components/devices/vision/master_process.c`
    - 更新静态变量类型
    - 更新函数返回类型
 

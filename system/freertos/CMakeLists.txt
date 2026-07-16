@@ -12,8 +12,8 @@ target_compile_options(rm_system_freertos PRIVATE ${MCU_FLAGS})
 
 target_link_libraries(rm_system_freertos PUBLIC
     rm_app_infantry
-    HNUYueLuRM_modules
-    HNUYueLuRM_bsp
-    HNUYueLuRM_middlewares
+    rm_components
+    rm_platform_stm32f4
+    rm_vendor_runtime
     HAL_Lib
 )

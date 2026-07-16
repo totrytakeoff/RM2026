@@ -27,8 +27,8 @@
 
 相关实现见：
 
-- `lib/HNUYueLuRM/modules/daemon/daemon.c`
-- `lib/HNUYueLuRM/modules/remote/ET08/et08_remote.c`
+- `components/services/device_health/daemon.c`
+- `components/devices/remote/et08/et08_remote.c`
 
 关键点：
 
@@ -49,13 +49,13 @@
 
 #### 1) `DaemonTask()` 是“按调用次数减计数”
 
-`lib/HNUYueLuRM/modules/daemon/daemon.c`
+`components/services/device_health/daemon.c`
 
 - `temp_count > 0` 时每次调用直接 `temp_count--`
 
 #### 2) ET08 在线判断依赖 daemon 计数
 
-`lib/HNUYueLuRM/modules/remote/ET08/et08_remote.c`
+`components/devices/remote/et08/et08_remote.c`
 
 - `reload_count = 400`
 - `ET08_IsOnline()` 直接返回 `DaemonIsOnline(et08_daemon)`
@@ -131,8 +131,8 @@
 
 相关实现：
 
-- `lib/HNUYueLuRM/modules/motor/DJImotor/dji_motor.c`
-- `lib/HNUYueLuRM/bsp/can/bsp_can.c`
+- `components/devices/motor/dji/dji_motor.c`
+- `platform/stm32f4/can/bsp_can.c`
 
 关键机制：
 

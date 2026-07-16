@@ -31,24 +31,24 @@ add_executable(app.elf ${APP_SOURCES})
 target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 
 # 链接库
-# 使用链接组 (--start-group) 来处理静态库之间复杂的或潜在的循环依赖。
-# 这能确保链接器在 HNUYueLuRM_Framework 和 HAL_Lib 之间反复查找符号，直到所有依赖都解决。
-# 同时链接 DSP 库和标准数学库 m。
+# 迁移阶段仍使用链接组处理现有静态库之间的循环依赖；后续按组件拆分后移除。
+# vendor 归档显式放入组内，确保 FreeRTOS 回调和平台适配符号能被重新扫描。
 target_link_libraries(app.elf 
     PRIVATE
     -Wl,--start-group
     rm_firmware_infantry
     rm_system_freertos
     rm_app_infantry
-    HNUYueLuRM_modules
-    HNUYueLuRM_bsp
-    HNUYueLuRM_middlewares
-    HNUYueLuRM_common
-    HNUYueLuRM_drivers
+    rm_components
+    rm_platform_stm32f4
+    rm_vendor_freertos
+    rm_vendor_usb_device
+    rm_vendor_segger_rtt
+    rm_common
+    rm_vendor_stm32_hal
     HAL_Lib
     $<TARGET_OBJECTS:HAL_IRQ>
     -Wl,--end-group
-    ${DSP_LIB}
     m
     c
 )

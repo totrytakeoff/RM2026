@@ -27,7 +27,7 @@ sub->front_idx = (sub->front_idx + 1) % QUEUE_SIZE;
 
 ## 修改文件
 
-1. `lib/HNUYueLuRM/modules/message_center/message_center.c`
+1. `components/services/message_bus/message_center.c`
 
 ---
 
@@ -57,7 +57,7 @@ instance->temp_count = config->reload_count;
 
 ## 修改文件
 
-1. `lib/HNUYueLuRM/modules/daemon/daemon.c`
+1. `components/services/device_health/daemon.c`
 
 ---
 

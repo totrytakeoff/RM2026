@@ -2,7 +2,7 @@
 
 文档目的：
 
-1. 记录当前 `lib/HNUYueLuRM/modules/referee` 已落地功能与边界。
+1. 记录当前 `components/devices/referee` 已落地功能与边界。
 2. 对照 `RoboMaster 2026 通信协议 V1.2.0（20260209）` 明确差异项。
 3. 为后续迭代提供统一事实基线，避免重复排查。
 
@@ -25,7 +25,7 @@
 
 ### 2.1 接收链路基础能力
 
-文件：`lib/HNUYueLuRM/modules/referee/rm_referee.c`
+文件：`components/devices/referee/rm_referee.c`
 
 1. SOF 校验（`0xA5`）
 2. 帧头 CRC8 校验
@@ -56,7 +56,7 @@
 
 ### 2.3 已更新的数据结构口径（关键）
 
-文件：`lib/HNUYueLuRM/modules/referee/referee_protocol.h`
+文件：`components/devices/referee/referee_protocol.h`
 
 已完成对齐的关键项：
 

@@ -33,10 +33,10 @@ target_compile_options(rm_app_infantry PRIVATE ${MCU_FLAGS})
 target_link_libraries(rm_app_infantry PUBLIC
     rm_infantry_config
     rm_service_safety
-    HNUYueLuRM_modules
-    HNUYueLuRM_bsp
-    HNUYueLuRM_common
-    HNUYueLuRM_drivers
+    rm_components
+    rm_platform_stm32f4
+    rm_common
+    rm_vendor_stm32_hal
     HAL_Lib
     m
 )

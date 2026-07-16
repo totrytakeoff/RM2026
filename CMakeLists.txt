@@ -5,7 +5,7 @@
 # @author YZ-Control/myself
 # @version 1.0.0
 # @date 2025-12-07
-# @details 统一加载 Toolchain、组织 lib/hal/Src/test 子目录并定义 upload/clean 等全局目标。
+# @details 统一加载工具链，按外部依赖、平台、组件、应用和固件分层组织构建。
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.16)
@@ -30,7 +30,6 @@ add_compile_definitions(
     BSP_LOG_UART_TIMEOUT_MS=100
 )
 
-include(cmake/Functions.cmake)
 include(CTest)
 enable_testing()
 
@@ -41,22 +40,23 @@ file(MAKE_DIRECTORY ${GLOBAL_OUTPUT_DIR})
 # =============================================================================
 # 添加子模块 (顺序很重要)
 # =============================================================================
-# 1. 编译 Lib (HNUYueLuRM_Framework: 包含官方驱动 + 机器人框架)
-add_subdirectory(lib)
+# 1. 外部依赖必须先于所有仓库自有代码定义。
+add_subdirectory(third_party)
 
-# 2. 编译 HAL (HAL_Lib: 包含 CubeMX 生成的配置代码 + 启动文件)
+# 2. CubeMX 生成的板级配置、平台适配与可复用组件。
 add_subdirectory(hal)
+add_subdirectory(platform)
+add_subdirectory(components)
 
-# 3. 编译自有服务、应用、系统与固件组合层
-add_subdirectory(services)
+# 3. 应用行为、RTOS 策略与固件组合层。
 add_subdirectory(application)
 add_subdirectory(system)
 add_subdirectory(firmware)
 
-# 4. 编译 Src (CubeMX main入口)
+# 4. 当前固件入口；后续迁入具体 board/firmware 目录。
 add_subdirectory(Src)
 
-# 5. 编译 Test (测试代码)
+# 5. 板级与回归测试目标。
 # 定义所有测试项目的输出根目录, 以便 TestFunctions.cmake 使用
 set(TEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests CACHE INTERNAL "Root directory for test outputs")
 add_subdirectory(test)
