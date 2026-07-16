@@ -1,305 +1,493 @@
-/**
-  * @file       utils.c
-  * @brief      实用工具函数实现，包含完美支持浮点数的格式化函数
-  */
-
 #include "utils.h"
-#include <string.h>
+
+#include <limits.h>
 #include <math.h>
-#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
-// 内部函数：格式化单个浮点数
-static int format_single_float(char* buffer, size_t buffer_size, float value, int precision, int width, char flags)
+typedef struct {
+    char *buffer;
+    size_t capacity;
+    size_t total;
+} FormatWriter;
+
+typedef enum {
+    FORMAT_LENGTH_DEFAULT = 0,
+    FORMAT_LENGTH_HH,
+    FORMAT_LENGTH_H,
+    FORMAT_LENGTH_L,
+    FORMAT_LENGTH_LL,
+    FORMAT_LENGTH_Z,
+} FormatLength;
+
+typedef struct {
+    bool left;
+    bool plus;
+    bool space;
+    bool zero;
+    bool alternate;
+} FormatFlags;
+
+static void WriterPut(FormatWriter *writer, char value)
 {
-    if (buffer == NULL || buffer_size == 0) {
-        return 0;
+    if ((writer->capacity != 0U) &&
+        (writer->total < (writer->capacity - 1U))) {
+        writer->buffer[writer->total] = value;
     }
-    
-    // 处理特殊值
-    if (isnan(value)) {
-        return snprintf(buffer, buffer_size, "nan");
+    writer->total++;
+}
+
+static void WriterRepeat(FormatWriter *writer, char value, size_t count)
+{
+    for (size_t i = 0U; i < count; ++i) {
+        WriterPut(writer, value);
     }
-    if (isinf(value)) {
-        if (value < 0) {
-            return snprintf(buffer, buffer_size, "-inf");
-        } else {
-            return snprintf(buffer, buffer_size, "inf");
-        }
+}
+
+static void WriterWrite(FormatWriter *writer, const char *text, size_t length)
+{
+    for (size_t i = 0U; i < length; ++i) {
+        WriterPut(writer, text[i]);
     }
-    
-    // 限制精度在0-9之间
-    if (precision < 0) precision = 6; // 默认精度
-    if (precision > 9) precision = 9;
-    
-    // 处理负数
-    int is_negative = 0;
-    if (value < 0) {
-        is_negative = 1;
+}
+
+static void WriterFinish(FormatWriter *writer)
+{
+    if (writer->capacity == 0U) {
+        return;
+    }
+
+    if (writer->total < writer->capacity) {
+        writer->buffer[writer->total] = '\0';
+    } else {
+        writer->buffer[writer->capacity - 1U] = '\0';
+    }
+}
+
+static size_t UnsignedDigits(uint64_t value,
+                             unsigned base,
+                             bool uppercase,
+                             char *reversed)
+{
+    const char *digits = uppercase
+                             ? "0123456789ABCDEF"
+                             : "0123456789abcdef";
+    size_t count = 0U;
+
+    do {
+        reversed[count++] = digits[value % base];
+        value /= base;
+    } while (value != 0U);
+
+    return count;
+}
+
+static void WriteInteger(FormatWriter *writer,
+                         uint64_t magnitude,
+                         bool negative,
+                         unsigned base,
+                         bool uppercase,
+                         FormatFlags flags,
+                         int width,
+                         int precision,
+                         bool force_prefix)
+{
+    char reversed[32];
+    char prefix[3];
+    size_t digit_count;
+    size_t prefix_length = 0U;
+    size_t precision_zeros = 0U;
+    size_t padding = 0U;
+
+    digit_count = UnsignedDigits(magnitude, base, uppercase, reversed);
+    if ((precision == 0) && (magnitude == 0U)) {
+        digit_count = 0U;
+    }
+
+    if (negative) {
+        prefix[prefix_length++] = '-';
+    } else if (flags.plus) {
+        prefix[prefix_length++] = '+';
+    } else if (flags.space) {
+        prefix[prefix_length++] = ' ';
+    }
+
+    if ((flags.alternate || force_prefix) && (base == 16U) &&
+        ((magnitude != 0U) || force_prefix)) {
+        prefix[prefix_length++] = '0';
+        prefix[prefix_length++] = uppercase ? 'X' : 'x';
+    } else if (flags.alternate && (base == 8U) &&
+               ((digit_count == 0U) ||
+                (reversed[digit_count - 1U] != '0'))) {
+        prefix[prefix_length++] = '0';
+    }
+
+    if ((precision > 0) && ((size_t)precision > digit_count)) {
+        precision_zeros = (size_t)precision - digit_count;
+    }
+    if ((width > 0) &&
+        ((size_t)width > prefix_length + precision_zeros + digit_count)) {
+        padding = (size_t)width - prefix_length - precision_zeros - digit_count;
+    }
+
+    if (!flags.left && !(flags.zero && (precision < 0))) {
+        WriterRepeat(writer, ' ', padding);
+    }
+    WriterWrite(writer, prefix, prefix_length);
+    if (!flags.left && flags.zero && (precision < 0)) {
+        WriterRepeat(writer, '0', padding);
+    }
+    WriterRepeat(writer, '0', precision_zeros);
+    while (digit_count != 0U) {
+        WriterPut(writer, reversed[--digit_count]);
+    }
+    if (flags.left) {
+        WriterRepeat(writer, ' ', padding);
+    }
+}
+
+static void WriteText(FormatWriter *writer,
+                      const char *text,
+                      size_t length,
+                      FormatFlags flags,
+                      int width)
+{
+    size_t padding = 0U;
+
+    if ((width > 0) && ((size_t)width > length)) {
+        padding = (size_t)width - length;
+    }
+    if (!flags.left) {
+        WriterRepeat(writer, ' ', padding);
+    }
+    WriterWrite(writer, text, length);
+    if (flags.left) {
+        WriterRepeat(writer, ' ', padding);
+    }
+}
+
+static void WriteFloat(FormatWriter *writer,
+                       double value,
+                       FormatFlags flags,
+                       int width,
+                       int precision)
+{
+    char text[96];
+    char reversed[32];
+    size_t length = 0U;
+    size_t integer_digits;
+    size_t padding = 0U;
+    uint64_t scale = 1U;
+    uint64_t scaled;
+    uint64_t integer_part;
+    uint64_t fractional_part;
+    bool negative = signbit(value) != 0;
+
+    if (precision < 0) {
+        precision = 6;
+    }
+    if (precision > 9) {
+        precision = 9;
+    }
+
+    if (negative) {
+        text[length++] = '-';
         value = -value;
+    } else if (flags.plus) {
+        text[length++] = '+';
+    } else if (flags.space) {
+        text[length++] = ' ';
     }
-    
-    // 计算缩放因子
-    int scale = 1;
-    for (int i = 0; i < precision; i++) {
-        scale *= 10;
-    }
-    
-    // 转换为整数
-    int int_part = (int)value;
-    int frac_part = (int)((value - int_part) * scale + 0.5f); // 四舍五入
-    
-    // 处理进位
-    if (frac_part >= scale) {
-        int_part += 1;
-        frac_part = 0;
-    }
-    
-    // 计算需要的空间
-    int total_len = 0;
-    
-    // 负号
-    if (is_negative) total_len++;
-    
-    // 整数部分
-    int temp_int = int_part;
-    if (temp_int == 0) {
-        total_len++; // "0"
+
+    if (isnan(value)) {
+        memcpy(&text[length], "nan", 3U);
+        length += 3U;
+    } else if (isinf(value)) {
+        memcpy(&text[length], "inf", 3U);
+        length += 3U;
     } else {
-        while (temp_int > 0) {
-            total_len++;
-            temp_int /= 10;
+        for (int i = 0; i < precision; ++i) {
+            scale *= 10U;
         }
-    }
-    
-    // 小数点和小数部分
-    if (precision > 0) {
-        total_len++; // 小数点
-        total_len += precision; // 小数位数
-    }
-    
-    // 检查缓冲区大小
-    if (total_len >= buffer_size) {
-        return 0;
-    }
-    
-    // 开始格式化
-    int pos = 0;
-    
-    // 添加负号
-    if (is_negative) {
-        buffer[pos++] = '-';
-    }
-    
-    // 添加整数部分
-    if (int_part == 0) {
-        buffer[pos++] = '0';
-    } else {
-        // 反转整数部分
-        char int_str[12]; // 足够大的整数缓冲区
-        int int_pos = 0;
-        temp_int = int_part;
-        while (temp_int > 0) {
-            int_str[int_pos++] = '0' + (temp_int % 10);
-            temp_int /= 10;
-        }
-        
-        // 反向复制到缓冲区
-        for (int i = int_pos - 1; i >= 0; i--) {
-            buffer[pos++] = int_str[i];
-        }
-    }
-    
-    // 添加小数部分
-    if (precision > 0) {
-        buffer[pos++] = '.';
-        
-        // 补零
-        int temp = scale / 10;
-        while (temp > frac_part && precision > 1) {
-            buffer[pos++] = '0';
-            temp /= 10;
-            precision--;
-        }
-        
-        // 添加小数部分
-        if (frac_part > 0) {
-            char frac_str[12]; // 足够大的小数缓冲区
-            int frac_pos = 0;
-            temp = frac_part;
-            while (temp > 0) {
-                frac_str[frac_pos++] = '0' + (temp % 10);
-                temp /= 10;
+        if (value > ((double)UINT64_MAX / (double)scale)) {
+            memcpy(&text[length], "overflow", 8U);
+            length += 8U;
+        } else {
+            scaled = (uint64_t)((value * (double)scale) + 0.5);
+            integer_part = scaled / scale;
+            fractional_part = scaled % scale;
+            integer_digits = UnsignedDigits(integer_part,
+                                             10U,
+                                             false,
+                                             reversed);
+            while (integer_digits != 0U) {
+                text[length++] = reversed[--integer_digits];
             }
-            
-            // 反向复制到缓冲区
-            for (int i = frac_pos - 1; i >= 0; i--) {
-                buffer[pos++] = frac_str[i];
+
+            if ((precision != 0) || flags.alternate) {
+                text[length++] = '.';
+            }
+            if (precision != 0) {
+                uint64_t divisor = scale / 10U;
+                for (int i = 0; i < precision; ++i) {
+                    text[length++] =
+                        (char)('0' + ((fractional_part / divisor) % 10U));
+                    divisor /= 10U;
+                }
+            }
+        }
+    }
+
+    if ((width > 0) && ((size_t)width > length)) {
+        padding = (size_t)width - length;
+    }
+    if (!flags.left && !flags.zero) {
+        WriterRepeat(writer, ' ', padding);
+    }
+    if (!flags.left && flags.zero && (length != 0U) &&
+        ((text[0] == '-') || (text[0] == '+') || (text[0] == ' '))) {
+        WriterPut(writer, text[0]);
+        WriterRepeat(writer, '0', padding);
+        WriterWrite(writer, &text[1], length - 1U);
+    } else {
+        if (!flags.left && flags.zero) {
+            WriterRepeat(writer, '0', padding);
+        }
+        WriterWrite(writer, text, length);
+    }
+    if (flags.left) {
+        WriterRepeat(writer, ' ', padding);
+    }
+}
+
+static int ParseNumber(const char **cursor)
+{
+    int value = 0;
+
+    while ((**cursor >= '0') && (**cursor <= '9')) {
+        if (value < 10000) {
+            value = (value * 10) + (**cursor - '0');
+        }
+        (*cursor)++;
+    }
+    return value;
+}
+
+static int WriterResult(const FormatWriter *writer)
+{
+    return (writer->total > (size_t)INT_MAX) ? INT_MAX : (int)writer->total;
+}
+
+int RmFormat_Vsnprintf(char *buffer,
+                       size_t buffer_size,
+                       const char *format,
+                       va_list args)
+{
+    FormatWriter writer = {
+        .buffer = buffer,
+        .capacity = buffer_size,
+        .total = 0U,
+    };
+    const char *cursor = format;
+
+    if ((format == NULL) || ((buffer == NULL) && (buffer_size != 0U))) {
+        return -1;
+    }
+
+    while (*cursor != '\0') {
+        FormatFlags flags = {0};
+        FormatLength length = FORMAT_LENGTH_DEFAULT;
+        int width = 0;
+        int precision = -1;
+        char specifier;
+
+        if (*cursor != '%') {
+            WriterPut(&writer, *cursor++);
+            continue;
+        }
+        cursor++;
+
+        for (;;) {
+            if (*cursor == '-') flags.left = true;
+            else if (*cursor == '+') flags.plus = true;
+            else if (*cursor == ' ') flags.space = true;
+            else if (*cursor == '0') flags.zero = true;
+            else if (*cursor == '#') flags.alternate = true;
+            else break;
+            cursor++;
+        }
+
+        if (*cursor == '*') {
+            width = va_arg(args, int);
+            cursor++;
+            if (width < 0) {
+                flags.left = true;
+                width = -width;
             }
         } else {
-            // 全部补零
-            for (int i = 0; i < precision; i++) {
-                buffer[pos++] = '0';
+            width = ParseNumber(&cursor);
+        }
+
+        if (*cursor == '.') {
+            cursor++;
+            if (*cursor == '*') {
+                precision = va_arg(args, int);
+                cursor++;
+                if (precision < 0) precision = -1;
+            } else {
+                precision = ParseNumber(&cursor);
             }
         }
+
+        if ((*cursor == 'h') && (cursor[1] == 'h')) {
+            length = FORMAT_LENGTH_HH;
+            cursor += 2;
+        } else if (*cursor == 'h') {
+            length = FORMAT_LENGTH_H;
+            cursor++;
+        } else if ((*cursor == 'l') && (cursor[1] == 'l')) {
+            length = FORMAT_LENGTH_LL;
+            cursor += 2;
+        } else if (*cursor == 'l') {
+            length = FORMAT_LENGTH_L;
+            cursor++;
+        } else if (*cursor == 'z') {
+            length = FORMAT_LENGTH_Z;
+            cursor++;
+        }
+
+        specifier = *cursor;
+        if (specifier == '\0') {
+            WriterPut(&writer, '%');
+            break;
+        }
+        cursor++;
+
+        if ((specifier == 'd') || (specifier == 'i')) {
+            int64_t value;
+            if (length == FORMAT_LENGTH_LL) value = va_arg(args, long long);
+            else if (length == FORMAT_LENGTH_L) value = va_arg(args, long);
+            else if (length == FORMAT_LENGTH_Z) value = va_arg(args, ptrdiff_t);
+            else {
+                int raw = va_arg(args, int);
+                if (length == FORMAT_LENGTH_HH) value = (signed char)raw;
+                else if (length == FORMAT_LENGTH_H) value = (short)raw;
+                else value = raw;
+            }
+            WriteInteger(&writer,
+                         (value < 0) ? (UINT64_C(0) - (uint64_t)value)
+                                     : (uint64_t)value,
+                         value < 0,
+                         10U,
+                         false,
+                         flags,
+                         width,
+                         precision,
+                         false);
+        } else if ((specifier == 'u') || (specifier == 'o') ||
+                   (specifier == 'x') || (specifier == 'X')) {
+            uint64_t value;
+            unsigned base = (specifier == 'o') ? 8U
+                             : ((specifier == 'x') || (specifier == 'X'))
+                                   ? 16U
+                                   : 10U;
+            if (length == FORMAT_LENGTH_LL) value = va_arg(args, unsigned long long);
+            else if (length == FORMAT_LENGTH_L) value = va_arg(args, unsigned long);
+            else if (length == FORMAT_LENGTH_Z) value = va_arg(args, size_t);
+            else {
+                unsigned raw = va_arg(args, unsigned);
+                if (length == FORMAT_LENGTH_HH) value = (unsigned char)raw;
+                else if (length == FORMAT_LENGTH_H) value = (unsigned short)raw;
+                else value = raw;
+            }
+            flags.plus = false;
+            flags.space = false;
+            WriteInteger(&writer,
+                         value,
+                         false,
+                         base,
+                         specifier == 'X',
+                         flags,
+                         width,
+                         precision,
+                         false);
+        } else if (specifier == 'p') {
+            flags.plus = false;
+            flags.space = false;
+            WriteInteger(&writer,
+                         (uintptr_t)va_arg(args, void *),
+                         false,
+                         16U,
+                         false,
+                         flags,
+                         width,
+                         precision,
+                         true);
+        } else if (specifier == 'c') {
+            const char value = (char)va_arg(args, int);
+            WriteText(&writer, &value, 1U, flags, width);
+        } else if (specifier == 's') {
+            const char *value = va_arg(args, const char *);
+            size_t text_length;
+            if (value == NULL) value = "(null)";
+            text_length = strlen(value);
+            if ((precision >= 0) && ((size_t)precision < text_length)) {
+                text_length = (size_t)precision;
+            }
+            WriteText(&writer, value, text_length, flags, width);
+        } else if ((specifier == 'f') || (specifier == 'F') ||
+                   (specifier == 'e') || (specifier == 'E') ||
+                   (specifier == 'g') || (specifier == 'G')) {
+            WriteFloat(&writer,
+                       va_arg(args, double),
+                       flags,
+                       width,
+                       precision);
+        } else if (specifier == '%') {
+            WriterPut(&writer, '%');
+        } else {
+            WriterPut(&writer, '%');
+            WriterPut(&writer, specifier);
+        }
     }
-    
-    buffer[pos] = '\0';
-    return pos;
+
+    WriterFinish(&writer);
+    return WriterResult(&writer);
 }
 
-/**
-  * @brief      安全的vsnprintf实现，完美支持浮点数
-  * @param[out] buffer: 输出缓冲区
-  * @param[in]  buffer_size: 缓冲区大小
-  * @param[in]  format: 格式化字符串
-  * @param[in]  args: 可变参数列表
-  * @retval     实际写入的字符数（不包括终止符）
-  */
-int safe_vsnprintf(char* buffer, size_t buffer_size, const char* format, va_list args)
+int RmFormat_Snprintf(char *buffer,
+                      size_t buffer_size,
+                      const char *format,
+                      ...)
 {
-    if (buffer == NULL || buffer_size == 0 || format == NULL) {
-        return 0;
-    }
-    
-    size_t pos = 0;
-    const char* p = format;
-    
-    while (*p != '\0' && pos < buffer_size - 1) {
-        if (*p != '%') {
-            buffer[pos++] = *p++;
-            continue;
-        }
-        
-        // 处理格式说明符
-        p++; // 跳过 '%'
-        
-        if (*p == '\0') break;
-        
-        // 处理转义字符 '%'
-        if (*p == '%') {
-            buffer[pos++] = *p++;
-            continue;
-        }
-        
-        // 解析格式标志
-        char flags = 0;
-        while (*p == '-' || *p == '+' || *p == ' ' || *p == '0' || *p == '#') {
-            flags |= *p;
-            p++;
-        }
-        
-        // 解析宽度
-        int width = 0;
-        while (*p >= '0' && *p <= '9') {
-            width = width * 10 + (*p - '0');
-            p++;
-        }
-        
-        // 解析精度
-        int precision = -1;
-        if (*p == '.') {
-            p++;
-            precision = 0;
-            while (*p >= '0' && *p <= '9') {
-                precision = precision * 10 + (*p - '0');
-                p++;
-            }
-        }
-        
-        // 解析长度修饰符
-        while (*p == 'h' || *p == 'l' || *p == 'L') {
-            p++;
-        }
-        
-        // 解析转换说明符
-        char spec = *p++;
-        
-        // 处理不同的格式说明符
-        switch (spec) {
-            case 'd':
-            case 'i': {
-                int value = va_arg(args, int);
-                int len = snprintf(buffer + pos, buffer_size - pos, "%d", value);
-                pos += len;
-                break;
-            }
-            case 'u': {
-                unsigned int value = va_arg(args, unsigned int);
-                int len = snprintf(buffer + pos, buffer_size - pos, "%u", value);
-                pos += len;
-                break;
-            }
-            case 'x': {
-                unsigned int value = va_arg(args, unsigned int);
-                int len = snprintf(buffer + pos, buffer_size - pos, "%x", value);
-                pos += len;
-                break;
-            }
-            case 'X': {
-                unsigned int value = va_arg(args, unsigned int);
-                int len = snprintf(buffer + pos, buffer_size - pos, "%X", value);
-                pos += len;
-                break;
-            }
-            case 'c': {
-                char value = (char)va_arg(args, int);
-                if (pos < buffer_size - 1) {
-                    buffer[pos++] = value;
-                }
-                break;
-            }
-            case 's': {
-                char* value = va_arg(args, char*);
-                int len = snprintf(buffer + pos, buffer_size - pos, "%s", value);
-                pos += len;
-                break;
-            }
-            case 'f':
-            case 'F':
-            case 'g':
-            case 'G':
-            case 'e':
-            case 'E': {
-                float value = (float)va_arg(args, double);
-                int len = format_single_float(buffer + pos, buffer_size - pos, value, precision, width, flags);
-                pos += len;
-                break;
-            }
-            default: {
-                // 未知格式，原样输出
-                if (pos < buffer_size - 2) {
-                    buffer[pos++] = '%';
-                    buffer[pos++] = spec;
-                }
-                break;
-            }
-        }
-    }
-    
-    // 确保字符串以null结尾
-    if (pos < buffer_size) {
-        buffer[pos] = '\0';
-    } else {
-        buffer[buffer_size - 1] = '\0';
-    }
-    
-    return pos;
-}
-
-/**
-  * @brief      完美支持浮点数的格式化函数，类似于snprintf
-  * @param[out] buffer: 输出缓冲区
-  * @param[in]  buffer_size: 缓冲区大小
-  * @param[in]  format: 格式化字符串，支持%s, %d, %u, %x, %f, %.2f等
-  * @param[in]  ...: 可变参数列表
-  * @retval     实际写入的字符数（不包括终止符）
-  * @note       此函数完全兼容snprintf格式，但完美支持浮点数格式化
-  */
-int safe_snprintf(char* buffer, size_t buffer_size, const char* format, ...)
-{
+    int result;
     va_list args;
+
     va_start(args, format);
-    int result = safe_vsnprintf(buffer, buffer_size, format, args);
+    result = RmFormat_Vsnprintf(buffer, buffer_size, format, args);
+    va_end(args);
+    return result;
+}
+
+int safe_vsnprintf(char *buffer,
+                   size_t buffer_size,
+                   const char *format,
+                   va_list args)
+{
+    return RmFormat_Vsnprintf(buffer, buffer_size, format, args);
+}
+
+int safe_snprintf(char *buffer,
+                  size_t buffer_size,
+                  const char *format,
+                  ...)
+{
+    int result;
+    va_list args;
+
+    va_start(args, format);
+    result = RmFormat_Vsnprintf(buffer, buffer_size, format, args);
     va_end(args);
     return result;
 }

@@ -94,10 +94,10 @@ CANCommInstance *CANCommInit(CANComm_Init_Config_s *comm_config)
     comm_config->can_config.can_module_callback = CANCommRxCallback;
     ins->can_ins = CANRegister(&comm_config->can_config);
 
-    Daemon_Init_Config_s daemon_config = {
+    DaemonConfig daemon_config = {
         .callback = CANCommLostCallback,
-        .owner_id = (void *)ins,
-        .reload_count = comm_config->daemon_count,
+        .owner = (void *)ins,
+        .timeout_ms = comm_config->timeout_ms,
     };
     ins->comm_daemon = DaemonRegister(&daemon_config);
     return ins;
@@ -118,7 +118,7 @@ void CANCommSend(CANCommInstance *instance, uint8_t *data)
         send_len = instance->send_buf_len - i >= 8 ? 8 : instance->send_buf_len - i;
         CANSetDLC(instance->can_ins, send_len);
         memcpy(instance->can_ins->tx_buff, instance->raw_sendbuf + i, send_len);
-        CANTransmit(instance->can_ins, 1);
+        CANTransmit(instance->can_ins, 1000U);
     }
 }
 

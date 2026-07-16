@@ -43,6 +43,9 @@ competition-ready firmware. See
 `docs/migration/infantry_freertos_baseline.md` for current tasks and open gates.
 The safety-state and task-health contract is documented in
 `docs/migration/safety_health_service.md`.
+The monotonic-time, device-deadline, static transport-storage, and heap-free
+formal-runtime baseline is documented in
+`docs/migration/platform_runtime_milestone.md`.
 The approved repository ownership model and final directory layout are recorded
 in `docs/architecture/repository_reorganization_baseline.md`.
 

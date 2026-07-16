@@ -18,6 +18,7 @@
 #define ET08_SWITCH_LEVEL_5 -554
 
 #define ET08_SWITCH_TOLERANCE 200
+#define ET08_DEFAULT_TIMEOUT_MS 4000U
 
 typedef enum
 {
@@ -98,6 +99,8 @@ typedef struct
 } ET08_Ctrl_t;
 
 ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle);
+ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
+                                  uint32_t timeout_ms);
 uint8_t ET08_IsOnline(void);
 ET08_Ctrl_t *ET08_GetCtrl(void);
 uint8_t ET08_MapSwitchState(uint16_t raw_value);

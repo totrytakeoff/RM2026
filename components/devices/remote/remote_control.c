@@ -150,6 +150,10 @@ static void ReinitUartForDbus(UART_HandleTypeDef *uart_handle)
  */
 static void RemoteControlRxCallback()
 {
+    if (rc_usart_instance_dt7 == NULL ||
+        rc_usart_instance_dt7->recv_len != REMOTE_CONTROL_FRAME_SIZE)
+        return;
+
     DaemonReload(rc_daemon_dt7);                                    // 先喂狗
     sbus_to_rc(rc_usart_instance_dt7->recv_buff, rc_ctrl_dt7);      // 进行协议解析
     UpdateOutputFromDt7();                                          // DT7优先级最高
@@ -189,10 +193,10 @@ RC_ctrl_t *RemoteControlInit(UART_HandleTypeDef *rc_usart_handle)
     rc_usart_instance_dt7 = USARTRegister(&conf);
 
     // 进行守护进程的注册,用于定时检查遥控器是否正常工作
-    Daemon_Init_Config_s daemon_conf = {
-        .reload_count = 10, // 100ms未收到数据视为离线,遥控器的接收频率实际上是1000/14Hz(大约70Hz)
+    DaemonConfig daemon_conf = {
+        .timeout_ms = 100U, // 100ms未收到数据视为离线,遥控器的接收频率实际上是1000/14Hz(大约70Hz)
         .callback = RCLostCallback,
-        .owner_id = NULL, // 只有1个遥控器,不需要owner_id
+        .owner = NULL, // 只有1个遥控器,不需要owner_id
     };
     rc_daemon_dt7 = DaemonRegister(&daemon_conf);
 
@@ -204,7 +208,8 @@ RC_ctrl_t *RemoteControlInit(UART_HandleTypeDef *rc_usart_handle)
 
 static void VirtualRxCallback()
 {
-    if (!virtual_enabled)
+    if (!virtual_enabled || rc_usart_instance_virtual == NULL ||
+        rc_usart_instance_virtual->recv_len != REMOTE_CONTROL_FRAME_SIZE)
         return;
 
     DaemonReload(rc_daemon_virtual);
@@ -244,10 +249,10 @@ RC_ctrl_t *RemoteControlInitVirtual(UART_HandleTypeDef *virtual_usart_handle)
     conf.recv_buff_size = REMOTE_CONTROL_FRAME_SIZE;
     rc_usart_instance_virtual = USARTRegister(&conf);
 
-    Daemon_Init_Config_s daemon_conf = {
-        .reload_count = 10,
+    DaemonConfig daemon_conf = {
+        .timeout_ms = 100U,
         .callback = VirtualLostCallback,
-        .owner_id = NULL,
+        .owner = NULL,
     };
     rc_daemon_virtual = DaemonRegister(&daemon_conf);
 

@@ -9,6 +9,7 @@
 #include "infantry_referee.h"
 #include "infantry_debug.h"
 #include "dji_motor.h"
+#include "rm_time.h"
 #include "user_lib.h"
 #include "can.h"
 #include <math.h>
@@ -119,7 +120,7 @@ void Shoot_Init(void)
 
 void Shoot_Update(Input_Data_t *input)
 {
-    uint32_t now = HAL_GetTick();
+    uint32_t now = RmTime_NowMs();
     Shoot_Cmd_t cmd = {0};
     
     if (input == NULL || !input->online || input->emergency_stop) {

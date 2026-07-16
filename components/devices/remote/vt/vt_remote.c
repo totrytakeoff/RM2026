@@ -281,10 +281,10 @@ VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
     }
 
     {
-        Daemon_Init_Config_s daemon_conf = {
-            .reload_count = 20, // 200ms timeout, VT frame interval is around 14ms
+        DaemonConfig daemon_conf = {
+            .timeout_ms = 200U, // 200ms timeout, VT frame interval is around 14ms
             .callback = VT_LostCallback,
-            .owner_id = NULL,
+            .owner = NULL,
         };
         vt_daemon = DaemonRegister(&daemon_conf);
     }

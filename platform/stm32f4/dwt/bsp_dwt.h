@@ -93,8 +93,9 @@ uint64_t DWT_GetTimeline_us(void);
 void DWT_Delay(float Delay);
 
 /**
- * @brief DWT更新时间轴函数,会被三个timeline函数调用
- * @attention 如果长时间不调用timeline函数,则需要手动调用该函数更新时间轴,否则CYCCNT溢出后定时和时间轴不准确
+ * @brief Advance the internal 32-to-64-bit DWT cycle timeline.
+ * @attention Call this or a DWT timeline/delta function at least once per
+ *            32-bit CYCCNT wrap so that no wrap is missed.
  */
 void DWT_SysTimeUpdate(void);
 

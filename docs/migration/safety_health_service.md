@@ -8,8 +8,8 @@ FreeRTOS task assumptions measurable before any control retuning begins.
 
 ## Safety contract
 
-`services/safety` has no HAL or FreeRTOS dependency and is the first reusable
-service in the new framework.
+`components/services/safety` has no HAL or FreeRTOS dependency and is the first
+reusable service in the new framework.
 
 | State | Meaning | Actuator updates |
 | --- | --- | --- |
@@ -67,6 +67,11 @@ ctest --test-dir build-host --output-on-failure
 CI runs these tests before configuring the embedded build. Covered transitions
 include boot, activation, input loss, emergency stop, task-health failure,
 combined reasons, automatic recovery, and null-argument fail-safe behavior.
+
+The same native suite now also verifies the independent
+`components/services/device_health` deadline service. Its millisecond timeout,
+wrap, one-shot transition, fixed-capacity, and null-safety contract is recorded
+in `platform_runtime_milestone.md`.
 
 ## Hardware work still required
 

@@ -2,6 +2,7 @@
 #include "bmi088.h"
 #include "user_lib.h"
 #include "daemon.h"
+#include "rm_time.h"
 
 static DaemonInstance *bmi088_daemon_instance;
 
@@ -317,18 +318,18 @@ void BMI088CalibrateIMU(BMI088Instance *_bmi088)
         _bmi088->acc_coef = BMI088_ACCEL_6G_SEN;         // 标定完后要乘以9.805/gNorm
         _bmi088->BMI088_GYRO_SEN = BMI088_GYRO_2000_SEN; // 后续改为从initTable中获取
         // 一次性参数用完就丢,不用static
-        float startTime;                     // 开始标定时间,用于确定是否超时
+        uint32_t start_time_ms;               // 开始标定时间,用于确定是否超时
         uint16_t CaliTimes = 6000;           // 标定次数(6s)
         float gyroMax[3], gyroMin[3];        // 保存标定过程中读取到的数据最大值判断是否满足标定环境
         float gNormTemp, gNormMax, gNormMin; // 同上,计算矢量范数(模长)
         float gyroDiff[3], gNormDiff;        // 每个轴的最大角速度跨度及其模长
 
         BMI088_Data_t raw_data;
-        startTime = DWT_GetTimeline_s();
+        start_time_ms = RmTime_NowMs();
         // 循环继续的条件为标定环境不满足
         do // 用do while至少执行一次,省得对上面的参数进行初始化
         {  // 标定超时,直接使用预标定参数(如果有)
-            if (DWT_GetTimeline_s() - startTime > 12.01)
+            if (RmTime_ElapsedMs(RmTime_NowMs(), start_time_ms) > 12010U)
             { // 两次都没有成功就切换标定模式,丢给下一个if处理,使用预标定参数
                 _bmi088->cali_mode = BMI088_LOAD_PRE_CALI_MODE;
                 break;

@@ -60,12 +60,18 @@ target_compile_options(app.elf PRIVATE ${MCU_FLAGS})
 target_link_options(app.elf PRIVATE 
     ${GENERIC_LINK_OPTIONS}
     -T${LINKER_SCRIPT}
+    -Wl,--defsym=RM_MIN_HEAP_SIZE=0
+    -Wl,--defsym=RM_MIN_STACK_SIZE=0x2000
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/app.map 
     -Wl,--print-memory-usage
 )
 
 # 生成 Hex 和 Bin
 add_custom_command(TARGET app.elf POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            -DNM=${CMAKE_NM}
+            -DELF=$<TARGET_FILE:app.elf>
+            -P ${CMAKE_SOURCE_DIR}/cmake/CheckFormalFirmwareSymbols.cmake
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.bin
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GLOBAL_OUTPUT_DIR}

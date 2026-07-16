@@ -137,7 +137,7 @@ static void ImuScanRequest(uint8_t rid)
     imu_tx_can->tx_buff[3] = 0xDD;
     memset(&imu_tx_can->tx_buff[4], 0, 4);
     CANSetDLC(imu_tx_can, 8);
-    CANTransmit(imu_tx_can, 1);
+    CANTransmit(imu_tx_can, 1000U);
 }
 
 static void ImuScanRequestOnce(void)

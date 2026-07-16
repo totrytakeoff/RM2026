@@ -26,6 +26,8 @@
 #include "arm_math.h"
 //#include "dsp/matrix_functions.h"
 #include "math.h"
+#include "stdbool.h"
+#include "stddef.h"
 #include "stdint.h"
 #include "stdlib.h"
 
@@ -45,6 +47,14 @@
 #define Matrix_Multiply arm_mat_mult_f32
 #define Matrix_Transpose arm_mat_trans_f32
 #define Matrix_Inverse arm_mat_inverse_f32
+
+#define KALMAN_FILTER_WORKSPACE_FLOAT_COUNT(x, u, z)                          \
+    ((6U * (x)) + (4U * (z)) + (2U * (u)) + (8U * (x) * (x)) +              \
+     ((x) * (u)) + (3U * (x) * (z)) + ((z) * (z)))
+
+#define KALMAN_FILTER_WORKSPACE_SIZE(x, u, z)                                 \
+    ((2U * (z)) + (_Alignof(float) - 1U) +                                   \
+     (KALMAN_FILTER_WORKSPACE_FLOAT_COUNT((x), (u), (z)) * sizeof(float)))
 
 typedef struct kf_t
 {
@@ -111,6 +121,19 @@ typedef struct kf_t
 extern uint16_t sizeof_float, sizeof_double;
 
 void Kalman_Filter_Init(KalmanFilter_t *kf, uint8_t xhatSize, uint8_t uSize, uint8_t zSize);
+
+/** Return the caller-owned workspace required for the selected dimensions. */
+size_t Kalman_Filter_WorkspaceSize(uint8_t xhatSize,
+                                   uint8_t uSize,
+                                   uint8_t zSize);
+
+/** Initialize a filter without heap allocation. */
+bool Kalman_Filter_InitWithWorkspace(KalmanFilter_t *kf,
+                                     uint8_t xhatSize,
+                                     uint8_t uSize,
+                                     uint8_t zSize,
+                                     void *workspace,
+                                     size_t workspace_size);
 void Kalman_Filter_Measure(KalmanFilter_t *kf);
 void Kalman_Filter_xhatMinusUpdate(KalmanFilter_t *kf);
 void Kalman_Filter_PminusUpdate(KalmanFilter_t *kf);

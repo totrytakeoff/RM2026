@@ -5,7 +5,6 @@
  * @version beta
  * @date 2022-11-01
  *
- * @copyright Copyright (c) 2022 HNU YueLu EC all rights reserved
  *
  */
 

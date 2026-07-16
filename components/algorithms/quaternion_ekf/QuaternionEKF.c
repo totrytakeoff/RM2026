@@ -18,6 +18,21 @@
 
 QEKF_INS_t QEKF_INS;
 
+enum {
+    QEKF_STATE_DIMENSION = 6U,
+    QEKF_CONTROL_DIMENSION = 0U,
+    QEKF_MEASUREMENT_DIMENSION = 3U,
+    QEKF_WORKSPACE_SIZE =
+        KALMAN_FILTER_WORKSPACE_SIZE(QEKF_STATE_DIMENSION,
+                                     QEKF_CONTROL_DIMENSION,
+                                     QEKF_MEASUREMENT_DIMENSION),
+};
+
+static union {
+    float alignment;
+    uint8_t bytes[QEKF_WORKSPACE_SIZE];
+} qekf_workspace;
+
 const float IMU_QuaternionEKF_F[36] = {1, 0, 0, 0, 0, 0,
                                        0, 1, 0, 0, 0, 0,
                                        0, 0, 1, 0, 0, 0,
@@ -49,7 +64,7 @@ static void IMU_QuaternionEKF_xhatUpdate(KalmanFilter_t *kf);
  */
 void IMU_QuaternionEKF_Init(float* init_quaternion,float process_noise1, float process_noise2, float measure_noise, float lambda, float lpf)
 {
-    QEKF_INS.Initialized = 1;
+    QEKF_INS.Initialized = 0;
     QEKF_INS.Q1 = process_noise1;
     QEKF_INS.Q2 = process_noise2;
     QEKF_INS.R = measure_noise;
@@ -65,7 +80,15 @@ void IMU_QuaternionEKF_Init(float* init_quaternion,float process_noise1, float p
     QEKF_INS.accLPFcoef = lpf;
 
     // 初始化矩阵维度信息
-    Kalman_Filter_Init(&QEKF_INS.IMU_QuaternionEKF, 6, 0, 3);
+    if (!Kalman_Filter_InitWithWorkspace(&QEKF_INS.IMU_QuaternionEKF,
+                                         QEKF_STATE_DIMENSION,
+                                         QEKF_CONTROL_DIMENSION,
+                                         QEKF_MEASUREMENT_DIMENSION,
+                                         qekf_workspace.bytes,
+                                         sizeof(qekf_workspace.bytes))) {
+        return;
+    }
+    QEKF_INS.Initialized = 1;
     Matrix_Init(&QEKF_INS.ChiSquare, 1, 1, (float *)QEKF_INS.ChiSquare_Data);
 
     // 姿态初始化

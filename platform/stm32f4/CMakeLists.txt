@@ -11,6 +11,7 @@ add_library(rm_platform_stm32f4 STATIC
     log/bsp_log.c
     pwm/bsp_pwm.c
     spi/bsp_spi.c
+    time/rm_time.c
     usart/bsp_usart.c
     usb/bsp_usb.c
     utils/utils.c
@@ -28,6 +29,7 @@ target_include_directories(rm_platform_stm32f4 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/log
     ${CMAKE_CURRENT_SOURCE_DIR}/pwm
     ${CMAKE_CURRENT_SOURCE_DIR}/spi
+    ${CMAKE_CURRENT_SOURCE_DIR}/time
     ${CMAKE_CURRENT_SOURCE_DIR}/usart
     ${CMAKE_CURRENT_SOURCE_DIR}/usb
     ${CMAKE_CURRENT_SOURCE_DIR}/utils

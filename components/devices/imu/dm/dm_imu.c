@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "stm32f4xx_hal.h"
+#include "rm_time.h"
 
 #define DM_IMU_FRAME_HEAD_0 0x55
 #define DM_IMU_FRAME_HEAD_1 0xAA
@@ -81,7 +82,7 @@ static float dm_imu_uint_to_float(uint16_t x_int, float x_min, float x_max, int 
 static void dm_imu_mark_ready(dm_imu_t *imu, uint8_t mask)
 {
     imu->data.valid_mask |= mask;
-    imu->data.timestamp_ms = HAL_GetTick();
+    imu->data.timestamp_ms = RmTime_NowMs();
     imu->last_update_ms = imu->data.timestamp_ms;
     imu->data_ready = true;
 }
@@ -207,7 +208,7 @@ static void dm_imu_can_rx_callback(CANInstance *instance)
         {
             imu->last_ack_rid = data[1];
             imu->last_ack_code = data[3];
-            imu->last_ack_ms = HAL_GetTick();
+            imu->last_ack_ms = RmTime_NowMs();
         }
         return;
     }
@@ -323,7 +324,7 @@ bool dm_imu_is_alive(const dm_imu_t *imu, uint32_t timeout_ms)
 {
     if (!imu)
         return false;
-    return (HAL_GetTick() - imu->last_update_ms) <= timeout_ms;
+    return RmTime_ElapsedMs(RmTime_NowMs(), imu->last_update_ms) <= timeout_ms;
 }
 
 bool dm_imu_get_last_ack(const dm_imu_t *imu, uint8_t *rid, uint8_t *ack)
@@ -423,7 +424,7 @@ void dm_imu_can_write_reg(dm_imu_t *imu, uint8_t rid, uint32_t data)
     imu->can->tx_buff[3] = 0xDD;
     memcpy(&imu->can->tx_buff[4], &data, 4);
     CANSetDLC(imu->can, 8);
-    CANTransmit(imu->can, 1);
+    CANTransmit(imu->can, 1000U);
 }
 
 static void dm_imu_can_read_reg(dm_imu_t *imu, uint8_t rid)
@@ -436,7 +437,7 @@ static void dm_imu_can_read_reg(dm_imu_t *imu, uint8_t rid)
     imu->can->tx_buff[3] = 0xDD;
     memset(&imu->can->tx_buff[4], 0, 4);
     CANSetDLC(imu->can, 8);
-    CANTransmit(imu->can, 1);
+    CANTransmit(imu->can, 1000U);
 }
 
 void dm_imu_can_request_accel(dm_imu_t *imu)

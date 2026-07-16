@@ -9,6 +9,12 @@ Portions of the transitional BSP and robot modules originate from the YueLu
 team open-source `basic_framework`. The referenced upstream distribution
 contains the following MIT license:
 
+Historical headers in the PID, CAN communication, DJI motor, motor-definition,
+and remote-control sources also carried the notice
+`Copyright (c) 2022 HNU YueLu EC all rights reserved`. Those source-level team
+labels are consolidated here so ordinary repository-owned APIs and narration
+remain origin-neutral without dropping the upstream attribution.
+
 ```text
 MIT License
 

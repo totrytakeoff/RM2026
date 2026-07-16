@@ -73,6 +73,7 @@ int main(void)
 
     // BSP初始化
     DWT_Init(168);
+    DaemonServiceInit();
 #if MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0)
     BSPLogInit();
 #endif

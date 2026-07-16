@@ -79,10 +79,10 @@ LKMotorInstance *LKMotorInit(Motor_Init_Config_s *config)
     DWT_GetDeltaT(&motor->measure.feed_dwt_cnt);
     lkmotor_instance[idx++] = motor;
 
-    Daemon_Init_Config_s daemon_config = {
+    DaemonConfig daemon_config = {
         .callback = LKMotorLostCallback,
-        .owner_id = motor,
-        .reload_count = 5, // 50ms
+        .owner = motor,
+        .timeout_ms = 50U, // 50ms
     };
     motor->daemon = DaemonRegister(&daemon_config);
 
@@ -145,7 +145,7 @@ void LKMotorControl()
     }
 
     if (idx) // 如果有电机注册了
-        CANTransmit(sender_instance, 0.2);
+        CANTransmit(sender_instance, 200U);
 }
 
 void LKMotorStop(LKMotorInstance *motor)

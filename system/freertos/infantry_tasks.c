@@ -12,6 +12,7 @@
 #include "infantry_app.h"
 #include "infantry_config.h"
 #include "ins_task.h"
+#include "rm_time.h"
 
 enum {
     INS_TASK_STACK_WORDS = 1024,
@@ -208,7 +209,7 @@ static void InfantryControlTask(void *argument)
 
     for (;;) {
         uint32_t start_cycles = TaskRuntime_Begin(INFANTRY_TASK_CONTROL);
-        InfantryApp_ControlStep(DWT_GetTimeline_ms());
+        InfantryApp_ControlStep(RmTime_NowMs());
         TaskRuntime_Record(INFANTRY_TASK_CONTROL, start_cycles);
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(MAIN_LOOP_PERIOD_MS));
     }
@@ -236,7 +237,7 @@ static void InfantryDiagnosticsTask(void *argument)
 
     for (;;) {
         uint32_t start_cycles = TaskRuntime_Begin(INFANTRY_TASK_DIAGNOSTICS);
-        InfantryApp_DiagnosticsStep(DWT_GetTimeline_ms());
+        InfantryApp_DiagnosticsStep(RmTime_NowMs());
         TaskRuntime_Record(INFANTRY_TASK_DIAGNOSTICS, start_cycles);
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(INFANTRY_DIAGNOSTICS_TASK_PERIOD_MS));
     }

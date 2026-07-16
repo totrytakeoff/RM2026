@@ -11,6 +11,7 @@
 #include "infantry_config.h"
 #include "infantry_shoot.h"
 #include "infantry_debug.h"
+#include "rm_time.h"
 #include "et08_remote.h"
 #include "vt_remote.h"
 #include "usart.h"
@@ -96,7 +97,7 @@ static uint8_t ET08_RequestTakeover(const Input_Data_t *et08_data)
 
 void Input_Init(void)
 {
-    (void)ET08_Init(&RC_UART);
+    (void)ET08_InitWithTimeout(&RC_UART, RC_ONLINE_TIMEOUT_MS);
     vt_allowed = (Input_ShouldDisableVTForDebug() == 0U) ? 1U : 0U;
     if (vt_allowed) {
         (void)VT_Init(&VT_UART);
@@ -106,7 +107,7 @@ void Input_Init(void)
     last_active_input = INPUT_ACTIVE_NONE;
     last_et08_online = 0U;
     last_vt_online = 0U;
-    last_any_online_tick = HAL_GetTick();
+    last_any_online_tick = RmTime_NowMs();
 }
 
 void Input_UpdateET08(Input_Data_t *et08_data)
@@ -336,7 +337,7 @@ void Input_Arbitrate(const Input_Data_t *vt_data, const Input_Data_t *et08_data,
     }
     memset(out, 0, sizeof(*out));
 
-    now = HAL_GetTick();
+    now = RmTime_NowMs();
     any_online = (vt_data->online || et08_data->online) ? 1U : 0U;
     et08_takeover = ET08_RequestTakeover(et08_data);
 

@@ -5,7 +5,6 @@
  * @version 0.1
  * @date 2022-11-27
  *
- * @copyright Copyright (c) 2022 HNUYueLu EC all rights reserved
  *
  */
 #ifndef CAN_COMM_H
@@ -51,7 +50,7 @@ typedef struct
     uint8_t send_data_len;        // 发送数据长度
     uint8_t recv_data_len;        // 接收数据长度
 
-    uint16_t daemon_count; // 守护进程计数,用于初始化守护进程
+    uint32_t timeout_ms; // 接收超时; 0使用设备健康服务默认值
 } CANComm_Init_Config_s;
 
 /**

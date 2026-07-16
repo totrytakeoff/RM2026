@@ -2,9 +2,9 @@
 
 #include "SEGGER_RTT.h"
 #include "SEGGER_RTT_Conf.h"
+#include "utils.h"
 #include "usart.h"
 #include <stdarg.h>
-#include <stdio.h>
 
 #if BSP_LOG_USE_UART
 #if BSP_LOG_UART_PORT == 1
@@ -32,7 +32,7 @@ int PrintLog(const char *fmt, ...)
     va_start(args, fmt);
 #if BSP_LOG_USE_UART
     char buffer[256];
-    int n = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    int n = RmFormat_Vsnprintf(buffer, sizeof(buffer), fmt, args);
     if (n > 0) {
         size_t len = (n < (int)sizeof(buffer)) ? (size_t)n : (sizeof(buffer) - 1U);
         HAL_UART_Transmit(&BSP_LOG_UART_HANDLE, (uint8_t *)buffer, (uint16_t)len, BSP_LOG_UART_TIMEOUT_MS);
@@ -46,13 +46,7 @@ int PrintLog(const char *fmt, ...)
 
 void Float2Str(char *str, float va)
 {
-    int flag = va < 0;
-    int head = (int)va;
-    int point = (int)((va - head) * 1000);
-    head = abs(head);
-    point = abs(point);
-    if (flag)
-        sprintf(str, "-%d.%d", head, point);
-    else
-        sprintf(str, "%d.%d", head, point);
+    if (str != NULL) {
+        (void)RmFormat_Snprintf(str, 24U, "%.3f", (double)va);
+    }
 }

@@ -55,6 +55,12 @@ unused stack words drives the application safety state to `STOPPED`.
 `diagnostics` remains observable but non-critical because its transport may
 block without making actuator control unsafe. See `safety_health_service.md`.
 
+CAN, UART, device-health, DJI motor, EKF, and diagnostic-formatting storage on
+the formal path is now static. Device timeouts use monotonic millisecond
+deadlines and are independent of the health-task period. See
+`platform_runtime_milestone.md` for capacities, timeout values, and remaining
+transport constraints.
+
 ## Build baseline
 
 ```bash
@@ -71,8 +77,13 @@ Expected status at this baseline:
 
 - formal firmware builds;
 - bare-metal comparison firmware builds;
-- all embedded firmware targets build;
-- formal firmware RAM usage is approximately 52%;
+- all 30 embedded demo/regression firmware targets build;
+- all three native unit-test programs pass;
+- formal firmware RAM usage is 45,872 bytes (35.00%) and Flash usage is 92,476
+  bytes (8.82%) in Debug, including an 8 KiB main-stack reservation and no C
+  heap reservation;
+- the formal image contains no linked C/FreeRTOS heap-allocation or libc
+  formatting symbol;
 - existing newlib syscall and RWX linker warnings remain tracked cleanup work.
 
 ## Hardware acceptance gates
@@ -99,13 +110,18 @@ the comparison firmware for tuning:
 - Application modules still call transitional motor, input, INS, referee,
   device-health, platform, and algorithm APIs from `components/` and
   `platform/`.
+- Several components not linked into `app.elf` still provide heap-backed
+  compatibility APIs and cannot be promoted into the formal firmware yet.
+- CAN and UART protocol callbacks still run in interrupt context.
 - Module APIs and configuration macros retain some `Minimal*` naming.
 - The mutable `g_robot` context is still shared with diagnostic code.
 - A hardware watchdog is not implemented yet; the software health task cannot
   diagnose its own total starvation.
 - CubeMX `.ioc` is not yet tracked.
-- linker-reserved C heap/stack still require memory-budget cleanup.
+- the formal main-stack reservation is conservatively 8 KiB until interrupt
+  nesting and startup behavior are measured on hardware;
 - The former `Src/application` implementation has not yet been removed.
 
-The next ownership slice is time and log infrastructure, followed by CAN/UART
-BSP and motor/input components.
+The next ownership slice is portable algorithm cleanup and device-component
+separation: explicit PID timing, narrow public headers, protocol/transport
+boundaries, and removal of the remaining inactive heap-backed registrations.

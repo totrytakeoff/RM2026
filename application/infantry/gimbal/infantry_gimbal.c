@@ -18,6 +18,7 @@
 #include "infantry_config.h"
 #include "infantry_debug.h"
 #include "infantry_types.h"
+#include "rm_time.h"
 #include "user_lib.h"
 
 static DJIMotorInstance *motor_yaw = NULL;
@@ -388,7 +389,7 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         return;
     }
 
-    now_ms = HAL_GetTick();
+    now_ms = RmTime_NowMs();
     if (gimbal_last_tick != 0U) {
         dt_s = (float)(now_ms - gimbal_last_tick) / 1000.0f;
         dt_s = ClampFloat(dt_s, 0.001f, 0.05f);

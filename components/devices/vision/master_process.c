@@ -75,10 +75,10 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
     vision_usart_instance = USARTRegister(&conf);
 
     // 为master process注册daemon,用于判断视觉通信是否离线
-    Daemon_Init_Config_s daemon_conf = {
+    DaemonConfig daemon_conf = {
         .callback = VisionOfflineCallback, // 离线时调用的回调函数,会重启串口接收
-        .owner_id = vision_usart_instance,
-        .reload_count = 10,
+        .owner = vision_usart_instance,
+        .timeout_ms = 100U,
     };
     vision_daemon_instance = DaemonRegister(&daemon_conf);
 
@@ -142,10 +142,10 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
     vis_recv_buff = USBInit(conf);
 
     // 为master process注册daemon,用于判断视觉通信是否离线
-    Daemon_Init_Config_s daemon_conf = {
+    DaemonConfig daemon_conf = {
         .callback = VisionOfflineCallback, // 离线时调用的回调函数,会重启串口接收
-        .owner_id = NULL,
-        .reload_count = 5, // 50ms
+        .owner = NULL,
+        .timeout_ms = 50U, // 50ms
     };
     vision_daemon_instance = DaemonRegister(&daemon_conf);
 

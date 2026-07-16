@@ -71,7 +71,7 @@ static void DMMotor_SendFrame(DMMotor_Handle *motor, uint32_t id, const uint8_t 
     CANSetDLC(motor->command_can, len);
     motor->command_can->txconf.StdId = id;
     memcpy(motor->command_can->tx_buff, payload, len);
-    CANTransmit(motor->command_can, 1);
+    CANTransmit(motor->command_can, 1000U);
 
     motor->command_can->txconf.StdId = backup_id;
     CANSetDLC(motor->command_can, backup_dlc);

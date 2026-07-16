@@ -20,6 +20,7 @@
 #include "infantry_gimbal.h"
 #include "infantry_referee.h"
 #include "infantry_types.h"
+#include "rm_time.h"
 #include "user_lib.h"
 
 static DJIMotorInstance *motor_fr = NULL;
@@ -150,7 +151,7 @@ void Chassis_Update(Input_Data_t *input)
         return;
     }
 
-    now_ms = HAL_GetTick();
+    now_ms = RmTime_NowMs();
     if (chassis_last_tick != 0U) {
         dt_s = ClampFloat((float)(now_ms - chassis_last_tick) / 1000.0f, 0.001f, 0.05f);
     }

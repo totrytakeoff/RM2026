@@ -938,7 +938,7 @@ static void GimbalMotorsInit(void)
     yaw_motor = DJIMotorInit(&config);
     LOGINFO("[wl_all] Yaw GM6020 registered on CAN1 id %u", (unsigned)YAW_MOTOR_ID);
     if (yaw_motor && yaw_motor->daemon) {
-        yaw_motor->daemon->reload_count = 50;
+        (void)DaemonSetTimeout(yaw_motor->daemon, 500U);
     }
 
     config.controller_setting_init_config.outer_loop_type = ANGLE_LOOP;
@@ -957,7 +957,7 @@ static void GimbalMotorsInit(void)
     pitch_motor = DJIMotorInit(&config);
     LOGINFO("[wl_all] Pitch GM6020 registered on CAN2 id %u", (unsigned)PITCH_MOTOR_ID);
     if (pitch_motor && pitch_motor->daemon) {
-        pitch_motor->daemon->reload_count = 50;
+        (void)DaemonSetTimeout(pitch_motor->daemon, 500U);
     }
 
     if (yaw_motor != NULL) {

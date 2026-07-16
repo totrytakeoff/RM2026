@@ -113,6 +113,12 @@ static void ET08_RxCallback(void)
     if (et08_usart_instance == NULL)
         return;
 
+    if (et08_usart_instance->recv_len != ET08_SBUS_FRAME_SIZE)
+    {
+        et08_bad_count++;
+        return;
+    }
+
     const uint8_t *buf = et08_usart_instance->recv_buff;
     if (buf[0] != ET08_SBUS_START_BYTE)
     {
@@ -163,6 +169,12 @@ static void ET08_ReinitUartForSbus(UART_HandleTypeDef *uart_handle)
 
 ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle)
 {
+    return ET08_InitWithTimeout(uart_handle, ET08_DEFAULT_TIMEOUT_MS);
+}
+
+ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
+                                  uint32_t timeout_ms)
+{
     memset(&et08_ctrl, 0, sizeof(et08_ctrl));
 
     ET08_ReinitUartForSbus(uart_handle);
@@ -173,10 +185,11 @@ ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle)
     conf.recv_buff_size = ET08_SBUS_FRAME_SIZE;
     et08_usart_instance = USARTRegister(&conf);
 
-    Daemon_Init_Config_s daemon_conf = {
-        .reload_count = 400,
+    DaemonConfig daemon_conf = {
+        .timeout_ms = (timeout_ms != 0U) ? timeout_ms
+                                         : ET08_DEFAULT_TIMEOUT_MS,
         .callback = ET08_LostCallback,
-        .owner_id = NULL,
+        .owner = NULL,
     };
     et08_daemon = DaemonRegister(&daemon_conf);
 

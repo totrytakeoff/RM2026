@@ -6,7 +6,6 @@
 #include "infantry_debug.h"
 
 #include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "usart.h"
@@ -15,6 +14,8 @@
 #include "infantry_chassis.h"
 #include "infantry_gimbal.h"
 #include "infantry_shoot.h"
+#include "rm_time.h"
+#include "utils.h"
 
 static uint32_t last_text_tick = 0U;
 static uint32_t last_vofa_tick = 0U;
@@ -51,7 +52,7 @@ static void MinimalDebug_LogEventByTag(const char *tag, const char *fmt, va_list
     int line_n;
     size_t msg_len;
 
-    msg_n = vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
+    msg_n = RmFormat_Vsnprintf(msg_buf, sizeof(msg_buf), fmt, args);
     if (msg_n < 0) {
         return;
     }
@@ -60,7 +61,11 @@ static void MinimalDebug_LogEventByTag(const char *tag, const char *fmt, va_list
         msg_buf[msg_len - 1U] = '\0';
         msg_len--;
     }
-    line_n = snprintf(line_buf, sizeof(line_buf), "[DBG][%s] %s\r\n", tag, msg_buf);
+    line_n = RmFormat_Snprintf(line_buf,
+                              sizeof(line_buf),
+                              "[DBG][%s] %s\r\n",
+                              tag,
+                              msg_buf);
     if (line_n > 0) {
         uint16_t tx_len;
         if (line_n < (int)sizeof(line_buf)) {
@@ -246,7 +251,7 @@ void MinimalDebug_PublishVofaFrame(void)
     static const uint8_t tail[4] = {0x00U, 0x00U, 0x80U, 0x7FU};
     HAL_StatusTypeDef ret;
 
-    ch[0] = (float)HAL_GetTick();
+    ch[0] = (float)RmTime_NowMs();
     ch[1] = (float)g_robot.input.active_input;
     ch[2] = (float)g_robot.input.online;
     ch[3] = g_robot.chassis.vx;

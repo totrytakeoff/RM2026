@@ -5,7 +5,8 @@
 #include <math.h>
 
 static uint8_t idx = 0; // register idx,是该文件的全局电机索引,在注册时使用
-/* DJI电机的实�?此处仅保存指�?内存的分配将通过电机实例初始化时通过malloc()进行 */
+/* Fixed-capacity storage for registered DJI motor instances. */
+static DJIMotorInstance dji_motor_storage[DJI_MOTOR_CNT];
 static DJIMotorInstance *dji_motor_instance[DJI_MOTOR_CNT] = {NULL}; // 会在control任务中遍历该指针数组进行pid计算
 
 /**
@@ -62,7 +63,6 @@ static void MotorSenderGrouping(DJIMotorInstance *motor, CAN_Init_Config_s *conf
 
         // 计算接收id并设置分组发送id
         config->rx_id = 0x200 + motor_id + 1;   // 把ID+1,进行分组设置
-        sender_enable_flag[motor_grouping] = 1; // 设置发送标志位,防止发送空�?
         motor->message_num = motor_send_num;
         motor->sender_group = motor_grouping;
 
@@ -92,7 +92,6 @@ static void MotorSenderGrouping(DJIMotorInstance *motor, CAN_Init_Config_s *conf
         }
 
         config->rx_id = 0x204 + motor_id + 1;   // 把ID+1,进行分组设置
-        sender_enable_flag[motor_grouping] = 1; // 只要有电机注册到这个分组,置为1;在发送函数中会通过此标志判断是否有电机注册
         motor->message_num = motor_send_num;
         motor->sender_group = motor_grouping;
 
@@ -159,7 +158,13 @@ static void DJIMotorLostCallback(void *motor_ptr)
 // 电机初始�?返回一个电机实�?
 DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config)
 {
-    DJIMotorInstance *instance = (DJIMotorInstance *)malloc(sizeof(DJIMotorInstance));
+    if ((config == NULL) || (idx >= DJI_MOTOR_CNT))
+    {
+        LOGERROR("[dji_motor] motor instance capacity exhausted");
+        return NULL;
+    }
+
+    DJIMotorInstance *instance = &dji_motor_storage[idx];
     memset(instance, 0, sizeof(DJIMotorInstance));
 
     // motor basic setting 电机基本设置
@@ -183,20 +188,34 @@ DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config)
     config->can_init_config.can_module_callback = DecodeDJIMotor; // set callback
     config->can_init_config.id = instance;                        // set id,eq to address(it is identity)
     instance->motor_can_instance = CANRegister(&config->can_init_config);
+    if (instance->motor_can_instance == NULL)
+    {
+        LOGERROR("[dji_motor] CAN endpoint registration failed");
+        return NULL;
+    }
 
     // 注册守护线程
-    Daemon_Init_Config_s daemon_config = {
+    DaemonConfig daemon_config = {
         .callback = DJIMotorLostCallback,
-        .owner_id = instance,
-        .reload_count = 2, // 20ms未收到数据则丢失
+        .owner = instance,
+        .timeout_ms = 20U, // 20ms未收到数据则丢失
     };
     instance->daemon = DaemonRegister(&daemon_config);
+    if (instance->daemon == NULL)
+    {
+        LOGERROR("[dji_motor] health endpoint registration failed");
+        /* Keep the CAN callback owner reserved, but never enable output. */
+        DJIMotorStop(instance);
+        dji_motor_instance[idx++] = instance;
+        return NULL;
+    }
 
     instance->last_total_angle = 0.0f;
     instance->angle_feedback_sign = 1;
     instance->angle_feedback_locked = 0;
 
     DJIMotorEnable(instance);
+    sender_enable_flag[instance->sender_group] = 1U;
     dji_motor_instance[idx++] = instance;
     return instance;
 }
@@ -324,7 +343,7 @@ void DJIMotorControl()
     {
         if (sender_enable_flag[i])
         {
-            CANTransmit(&sender_assignment[i], 1);
+            CANTransmit(&sender_assignment[i], 1000U);
         }
     }
 }

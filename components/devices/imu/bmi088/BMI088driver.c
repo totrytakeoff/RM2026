@@ -3,6 +3,7 @@
 #include "BMI088Middleware.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
+#include "rm_time.h"
 #include <math.h>
 
 #pragma message "this is a legacy support. test the new BMI088 module as soon as possible."
@@ -118,17 +119,17 @@ uint8_t BMI088Init(SPI_HandleTypeDef *bmi088_SPI, uint8_t calibrate)
 
 void Calibrate_MPU_Offset(IMU_Data_t *bmi088)
 {
-    static float startTime;
+    uint32_t start_time_ms;
     static uint16_t CaliTimes = 6000;
     uint8_t buf[8] = {0, 0, 0, 0, 0, 0};
     int16_t bmi088_raw_temp;
     float gyroMax[3], gyroMin[3];
     float gNormTemp = 0.0f, gNormMax = 0.0f, gNormMin = 0.0f;
 
-    startTime = DWT_GetTimeline_s();
+    start_time_ms = RmTime_NowMs();
     do
     {
-        if (DWT_GetTimeline_s() - startTime > 12)
+        if (RmTime_ElapsedMs(RmTime_NowMs(), start_time_ms) > 12000U)
         {
             // ��????
             bmi088->GyroOffset[0] = GxOFFSET;

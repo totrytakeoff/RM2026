@@ -3,7 +3,6 @@
 
 #include "SEGGER_RTT.h"
 #include "SEGGER_RTT_Conf.h"
-#include <stdio.h>
 
 #ifndef BUFFER_INDEX
 #define BUFFER_INDEX 0

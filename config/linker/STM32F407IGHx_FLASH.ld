@@ -54,9 +54,13 @@ ENTRY(Reset_Handler)
 
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
-/* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x5000;      /* required amount of heap  */
-_Min_Stack_Size = 0x5000; /* required amount of stack */
+/*
+ * Generate a link error if heap and main stack do not fit into RAM.
+ * Firmware targets may override these defaults with RM_MIN_* --defsym values;
+ * legacy/demo targets retain the historical reservations by default.
+ */
+_Min_Heap_Size = DEFINED(RM_MIN_HEAP_SIZE) ? RM_MIN_HEAP_SIZE : 0x5000;
+_Min_Stack_Size = DEFINED(RM_MIN_STACK_SIZE) ? RM_MIN_STACK_SIZE : 0x5000;
 
 /* Specify the memory areas */
 MEMORY
@@ -205,5 +209,4 @@ SECTIONS
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
-
 
