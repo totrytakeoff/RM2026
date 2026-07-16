@@ -88,3 +88,31 @@ target_compile_options(test_format PRIVATE
 )
 
 add_test(NAME format COMMAND test_format)
+
+add_library(rm_rx_queue_host STATIC
+    ../../platform/common/transport/rm_rx_queue.c
+)
+target_include_directories(rm_rx_queue_host PUBLIC
+    ../../platform/common/transport
+)
+target_compile_features(rm_rx_queue_host PUBLIC c_std_11)
+target_compile_options(rm_rx_queue_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_rx_queue
+    rx_queue_test.c
+)
+target_link_libraries(test_rx_queue PRIVATE rm_rx_queue_host)
+target_compile_features(test_rx_queue PRIVATE c_std_11)
+target_compile_options(test_rx_queue PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_test(NAME rx_queue COMMAND test_rx_queue)

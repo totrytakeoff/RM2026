@@ -112,7 +112,8 @@ void Input_Init(void)
 
 void Input_UpdateET08(Input_Data_t *et08_data)
 {
-    ET08_Ctrl_t *et08;
+    ET08_Ctrl_t et08_snapshot;
+    const ET08_Ctrl_t *et08 = &et08_snapshot;
     uint8_t sa_sb_state;
     uint8_t sd_sc_state;
     uint8_t sa_pos;
@@ -125,8 +126,7 @@ void Input_UpdateET08(Input_Data_t *et08_data)
     }
     memset(et08_data, 0, sizeof(*et08_data));
 
-    et08 = ET08_GetCtrl();
-    if (et08 == NULL || !ET08_IsOnline() || et08->frame_lost || et08->failsafe) {
+    if (!ET08_Read(&et08_snapshot) || et08->frame_lost || et08->failsafe) {
         et08_data->online = 0U;
         et08_data->active_input = INPUT_ACTIVE_ET08;
         return;
@@ -212,7 +212,8 @@ void Input_UpdateET08(Input_Data_t *et08_data)
 
 void Input_UpdateVT(Input_Data_t *vt_data)
 {
-    VT_Ctrl_t *vt;
+    VT_Ctrl_t vt_snapshot;
+    const VT_Ctrl_t *vt = &vt_snapshot;
     uint8_t f_now;
     uint8_t r_now;
 
@@ -221,8 +222,7 @@ void Input_UpdateVT(Input_Data_t *vt_data)
     }
     memset(vt_data, 0, sizeof(*vt_data));
 
-    vt = VT_GetCtrl();
-    if (!vt_allowed || vt == NULL || !VT_IsOnline() || !vt->crc_ok) {
+    if (!vt_allowed || !VT_Read(&vt_snapshot) || !vt->crc_ok) {
         vt_data->online = 0U;
         vt_data->active_input = INPUT_ACTIVE_VT;
         return;

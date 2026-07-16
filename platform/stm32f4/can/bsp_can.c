@@ -4,13 +4,31 @@
 #include <string.h>
 
 #include "bsp_log.h"
+#include "rm_critical.h"
+#include "rm_rx_queue.h"
 #include "rm_time.h"
 
+enum {
+    CAN_PENDING_SLOT_COUNT = 1U,
+};
+
+typedef struct {
+    uint8_t storage[CAN_PENDING_SLOT_COUNT][CAN_CLASSIC_MAX_DATA_LENGTH];
+    uint16_t lengths[CAN_PENDING_SLOT_COUNT];
+    RmRxQueue queue;
+} CANRxInbox;
+
 static CANInstance can_instances[CAN_MAX_INSTANCES];
+static CANRxInbox can_rx_inboxes[CAN_MAX_INSTANCES];
 static size_t can_instance_count;
 static uint8_t can1_filter_count;
 static uint8_t can2_filter_count;
 static uint8_t can_service_started;
+static CANDispatchMode can_dispatch_mode = CAN_DISPATCH_INTERRUPT;
+static size_t can_dispatch_cursor;
+static volatile uint32_t can_received_frames;
+static volatile uint32_t can_dispatched_frames;
+static volatile uint32_t can_rejected_frames;
 
 static uint8_t CANStartService(void)
 {
@@ -109,6 +127,7 @@ static void CANReleaseFilterSlot(const CANInstance *instance)
 CANInstance *CANRegister(const CAN_Init_Config_s *config)
 {
     CANInstance *instance;
+    CANRxInbox *inbox;
 
     if ((config == NULL) || (config->can_handle == NULL) ||
         (config->tx_id > 0x7FFU) || (config->rx_id > 0x7FFU)) {
@@ -129,12 +148,22 @@ CANInstance *CANRegister(const CAN_Init_Config_s *config)
     }
 
     instance = &can_instances[can_instance_count];
+    inbox = &can_rx_inboxes[can_instance_count];
     memset(instance, 0, sizeof(*instance));
+    memset(inbox, 0, sizeof(*inbox));
+    if (!RmRxQueue_Init(&inbox->queue,
+                        inbox->storage,
+                        inbox->lengths,
+                        CAN_CLASSIC_MAX_DATA_LENGTH,
+                        CAN_PENDING_SLOT_COUNT)) {
+        return NULL;
+    }
     instance->can_handle = config->can_handle;
     instance->tx_id = config->tx_id;
     instance->rx_id = config->rx_id;
     instance->can_module_callback = config->can_module_callback;
     instance->id = config->id;
+    instance->dispatch_mode = can_dispatch_mode;
     instance->txconf.StdId = config->tx_id;
     instance->txconf.IDE = CAN_ID_STD;
     instance->txconf.RTR = CAN_RTR_DATA;
@@ -144,6 +173,7 @@ CANInstance *CANRegister(const CAN_Init_Config_s *config)
         LOGERROR("[bsp_can] failed to configure CAN rx id 0x%03lx",
                  (unsigned long)config->rx_id);
         memset(instance, 0, sizeof(*instance));
+        memset(inbox, 0, sizeof(*inbox));
         return NULL;
     }
 
@@ -152,11 +182,30 @@ CANInstance *CANRegister(const CAN_Init_Config_s *config)
         can_instance_count--;
         CANReleaseFilterSlot(instance);
         memset(instance, 0, sizeof(*instance));
+        memset(inbox, 0, sizeof(*inbox));
         LOGERROR("[bsp_can] failed to start CAN service");
         return NULL;
     }
 
     return instance;
+}
+
+bool CANConfigureDispatch(CANDispatchMode mode)
+{
+    if ((mode != CAN_DISPATCH_INTERRUPT) &&
+        (mode != CAN_DISPATCH_DEFERRED)) {
+        return false;
+    }
+    if ((can_instance_count != 0U) || (can_service_started != 0U)) {
+        return false;
+    }
+
+    can_dispatch_mode = mode;
+    can_dispatch_cursor = 0U;
+    can_received_frames = 0U;
+    can_dispatched_frames = 0U;
+    can_rejected_frames = 0U;
+    return true;
 }
 
 void CANSetDLC(CANInstance *instance, uint8_t length)
@@ -218,23 +267,109 @@ static void CANFIFOCallback(CAN_HandleTypeDef *handle, uint32_t fifo)
 
         for (size_t i = 0U; i < can_instance_count; ++i) {
             CANInstance *instance = &can_instances[i];
+            uint8_t frame_length;
 
             if ((instance->can_handle != handle) ||
                 (instance->rx_id != header.StdId)) {
                 continue;
             }
 
-            instance->rx_len =
+            frame_length =
                 (header.DLC <= CAN_CLASSIC_MAX_DATA_LENGTH)
                     ? (uint8_t)header.DLC
                     : CAN_CLASSIC_MAX_DATA_LENGTH;
-            memcpy(instance->rx_buff, rx_buffer, instance->rx_len);
-            if (instance->can_module_callback != NULL) {
-                instance->can_module_callback(instance);
+            can_received_frames++;
+            if (instance->dispatch_mode == CAN_DISPATCH_DEFERRED) {
+                CANRxInbox *inbox = &can_rx_inboxes[i];
+                if (RmRxQueue_PushLatest(&inbox->queue,
+                                         rx_buffer,
+                                         frame_length) ==
+                    RM_RX_QUEUE_PUSH_REJECTED) {
+                    can_rejected_frames++;
+                }
+            } else {
+                instance->rx_len = frame_length;
+                memcpy(instance->rx_buff, rx_buffer, frame_length);
+                if (instance->can_module_callback != NULL) {
+                    instance->can_module_callback(instance);
+                }
+                can_dispatched_frames++;
             }
             break;
         }
     }
+}
+
+uint16_t CANDispatchPending(uint16_t max_callbacks)
+{
+    uint16_t processed = 0U;
+    uint16_t budget = (max_callbacks == 0U)
+                          ? CAN_MAX_INSTANCES
+                          : max_callbacks;
+
+    if ((can_dispatch_mode != CAN_DISPATCH_DEFERRED) ||
+        (can_instance_count == 0U)) {
+        return 0U;
+    }
+
+    while (processed < budget) {
+        size_t checked;
+        bool found = false;
+
+        for (checked = 0U; checked < can_instance_count; ++checked) {
+            size_t index = (can_dispatch_cursor + checked) % can_instance_count;
+            CANInstance *instance = &can_instances[index];
+            CANRxInbox *inbox = &can_rx_inboxes[index];
+            uint16_t length = 0U;
+            RmCriticalState state = RmCritical_Enter();
+            bool available = RmRxQueue_Pop(&inbox->queue,
+                                           instance->rx_buff,
+                                           sizeof(instance->rx_buff),
+                                           &length);
+            RmCritical_Exit(state);
+
+            if (!available) {
+                continue;
+            }
+
+            instance->rx_len = (uint8_t)length;
+            can_dispatch_cursor = (index + 1U) % can_instance_count;
+            if (instance->can_module_callback != NULL) {
+                instance->can_module_callback(instance);
+            }
+            can_dispatched_frames++;
+            processed++;
+            found = true;
+            break;
+        }
+
+        if (!found) {
+            break;
+        }
+    }
+
+    return processed;
+}
+
+bool CANGetDispatchStats(CANDispatchStats *stats)
+{
+    uint32_t coalesced = 0U;
+    RmCriticalState state;
+
+    if (stats == NULL) {
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    for (size_t i = 0U; i < can_instance_count; ++i) {
+        coalesced += can_rx_inboxes[i].queue.overwrite_count;
+    }
+    stats->received_frames = can_received_frames;
+    stats->dispatched_frames = can_dispatched_frames;
+    stats->coalesced_frames = coalesced;
+    stats->rejected_frames = can_rejected_frames;
+    RmCritical_Exit(state);
+    return true;
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *handle)

@@ -46,6 +46,33 @@ static uint8_t pitch_exit_cnt = 0U;
 static uint8_t pitch_brake_stable_count = 0U;
 static uint32_t pitch_brake_start_ms = 0U;
 
+static float MotorTotalAngle(const DJIMotorInstance *motor)
+{
+    DJI_Motor_Measure_s measure;
+
+    return (motor != NULL && DJIMotorGetMeasure(motor, &measure))
+               ? measure.total_angle
+               : 0.0f;
+}
+
+static float MotorSingleRoundAngle(const DJIMotorInstance *motor)
+{
+    DJI_Motor_Measure_s measure;
+
+    return (motor != NULL && DJIMotorGetMeasure(motor, &measure))
+               ? measure.angle_single_round
+               : 0.0f;
+}
+
+static float MotorSpeed(const DJIMotorInstance *motor)
+{
+    DJI_Motor_Measure_s measure;
+
+    return (motor != NULL && DJIMotorGetMeasure(motor, &measure))
+               ? measure.speed_aps
+               : 0.0f;
+}
+
 static float ClampFloat(float value, float min_value, float max_value)
 {
     if (value < min_value) {
@@ -124,7 +151,8 @@ static void UpdatePitchGravityFeedforward(void)
 
     pitch_ff_raw =
         PITCH_GRAVITY_FF_K *
-        sinf((motor_pitch->measure.total_angle - PITCH_GRAVITY_FF_OFFSET_DEG) * (float)M_PI / 180.0f);
+        sinf((MotorTotalAngle(motor_pitch) - PITCH_GRAVITY_FF_OFFSET_DEG) *
+             (float)M_PI / 180.0f);
     pitch_ff_raw = ClampFloat(pitch_ff_raw, -PITCH_GRAVITY_FF_MAX, PITCH_GRAVITY_FF_MAX);
     pitch_current_ff = pitch_current_ff * PITCH_FF_LPF + pitch_ff_raw * (1.0f - PITCH_FF_LPF);
 }
@@ -134,7 +162,7 @@ static float GetPitchSpeedFeedback(void)
     if (gimbal_imu != NULL) {
         pitch_imu_speed_fdb = gimbal_imu->Gyro[0];
     } else if (motor_pitch != NULL) {
-        pitch_imu_speed_fdb = motor_pitch->measure.speed_aps;
+        pitch_imu_speed_fdb = MotorSpeed(motor_pitch);
     } else {
         pitch_imu_speed_fdb = 0.0f;
     }
@@ -247,7 +275,8 @@ static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_
         pitch_brake_start_ms = 0U;
     } else if (pitch_ctrl_mode == AXIS_CTRL_SPEED) {
         pitch_release_hold_ref =
-            motor_pitch->measure.total_angle + GetPitchSpeedFeedback() * PITCH_RELEASE_SPEED_PREDICT_GAIN;
+            MotorTotalAngle(motor_pitch) +
+            GetPitchSpeedFeedback() * PITCH_RELEASE_SPEED_PREDICT_GAIN;
         pitch_hold_ref = pitch_release_hold_ref;
         pitch_ctrl_mode = AXIS_CTRL_BRAKE;
         pitch_brake_stable_count = 0U;
@@ -355,13 +384,15 @@ void Gimbal_Init(void)
     if (motor_yaw != NULL) {
         DJIMotorOuterLoop(motor_yaw, ANGLE_LOOP);
         DJIMotorStop(motor_yaw);
-        yaw_hold_ref = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : motor_yaw->measure.total_angle;
+        yaw_hold_ref = (gimbal_imu != NULL)
+                           ? gimbal_imu->YawTotalAngle
+                           : MotorTotalAngle(motor_yaw);
     }
 
     if (motor_pitch != NULL) {
         DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
         DJIMotorStop(motor_pitch);
-        pitch_hold_ref = motor_pitch->measure.total_angle;
+        pitch_hold_ref = MotorTotalAngle(motor_pitch);
         pitch_release_hold_ref = pitch_hold_ref;
     }
 
@@ -400,8 +431,10 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         DJIMotorEnable(motor_yaw);
         DJIMotorEnable(motor_pitch);
         gimbal_enabled = 1U;
-        yaw_hold_ref = (gimbal_imu != NULL) ? gimbal_imu->YawTotalAngle : motor_yaw->measure.total_angle;
-        pitch_hold_ref = motor_pitch->measure.total_angle;
+        yaw_hold_ref = (gimbal_imu != NULL)
+                           ? gimbal_imu->YawTotalAngle
+                           : MotorTotalAngle(motor_yaw);
+        pitch_hold_ref = MotorTotalAngle(motor_pitch);
         pitch_release_hold_ref = pitch_hold_ref;
         ResetPitchState();
     }
@@ -442,7 +475,7 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
         DJIMotorSetRef(motor_pitch, pitch_speed_cmd);
         if (fabsf(pitch_speed_cmd) >= 300.0f && pitch_abs >= 220) {
-            pitch_hold_ref = motor_pitch->measure.total_angle;
+            pitch_hold_ref = MotorTotalAngle(motor_pitch);
         }
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
         DJIMotorChangeFeed(motor_pitch, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
@@ -529,7 +562,7 @@ float Gimbal_GetYawSpeedFdb(void)
     if (motor_yaw == NULL) {
         return 0.0f;
     }
-    return motor_yaw->measure.speed_aps;
+    return MotorSpeed(motor_yaw);
 }
 
 float Gimbal_GetPitchSpeedRef(void)
@@ -557,7 +590,7 @@ float Gimbal_GetYawEncoderAngle(void)
     if (motor_yaw == NULL) {
         return 0.0f;
     }
-    return motor_yaw->measure.total_angle;
+    return MotorTotalAngle(motor_yaw);
 }
 
 float Gimbal_GetPitchEncoderAngle(void)
@@ -565,7 +598,7 @@ float Gimbal_GetPitchEncoderAngle(void)
     if (motor_pitch == NULL) {
         return 0.0f;
     }
-    return motor_pitch->measure.total_angle;
+    return MotorTotalAngle(motor_pitch);
 }
 
 float Gimbal_GetYawIMUAngle(void)
@@ -589,7 +622,8 @@ float Gimbal_GetYawOffsetRawDeg(void)
     if (motor_yaw == NULL) {
         return 0.0f;
     }
-    return WrapAngleDeg180(motor_yaw->measure.angle_single_round - YAW_ALIGN_ANGLE_DEG);
+    return WrapAngleDeg180(MotorSingleRoundAngle(motor_yaw) -
+                           YAW_ALIGN_ANGLE_DEG);
 }
 
 float Gimbal_GetYawOffsetLogicDeg(void)
@@ -602,7 +636,7 @@ float Gimbal_GetYawRelativeSpeedDeg(void)
     if (motor_yaw == NULL) {
         return 0.0f;
     }
-    return motor_yaw->measure.speed_aps;
+    return MotorSpeed(motor_yaw);
 }
 
 float Gimbal_GetYawLogicAngle(void)

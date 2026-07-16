@@ -59,12 +59,13 @@ The subsequent structural milestone removed the former framework wrapper and
 moved owned platform/components plus external vendors into their current
 layers. The platform-runtime milestone then established monotonic time,
 millisecond device deadlines, fixed CAN/UART/device-health/DJI storage, a
-caller-owned EKF workspace, and heap-free formal diagnostics. At the current
-baseline:
+caller-owned EKF workspace, and heap-free formal diagnostics. The deferred
+ingress milestone moved formal protocol parsing out of interrupts and added
+coherent ET08/VT/DJI read snapshots. At the current baseline:
 
-- all three native tests, all 30 embedded test targets, and formal `app.elf`
+- all four native tests, all 30 embedded test targets, and formal `app.elf`
   build successfully;
-- formal firmware uses 45,872 bytes RAM and 92,476 bytes Flash in Debug;
+- formal firmware uses 50,696 bytes RAM and 95,028 bytes Flash in Debug;
 - formal `app.elf` has no linked heap-allocation or libc-formatting symbol;
 - team-origin narration is limited to provenance/license documentation;
 - hardware validation and inactive-component cleanup remain pending.

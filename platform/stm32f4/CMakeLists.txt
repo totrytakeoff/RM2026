@@ -22,6 +22,7 @@ target_include_directories(rm_platform_stm32f4 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/adc
     ${CMAKE_CURRENT_SOURCE_DIR}/can
+    ${CMAKE_CURRENT_SOURCE_DIR}/critical
     ${CMAKE_CURRENT_SOURCE_DIR}/dwt
     ${CMAKE_CURRENT_SOURCE_DIR}/flash
     ${CMAKE_CURRENT_SOURCE_DIR}/gpio
@@ -37,6 +38,7 @@ target_include_directories(rm_platform_stm32f4 PUBLIC
 )
 
 target_link_libraries(rm_platform_stm32f4 PUBLIC
+    rm_platform_core
     rm_vendor_runtime
     rm_vendor_stm32_hal
 )

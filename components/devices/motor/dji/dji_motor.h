@@ -14,6 +14,8 @@
 #ifndef DJI_MOTOR_H
 #define DJI_MOTOR_H
 
+#include <stdbool.h>
+
 #include "bsp_can.h"
 #include "controller.h"
 #include "motor_def.h"
@@ -65,6 +67,7 @@ typedef struct
     float last_total_angle;
     int8_t angle_feedback_sign;
     uint8_t angle_feedback_locked;
+    uint8_t feedback_initialized;
 } DJIMotorInstance;
 
 /**
@@ -84,6 +87,10 @@ typedef struct
  * @return DJIMotorInstance*
  */
 DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config);
+
+/** Copy one coherent feedback snapshot for task-level consumers. */
+bool DJIMotorGetMeasure(const DJIMotorInstance *motor,
+                        DJI_Motor_Measure_s *measure);
 
 /**
  * @brief 被application层的应用调用,给电机设定参考值.

@@ -33,6 +33,26 @@ static uint32_t single_shot_start_ms = 0U;
 static float loader_ref_last = 0.0f;
 static uint8_t last_continuous_mode = 0U;
 
+static float LoaderTotalAngle(void)
+{
+    DJI_Motor_Measure_s measure;
+
+    return (motor_loader != NULL &&
+            DJIMotorGetMeasure(motor_loader, &measure))
+               ? measure.total_angle
+               : 0.0f;
+}
+
+static float LoaderSpeed(void)
+{
+    DJI_Motor_Measure_s measure;
+
+    return (motor_loader != NULL &&
+            DJIMotorGetMeasure(motor_loader, &measure))
+               ? measure.speed_aps
+               : 0.0f;
+}
+
 /*============================================================================
  * 公共函数
  *============================================================================*/
@@ -224,7 +244,7 @@ void Shoot_Update(Input_Data_t *input)
         }
 
         if (!single_shot_active && pending_shots > 0U) {
-            loader_start_angle = motor_loader->measure.total_angle;
+            loader_start_angle = LoaderTotalAngle();
             loader_target_angle = loader_start_angle + LOADER_ANGLE_STEP;
             pending_shots--;
             single_shot_active = 1U;
@@ -237,7 +257,7 @@ void Shoot_Update(Input_Data_t *input)
             DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_SINGLE);
             DJIMotorSetRef(motor_loader, loader_target_angle);
             loader_ref_last = loader_target_angle;
-            if (fabsf(motor_loader->measure.total_angle - loader_target_angle) <= LOADER_SINGLE_SETTLE_EPS ||
+            if (fabsf(LoaderTotalAngle() - loader_target_angle) <= LOADER_SINGLE_SETTLE_EPS ||
                 (now - single_shot_start_ms) >= LOADER_SINGLE_TIMEOUT_MS) {
                 if ((now - single_shot_start_ms) >= LOADER_SINGLE_TIMEOUT_MS) {
                     MDBG_SHT("single timeout");
@@ -302,9 +322,9 @@ float Shoot_GetLoaderFeedback(void)
         return 0.0f;
     }
     if (g_robot.shoot.ref_type == REF_ANGLE) {
-        return motor_loader->measure.total_angle;
+        return LoaderTotalAngle();
     }
-    return motor_loader->measure.speed_aps;
+    return LoaderSpeed();
 }
 
 uint8_t Shoot_IsSingleActive(void)

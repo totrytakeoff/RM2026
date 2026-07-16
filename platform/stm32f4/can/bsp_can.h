@@ -1,6 +1,7 @@
 #ifndef BSP_CAN_H
 #define BSP_CAN_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "can.h"
@@ -11,6 +12,18 @@
 
 typedef struct CANInstance CANInstance;
 typedef void (*CANReceiveCallback)(CANInstance *instance);
+
+typedef enum {
+    CAN_DISPATCH_INTERRUPT = 0,
+    CAN_DISPATCH_DEFERRED,
+} CANDispatchMode;
+
+typedef struct {
+    uint32_t received_frames;
+    uint32_t dispatched_frames;
+    uint32_t coalesced_frames;
+    uint32_t rejected_frames;
+} CANDispatchStats;
 
 struct CANInstance {
     CAN_HandleTypeDef *can_handle;
@@ -23,6 +36,7 @@ struct CANInstance {
     uint8_t rx_len;
     CANReceiveCallback can_module_callback;
     void *id;
+    CANDispatchMode dispatch_mode;
 };
 
 typedef struct {
@@ -35,6 +49,15 @@ typedef struct {
 
 /** Register one standard-ID endpoint in fixed static storage during startup. */
 CANInstance *CANRegister(const CAN_Init_Config_s *config);
+
+/** Select callback context before the first endpoint is registered. */
+bool CANConfigureDispatch(CANDispatchMode mode);
+
+/** Dispatch retained endpoint snapshots from task context. Zero means all. */
+uint16_t CANDispatchPending(uint16_t max_callbacks);
+
+/** Copy aggregate receive/dispatch counters. */
+bool CANGetDispatchStats(CANDispatchStats *stats);
 
 /** Set the classic CAN payload length (1..8 bytes). */
 void CANSetDLC(CANInstance *instance, uint8_t length);

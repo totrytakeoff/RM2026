@@ -2,6 +2,7 @@
 #include "bsp_log.h"
 #include "bsp_usart.h"
 #include "daemon.h"
+#include "rm_critical.h"
 #include "memory.h"
 #include "stdlib.h"
 #include "string.h"
@@ -17,6 +18,19 @@ static DaemonInstance *et08_daemon;
 
 static uint32_t et08_frame_count = 0u;
 static uint32_t et08_bad_count = 0u;
+
+static void ET08_PublishCtrl(const ET08_Ctrl_t *ctrl)
+{
+    RmCriticalState state;
+
+    if (ctrl == NULL) {
+        return;
+    }
+
+    state = RmCritical_Enter();
+    memcpy(&et08_ctrl, ctrl, sizeof(et08_ctrl));
+    RmCritical_Exit(state);
+}
 
 static void ET08_ParseSbusChannels(const uint8_t *buf, uint16_t *ch)
 {
@@ -132,7 +146,7 @@ static void ET08_RxCallback(void)
     uint8_t flags = buf[23];
     ET08_Ctrl_t next;
     ET08_FillCtrl(ch, flags, &next);
-    memcpy(&et08_ctrl, &next, sizeof(next));
+    ET08_PublishCtrl(&next);
 
     et08_frame_count++;
     DaemonReload(et08_daemon);
@@ -140,8 +154,10 @@ static void ET08_RxCallback(void)
 
 static void ET08_LostCallback(void *id)
 {
+    const ET08_Ctrl_t offline = {0};
+
     (void)id;
-    memset(&et08_ctrl, 0, sizeof(et08_ctrl));
+    ET08_PublishCtrl(&offline);
     LOGWARNING("[et08] remote control lost");
 
     if (et08_usart_instance)
@@ -175,15 +191,21 @@ ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle)
 ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
                                   uint32_t timeout_ms)
 {
-    memset(&et08_ctrl, 0, sizeof(et08_ctrl));
+    const ET08_Ctrl_t empty = {0};
+
+    ET08_PublishCtrl(&empty);
+    et08_init_flag = 0U;
 
     ET08_ReinitUartForSbus(uart_handle);
 
-    USART_Init_Config_s conf;
+    USART_Init_Config_s conf = {0};
     conf.module_callback = ET08_RxCallback;
     conf.usart_handle = uart_handle;
     conf.recv_buff_size = ET08_SBUS_FRAME_SIZE;
     et08_usart_instance = USARTRegister(&conf);
+    if (et08_usart_instance == NULL) {
+        return NULL;
+    }
 
     DaemonConfig daemon_conf = {
         .timeout_ms = (timeout_ms != 0U) ? timeout_ms
@@ -192,6 +214,9 @@ ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
         .owner = NULL,
     };
     et08_daemon = DaemonRegister(&daemon_conf);
+    if (et08_daemon == NULL) {
+        return NULL;
+    }
 
     et08_init_flag = 1;
     et08_frame_count = 0u;
@@ -205,6 +230,29 @@ uint8_t ET08_IsOnline(void)
     if (!et08_init_flag)
         return 0u;
     return DaemonIsOnline(et08_daemon);
+}
+
+bool ET08_Read(ET08_Ctrl_t *snapshot)
+{
+    RmCriticalState state;
+
+    if (snapshot == NULL) {
+        return false;
+    }
+    if (!ET08_IsOnline()) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    memcpy(snapshot, &et08_ctrl, sizeof(*snapshot));
+    RmCritical_Exit(state);
+
+    if (!ET08_IsOnline()) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return false;
+    }
+    return true;
 }
 
 ET08_Ctrl_t *ET08_GetCtrl(void)

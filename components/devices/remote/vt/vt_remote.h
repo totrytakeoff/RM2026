@@ -1,6 +1,7 @@
 #ifndef VT_REMOTE_H
 #define VT_REMOTE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "main.h"
 
@@ -52,6 +53,9 @@ typedef struct
 
 VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle);
 uint8_t VT_IsOnline(void);
+/** Copy one coherent control snapshot and return its online state. */
+bool VT_Read(VT_Ctrl_t *snapshot);
+/** Compatibility live view; prefer VT_Read() in concurrent firmware. */
 VT_Ctrl_t *VT_GetCtrl(void);
 
 #endif

@@ -333,10 +333,12 @@ float Chassis_GetFRSpeedRef(void)
 
 float Chassis_GetFRSpeedFdb(void)
 {
+    DJI_Motor_Measure_s measure;
+
     if (motor_fr == NULL) {
         return 0.0f;
     }
-    return motor_fr->measure.speed_aps;
+    return DJIMotorGetMeasure(motor_fr, &measure) ? measure.speed_aps : 0.0f;
 }
 
 float Chassis_GetPowerScale(void)

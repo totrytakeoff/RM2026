@@ -61,6 +61,12 @@ deadlines and are independent of the health-task period. See
 `platform_runtime_milestone.md` for capacities, timeout values, and remaining
 transport constraints.
 
+The formal firmware selects deferred CAN/UART dispatch before registering any
+device. Interrupts only retain bounded receive data; the 5 ms motor task parses
+it before running motor control. ET08, VT, and DJI feedback are copied through
+coherent snapshot APIs before application use. See
+`deferred_ingress_milestone.md` for overflow and compatibility semantics.
+
 ## Build baseline
 
 ```bash
@@ -78,9 +84,9 @@ Expected status at this baseline:
 - formal firmware builds;
 - bare-metal comparison firmware builds;
 - all 30 embedded demo/regression firmware targets build;
-- all three native unit-test programs pass;
-- formal firmware RAM usage is 45,872 bytes (35.00%) and Flash usage is 92,476
-  bytes (8.82%) in Debug, including an 8 KiB main-stack reservation and no C
+- all four native unit-test programs pass;
+- formal firmware RAM usage is 50,696 bytes (38.68%) and Flash usage is 95,028
+  bytes (9.06%) in Debug, including an 8 KiB main-stack reservation and no C
   heap reservation;
 - the formal image contains no linked C/FreeRTOS heap-allocation or libc
   formatting symbol;
@@ -112,8 +118,11 @@ the comparison firmware for tuning:
   `platform/`.
 - Several components not linked into `app.elf` still provide heap-backed
   compatibility APIs and cannot be promoted into the formal firmware yet.
-- CAN and UART protocol callbacks still run in interrupt context.
 - Module APIs and configuration macros retain some `Minimal*` naming.
+- Motor commands/PID runtime and INS attitude data still cross task boundaries
+  through transitional mutable structures; their ownership must be narrowed.
+- Device initialization failures and individual motor-health deadlines are not
+  yet aggregated into the top-level safety state.
 - The mutable `g_robot` context is still shared with diagnostic code.
 - A hardware watchdog is not implemented yet; the software health task cannot
   diagnose its own total starvation.

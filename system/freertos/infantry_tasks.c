@@ -7,6 +7,8 @@
 #include "task.h"
 
 #include "bsp_dwt.h"
+#include "bsp_can.h"
+#include "bsp_usart.h"
 #include "daemon.h"
 #include "dji_motor.h"
 #include "infantry_app.h"
@@ -196,6 +198,9 @@ static void InfantryMotorTask(void *argument)
 
     for (;;) {
         uint32_t start_cycles = TaskRuntime_Begin(INFANTRY_TASK_MOTOR);
+        /* Parse bounded ingress snapshots before consuming motor feedback. */
+        (void)CANDispatchPending(0U);
+        (void)USARTDispatchPending(0U);
         DJIMotorControl();
         TaskRuntime_Record(INFANTRY_TASK_MOTOR, start_cycles);
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(INFANTRY_MOTOR_TASK_PERIOD_MS));

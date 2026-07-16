@@ -3,6 +3,7 @@
 #include "bsp_log.h"
 #include "bsp_usart.h"
 #include "daemon.h"
+#include "rm_critical.h"
 #include "memory.h"
 #include "string.h"
 
@@ -16,6 +17,24 @@ static USARTInstance *vt_usart_instance;
 static DaemonInstance *vt_daemon;
 static uint8_t vt_stream_buf[VT_FRAME_SIZE * 3u];
 static uint16_t vt_stream_len = 0u;
+
+static void VT_CopyCtrl(VT_Ctrl_t *ctrl)
+{
+    RmCriticalState state;
+
+    state = RmCritical_Enter();
+    memcpy(ctrl, &vt_ctrl, sizeof(*ctrl));
+    RmCritical_Exit(state);
+}
+
+static void VT_PublishCtrl(const VT_Ctrl_t *ctrl)
+{
+    RmCriticalState state;
+
+    state = RmCritical_Enter();
+    memcpy(&vt_ctrl, ctrl, sizeof(vt_ctrl));
+    RmCritical_Exit(state);
+}
 
 static uint16_t VT_Crc16CcittFalse(const uint8_t *data, uint16_t len)
 {
@@ -221,18 +240,24 @@ static void VT_RxCallback(void)
 
         if (!VT_VerifyFrame(vt_stream_buf))
         {
-            vt_ctrl.bad_count++;
-            vt_ctrl.crc_ok = 0u;
+            VT_Ctrl_t invalid;
+            VT_CopyCtrl(&invalid);
+            invalid.bad_count++;
+            invalid.crc_ok = 0u;
+            VT_PublishCtrl(&invalid);
             VT_StreamConsume(1u);
             continue;
         }
 
-        VT_Ctrl_t next = vt_ctrl;
+        VT_Ctrl_t current;
+        VT_Ctrl_t next;
+        VT_CopyCtrl(&current);
+        next = current;
         VT_FillCtrl(vt_stream_buf, &next);
         next.crc_ok = 1u;
-        next.frame_count = vt_ctrl.frame_count + 1u;
-        next.bad_count = vt_ctrl.bad_count;
-        memcpy(&vt_ctrl, &next, sizeof(next));
+        next.frame_count = current.frame_count + 1u;
+        next.bad_count = current.bad_count;
+        VT_PublishCtrl(&next);
         VT_StreamConsume(VT_FRAME_SIZE);
         DaemonReload(vt_daemon);
     }
@@ -240,8 +265,10 @@ static void VT_RxCallback(void)
 
 static void VT_LostCallback(void *id)
 {
+    const VT_Ctrl_t offline = {0};
+
     (void)id;
-    memset(&vt_ctrl, 0, sizeof(vt_ctrl));
+    VT_PublishCtrl(&offline);
     LOGWARNING("[vt] datalink remote control lost");
 
     if (vt_usart_instance != NULL)
@@ -268,16 +295,22 @@ static void VT_ReinitUart(UART_HandleTypeDef *uart_handle)
 
 VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
 {
-    memset(&vt_ctrl, 0, sizeof(vt_ctrl));
+    const VT_Ctrl_t empty = {0};
+
+    VT_PublishCtrl(&empty);
+    vt_init_flag = 0U;
     vt_stream_len = 0u;
     VT_ReinitUart(uart_handle);
 
     {
-        USART_Init_Config_s conf;
+        USART_Init_Config_s conf = {0};
         conf.module_callback = VT_RxCallback;
         conf.usart_handle = uart_handle;
         conf.recv_buff_size = VT_FRAME_SIZE;
         vt_usart_instance = USARTRegister(&conf);
+        if (vt_usart_instance == NULL) {
+            return NULL;
+        }
     }
 
     {
@@ -287,6 +320,9 @@ VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
             .owner = NULL,
         };
         vt_daemon = DaemonRegister(&daemon_conf);
+        if (vt_daemon == NULL) {
+            return NULL;
+        }
     }
 
     vt_init_flag = 1u;
@@ -298,6 +334,24 @@ uint8_t VT_IsOnline(void)
     if (!vt_init_flag)
         return 0u;
     return DaemonIsOnline(vt_daemon);
+}
+
+bool VT_Read(VT_Ctrl_t *snapshot)
+{
+    if (snapshot == NULL) {
+        return false;
+    }
+    if (!VT_IsOnline()) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return false;
+    }
+
+    VT_CopyCtrl(snapshot);
+    if (!VT_IsOnline()) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return false;
+    }
+    return true;
 }
 
 VT_Ctrl_t *VT_GetCtrl(void)

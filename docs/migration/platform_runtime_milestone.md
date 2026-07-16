@@ -71,10 +71,11 @@ selected FIFO and copy at most eight bytes per classic-CAN frame. UART receive
 uses receive-to-idle DMA; recovery handles a busy HAL state by aborting the
 stale receive operation and starting it once more.
 
-The transport callbacks still invoke protocol/device callbacks in interrupt
-context. Moving parsing and motor-state publication behind bounded queues or
-snapshots remains a device-component milestone; callbacks must not grow new
-blocking or formatting work in the meantime.
+At this milestone the transport callbacks still invoked protocol/device
+callbacks in interrupt context. The follow-up
+[`deferred_ingress_milestone.md`](deferred_ingress_milestone.md) closes that
+gap for the formal infantry firmware with bounded receive inboxes and coherent
+device snapshots.
 
 ### Heap-free formal control path
 

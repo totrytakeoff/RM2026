@@ -1,6 +1,7 @@
 #ifndef ET08_REMOTE_H
 #define ET08_REMOTE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "main.h"
 
@@ -102,6 +103,9 @@ ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle);
 ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
                                   uint32_t timeout_ms);
 uint8_t ET08_IsOnline(void);
+/** Copy one coherent control snapshot and return its online state. */
+bool ET08_Read(ET08_Ctrl_t *snapshot);
+/** Compatibility live view; prefer ET08_Read() in concurrent firmware. */
 ET08_Ctrl_t *ET08_GetCtrl(void);
 uint8_t ET08_MapSwitchState(uint16_t raw_value);
 
