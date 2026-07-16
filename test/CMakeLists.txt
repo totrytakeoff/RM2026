@@ -25,9 +25,10 @@ foreach(CMAKELIST_FILE ${TEST_CMAKELIST_FILES})
         continue()
     endif()
 
-    # 过滤掉常见构建目录，避免误把临时构建产物中的 CMakeLists 加入工程
-    if(SUBDIR MATCHES "(^|/)(build|cmake-build[^/]*)($|/)")
-        message(STATUS "Skip build directory in test/: ${SUBDIR}")
+    # unit/ 是独立的主机 CMake 工程，不能使用 ARM 工具链加入固件构建。
+    # 同时过滤常见构建目录，避免误收集临时产物中的 CMakeLists。
+    if(SUBDIR MATCHES "(^|/)(unit|build|cmake-build[^/]*)($|/)")
+        message(STATUS "Skip non-embedded directory in test/: ${SUBDIR}")
         continue()
     endif()
 

@@ -1,5 +1,6 @@
 #include "infantry_app.h"
 
+#include <stdatomic.h>
 #include <string.h>
 
 #include "infantry_chassis.h"
@@ -13,7 +14,8 @@
 
 Robot_Context_t g_robot;
 
-static uint8_t safe_stop_latched;
+static RmSafetyManager safety_manager;
+static atomic_bool task_health_ok;
 
 void InfantryApp_ForceSafeStop(void)
 {
@@ -25,7 +27,8 @@ void InfantryApp_ForceSafeStop(void)
 void InfantryApp_Init(void)
 {
     memset(&g_robot, 0, sizeof(g_robot));
-    safe_stop_latched = 0U;
+    RmSafety_Init(&safety_manager);
+    atomic_init(&task_health_ok, true);
 
     MinimalDebug_Init();
 
@@ -45,39 +48,56 @@ void InfantryApp_Init(void)
 void InfantryApp_ControlStep(uint32_t now_ms)
 {
     Input_Data_t input;
+    RmSafetyInputs safety_inputs;
 
     (void)now_ms;
     Input_GetData(&input);
     MinimalReferee_Update();
     g_robot.referee = *MinimalReferee_GetData();
 
-    if (input.emergency_stop || !input.online) {
-        if (!safe_stop_latched) {
-            MDBG_SYS("safe stop: estop=%u online=%u",
-                     (unsigned)input.emergency_stop,
-                     (unsigned)input.online);
-            safe_stop_latched = 1U;
-        }
-        InfantryApp_ForceSafeStop();
-        g_robot.input = input;
-        return;
+    safety_inputs.initialization_complete = (g_robot.initialized != 0U);
+    safety_inputs.input_online = (input.online != 0U);
+    safety_inputs.emergency_stop = (input.emergency_stop != 0U);
+    safety_inputs.task_health_ok =
+        atomic_load_explicit(&task_health_ok, memory_order_relaxed);
+
+    if (RmSafety_Update(&safety_manager, &safety_inputs)) {
+        MDBG_SYS("safety state=%u reasons=0x%08lx",
+                 (unsigned)safety_manager.state,
+                 (unsigned long)safety_manager.reasons);
     }
 
-    if (safe_stop_latched) {
-        MDBG_SYS("safe stop released");
-        safe_stop_latched = 0U;
+    g_robot.input = input;
+    g_robot.emergency_stop = RmSafety_OutputPermitted(&safety_manager) ? 0U : 1U;
+    if (!RmSafety_OutputPermitted(&safety_manager)) {
+        InfantryApp_ForceSafeStop();
+        return;
     }
 
     /* Keep the minimal baseline's execution order unchanged. */
     Gimbal_Update(&input, Chassis_GetWz());
     Chassis_Update(&input);
     Shoot_Update(&input);
-    g_robot.input = input;
 }
 
 void InfantryApp_DiagnosticsStep(uint32_t now_ms)
 {
     MinimalDebug_UpdatePeriodic(now_ms);
+}
+
+void InfantryApp_SetTaskHealth(bool healthy)
+{
+    atomic_store_explicit(&task_health_ok, healthy, memory_order_relaxed);
+}
+
+RmSafetyState InfantryApp_GetSafetyState(void)
+{
+    return safety_manager.state;
+}
+
+uint32_t InfantryApp_GetSafetyReasons(void)
+{
+    return safety_manager.reasons;
 }
 
 const Robot_Context_t *InfantryApp_GetContext(void)

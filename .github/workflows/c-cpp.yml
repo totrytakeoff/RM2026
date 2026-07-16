@@ -18,6 +18,14 @@ jobs:
           sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build cmake
           arm-none-eabi-gcc --version
 
+      - name: Configure host unit tests
+        run: cmake -S test/unit -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Run host unit tests
+        run: |
+          cmake --build build-host
+          ctest --test-dir build-host --output-on-failure
+
       - name: Configure (CMake + Ninja)
         run: cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchain.cmake -DCMAKE_BUILD_TYPE=Release
 

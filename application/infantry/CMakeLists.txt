@@ -32,6 +32,7 @@ target_compile_options(rm_app_infantry PRIVATE ${MCU_FLAGS})
 # the ownership migration; application code no longer lives in the legacy lib.
 target_link_libraries(rm_app_infantry PUBLIC
     rm_infantry_config
+    rm_service_safety
     HNUYueLuRM_modules
     HNUYueLuRM_bsp
     HNUYueLuRM_common

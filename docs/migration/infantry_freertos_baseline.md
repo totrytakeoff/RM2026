@@ -26,8 +26,9 @@ The source of truth for infantry behavior is now `application/infantry`.
   constraint from the minimal firmware.
 - PID values, limits, calibration values, and control-mode transitions are not
   retuned during the migration.
-- Offline or emergency-stop input stops chassis, gimbal, and shooter together;
-  valid input releases the latch as in the minimal baseline.
+- Offline, emergency-stop, or critical-task faults stop chassis, gimbal, and
+  shooter together. Once all faults clear, the safety state automatically
+  returns to active as in the minimal baseline.
 
 ## FreeRTOS task baseline
 
@@ -47,12 +48,23 @@ allocation-failure hook are enabled as defensive configuration.
 Task stack sizes are deliberately conservative until hardware high-water marks
 have been collected.
 
+The critical tasks now publish heartbeat, release interval, execution time,
+deadline-miss, and stack high-water data. Three consecutive deadline misses, a
+four-period heartbeat loss after the startup grace period, or fewer than 64
+unused stack words drives the application safety state to `STOPPED`.
+`diagnostics` remains observable but non-critical because its transport may
+block without making actuator control unsafe. See `safety_health_service.md`.
+
 ## Build baseline
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --target app.elf test_infantry_minimal --parallel
 cmake --build build --parallel
+
+cmake -S test/unit -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host
+ctest --test-dir build-host --output-on-failure
 ```
 
 Expected status at this baseline:
@@ -88,10 +100,11 @@ the comparison firmware for tuning:
   algorithm implementations from `lib/HNUYueLuRM`.
 - Module APIs and configuration macros retain some `Minimal*` naming.
 - The mutable `g_robot` context is still shared with diagnostic code.
-- The hardware watchdog and task deadline monitor are not implemented yet.
+- A hardware watchdog is not implemented yet; the software health task cannot
+  diagnose its own total starvation.
 - CubeMX `.ioc` is not yet tracked.
 - linker-reserved C heap/stack still require memory-budget cleanup.
 - The former `Src/application` implementation has not yet been removed.
 
-The next ownership slice is the safety/health service followed by time, log,
-CAN/UART BSP, and motor/input components.
+The next ownership slice is time and log infrastructure, followed by CAN/UART
+BSP and motor/input components.

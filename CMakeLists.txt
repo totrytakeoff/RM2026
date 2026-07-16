@@ -47,7 +47,8 @@ add_subdirectory(lib)
 # 2. 编译 HAL (HAL_Lib: 包含 CubeMX 生成的配置代码 + 启动文件)
 add_subdirectory(hal)
 
-# 3. 编译自有应用、系统与固件组合层
+# 3. 编译自有服务、应用、系统与固件组合层
+add_subdirectory(services)
 add_subdirectory(application)
 add_subdirectory(system)
 add_subdirectory(firmware)
