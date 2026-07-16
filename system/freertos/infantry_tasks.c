@@ -10,7 +10,6 @@
 #include "bsp_can.h"
 #include "bsp_usart.h"
 #include "daemon.h"
-#include "dji_motor.h"
 #include "infantry_app.h"
 #include "infantry_config.h"
 #include "ins_task.h"
@@ -201,7 +200,7 @@ static void InfantryMotorTask(void *argument)
         /* Parse bounded ingress snapshots before consuming motor feedback. */
         (void)CANDispatchPending(0U);
         (void)USARTDispatchPending(0U);
-        DJIMotorControl();
+        InfantryApp_MotorStep();
         TaskRuntime_Record(INFANTRY_TASK_MOTOR, start_cycles);
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(INFANTRY_MOTOR_TASK_PERIOD_MS));
     }

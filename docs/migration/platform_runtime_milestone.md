@@ -37,7 +37,9 @@ deadlines. Atomic deadline and transition state prevents an interrupt feed from
 suppressing the next genuine offline notification. A newly registered instance
 is not online until its first valid feed; startup grace only postpones the first
 offline callback. The callback then runs once per offline episode and is
-re-armed by the next valid feed.
+re-armed by the next valid feed. Once declared offline, that transition remains
+latched until a new feed, preventing serial-number ambiguity after very long
+uptime from reviving stale device health.
 
 Current device deadlines are:
 
@@ -107,9 +109,9 @@ or removed before their targets can become competition-firmware dependencies.
 
 The native suite contains three independently linked test programs for safety,
 device-health deadlines, and formatting. It covers exact deadline boundaries,
-poll-rate independence, clock wrap, one-shot callbacks, invalid deadline
-rejection, registry capacity, formatting flags and widths, float rounding, and
-buffer truncation.
+poll-rate independence, clock wrap, long-offline latching, one-shot callbacks,
+invalid deadline rejection, registry capacity, formatting flags and widths,
+float rounding, and buffer truncation.
 
 On 2026-07-16 the following passed in Debug:
 

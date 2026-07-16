@@ -43,6 +43,48 @@ typedef struct
     int32_t total_round; // 总圈数,注意方向
 } DJI_Motor_Measure_s;
 
+/** One-shot PID runtime reset requests consumed by the motor task. */
+typedef enum
+{
+    DJI_MOTOR_PID_RESET_NONE = 0U,
+    DJI_MOTOR_PID_RESET_CURRENT = (1U << 0),
+    DJI_MOTOR_PID_RESET_SPEED = (1U << 1),
+    DJI_MOTOR_PID_RESET_ANGLE = (1U << 2),
+    DJI_MOTOR_PID_RESET_ALL = DJI_MOTOR_PID_RESET_CURRENT |
+                              DJI_MOTOR_PID_RESET_SPEED |
+                              DJI_MOTOR_PID_RESET_ANGLE,
+} DJIMotorPidReset_e;
+
+/** Values embedded in a command instead of sampled through legacy pointers. */
+typedef enum
+{
+    DJI_MOTOR_EXTERNAL_NONE = 0U,
+    DJI_MOTOR_EXTERNAL_ANGLE = (1U << 0),
+    DJI_MOTOR_EXTERNAL_SPEED = (1U << 1),
+    DJI_MOTOR_EXTERNAL_SPEED_FF = (1U << 2),
+    DJI_MOTOR_EXTERNAL_CURRENT_FF = (1U << 3),
+} DJIMotorExternalInput_e;
+
+/**
+ * Complete task-to-task motor command.
+ *
+ * pid_reset_mask is an edge-triggered request: publishing it latches the bits
+ * until the motor task consumes them, while reading the mailbox always returns
+ * zero for that field.
+ */
+typedef struct
+{
+    Motor_Control_Setting_s settings;
+    float reference;
+    float other_angle_feedback;
+    float other_speed_feedback;
+    float speed_feedforward;
+    float current_feedforward;
+    Motor_Working_Type_e working_state;
+    uint8_t external_input_mask;
+    uint8_t pid_reset_mask;
+} DJIMotorCommand;
+
 /**
  * @brief DJI intelligent motor typedef
  *
@@ -68,6 +110,14 @@ typedef struct
     int8_t angle_feedback_sign;
     uint8_t angle_feedback_locked;
     uint8_t feedback_initialized;
+    uint8_t output_active;
+
+    /* Published by application tasks and consumed only by DJIMotorControl(). */
+    DJIMotorCommand command_mailbox;
+    uint32_t command_last_publish_ms;
+    uint32_t command_generation;
+    uint8_t pending_pid_reset_mask;
+    uint8_t command_published;
 } DJIMotorInstance;
 
 /**
@@ -91,6 +141,30 @@ DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config);
 /** Copy one coherent feedback snapshot for task-level consumers. */
 bool DJIMotorGetMeasure(const DJIMotorInstance *motor,
                         DJI_Motor_Measure_s *measure);
+
+/** Copy the latest persistent command (one-shot reset bits are returned clear). */
+bool DJIMotorGetCommand(const DJIMotorInstance *motor,
+                        DJIMotorCommand *command);
+
+/** Atomically publish one complete command for the motor task. */
+bool DJIMotorPublishCommand(DJIMotorInstance *motor,
+                            const DJIMotorCommand *command);
+
+/**
+ * Configure the maximum age of a command before motor output is forced to
+ * zero. A value of zero disables the lease for legacy single-loop demos.
+ */
+bool DJIMotorSetCommandTimeout(uint32_t timeout_ms);
+
+/** Return whether this motor has valid feedback inside its health deadline. */
+bool DJIMotorIsOnline(const DJIMotorInstance *motor);
+
+/** Return true only when every registered DJI motor is online. */
+bool DJIMotorAllOnline(void);
+
+/** Global safety gate checked by the motor task before every CAN transmission. */
+void DJIMotorSetGlobalOutputEnabled(bool enabled);
+bool DJIMotorGlobalOutputEnabled(void);
 
 /**
  * @brief 被application层的应用调用,给电机设定参考值.

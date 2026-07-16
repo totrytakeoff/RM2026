@@ -23,7 +23,10 @@ bool InfantryFirmware_Init(void)
     BSPLogInit();
 #endif
 
-    InfantryApp_Init();
+    if (!InfantryApp_Init()) {
+        InfantryApp_ForceSafeStop();
+        return false;
+    }
     if (!InfantryTasks_Create()) {
         InfantryApp_ForceSafeStop();
         return false;

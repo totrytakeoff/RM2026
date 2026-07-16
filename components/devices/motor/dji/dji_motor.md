@@ -15,7 +15,16 @@
 
 > 如果你不需要理解该模块的工作原理，你只需要查看这一小节。
 
-dji_motor模块对DJI智能电机，包括M2006，M3508以及GM6020进行了详尽的封装。你不再需要关心PID的计算以及CAN报文的发送和接收解析，你只需要专注于根据应用层的需求，设定合理的期望值，并通过`DJIMotorSetRef()`设置对应电机的输入参考即可。
+> **2026 并发接口约束（优先于下文的历史单循环示例）**
+>
+> 正式 FreeRTOS 应用必须用 `DJIMotorGetCommand()` 取得完整命令副本，修改
+> 后通过 `DJIMotorPublishCommand()` 一次发布；电机任务是 PID 运行态、控制
+> 设置和 CAN 输出的唯一写入者。`DJIMotorSetRef()` 等旧接口只用于单循环
+> demo 兼容，不构成多字段原子事务。正式步兵还配置命令超时并使用全局输出
+> 门控，具体契约见
+> [`control_ownership_milestone.md`](../../../../docs/migration/control_ownership_milestone.md)。
+
+dji_motor模块对DJI智能电机，包括M2006，M3508以及GM6020进行了详尽的封装。单循环程序可通过`DJIMotorSetRef()`设置输入参考；跨任务程序必须使用上述完整命令接口。
 
 **==设定值的单位==**
 
@@ -345,11 +354,15 @@ void DJIMotorOuterLoop(dji_motor_instance *motor);
 
 - `DJIMotorInit()`是用于初始化电机对象的接口，传入包括电机can配置、电机控制配置、电机控制器配置以及电机类型在内的初始化参数。**它将会返回一个电机实例指针**，你应当在应用层保存这个指针，这样才能操控这个电机。
 
-- `DJIMotorSetRef()`是设定电机输出的接口，**在调用这个函数的时候，你可以认为你的设定值会直接转变为电机的输出**。`DJIMotorControl()`会帮你完成闭环计算，不用担心PID。
+- `DJIMotorSetRef()`是单循环兼容接口，设定值会由下一次
+  `DJIMotorControl()`执行闭环计算。并发应用应发布完整
+  `DJIMotorCommand`，避免参考值、模式和启停状态来自不同更新周期。
 
 - `DJIMotorChangeFeed()`一般在更改云台或底盘的运动模式的时候被调用，传入要修改反馈来源的电机实例指针、要修改的闭环以及反馈来源类型。如希望切换到IMU的yaw值作为云台设定值，传入yaw轴电机实例和`ANGLE_LOOP`（位置环）、`OTHER_FEED`（启用其他数据来源）即可。当然，你需要在初始化的时候设定`motor_controller`中的 `other_angle_feedback_ptr`，使其指向yaw值的变量。
 
-- `DJIMotorControl()`是根据电机的配置计算控制值的函数。该函数在`motor_task.c`中被调用，应当在freeRTOS中以一定频率运行。此函数为PID的计算进行了彻底的封装，要修改电机的参考输入，请在app层的应用中调用`DJIMotorSetRef()`。
+- `DJIMotorControl()`是根据电机的配置计算控制值的函数。该函数在电机
+  任务中以固定频率运行，并消费应用发布的完整命令；正式应用不直接修改
+  PID 运行态或电机控制结构。
 
   该函数的具体实现请参照代码，注释已经较为清晰。流程大致为：
 
@@ -461,7 +474,7 @@ Motor_Init_Config_s config = {
 dji_motor_instance *djimotor = DJIMotorInit(&config);
 ```
 
-然后在任务中修改电机设定值即可实现控制：
+单循环 demo 可直接修改电机设定值：
 
 ```
 DJIMotorSetRef(djimotor, 10);

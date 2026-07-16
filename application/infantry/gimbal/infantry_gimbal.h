@@ -6,12 +6,17 @@
 #ifndef INFANTRY_GIMBAL_H
 #define INFANTRY_GIMBAL_H
 
+#include <stdbool.h>
+
 #include "infantry_types.h"
 
 /**
  * @brief 云台初始化
  */
-void Gimbal_Init(void);
+bool Gimbal_Init(void);
+
+/** Refresh high-rate IMU feedback from the motor task before PID execution. */
+void Gimbal_MotorStep(void);
 
 /**
  * @brief 云台更新
@@ -24,6 +29,7 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz);
  * @brief 云台停止
  */
 void Gimbal_Stop(void);
+bool Gimbal_IsHealthy(void);
 
 /**
  * @brief 获取当前云台模式

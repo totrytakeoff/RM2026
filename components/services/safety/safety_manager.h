@@ -18,6 +18,7 @@ typedef enum {
     RM_SAFETY_REASON_EMERGENCY_STOP = (1U << 2),
     RM_SAFETY_REASON_TASK_UNHEALTHY = (1U << 3),
     RM_SAFETY_REASON_INVALID_INPUT = (1U << 4),
+    RM_SAFETY_REASON_DEVICE_UNHEALTHY = (1U << 5),
 } RmSafetyReason;
 
 typedef struct {
@@ -25,6 +26,7 @@ typedef struct {
     bool input_online;
     bool emergency_stop;
     bool task_health_ok;
+    bool device_health_ok;
 } RmSafetyInputs;
 
 typedef struct {

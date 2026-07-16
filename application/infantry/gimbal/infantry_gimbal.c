@@ -23,7 +23,7 @@
 
 static DJIMotorInstance *motor_yaw = NULL;
 static DJIMotorInstance *motor_pitch = NULL;
-static attitude_t *gimbal_imu = NULL;
+static uint8_t gimbal_imu_initialized = 0U;
 
 static GimbalMode_e current_mode = GIMBAL_FOLLOW_CHASSIS;
 static GimbalMode_e last_mode_logged = GIMBAL_FOLLOW_CHASSIS;
@@ -37,7 +37,10 @@ static float yaw_hold_ref = 0.0f;
 static float pitch_hold_ref = 0.0f;
 static float pitch_release_hold_ref = 0.0f;
 static float pitch_current_ff = 0.0f;
-static float pitch_imu_speed_fdb = 0.0f;
+/* These three values are written and consumed only by the 5 ms motor task. */
+static float motor_yaw_imu_angle_fdb = 0.0f;
+static float motor_yaw_imu_speed_fdb = 0.0f;
+static float motor_pitch_imu_speed_fdb = 0.0f;
 static AxisCtrlMode_e pitch_ctrl_mode = AXIS_CTRL_ANGLE;
 static AxisCtrlMode_e last_pitch_ctrl_mode = AXIS_CTRL_ANGLE;
 static uint8_t pitch_cmd_active = 0U;
@@ -45,6 +48,7 @@ static uint8_t pitch_enter_cnt = 0U;
 static uint8_t pitch_exit_cnt = 0U;
 static uint8_t pitch_brake_stable_count = 0U;
 static uint32_t pitch_brake_start_ms = 0U;
+static uint8_t pitch_pid_reset_request = DJI_MOTOR_PID_RESET_NONE;
 
 static float MotorTotalAngle(const DJIMotorInstance *motor)
 {
@@ -95,38 +99,62 @@ static float WrapAngleDeg180(float angle_deg)
     return angle_deg;
 }
 
-static void ResetPidState(PIDInstance *pid)
+static bool ReadAttitude(attitude_t *attitude)
 {
-    if (pid == NULL) {
-        return;
-    }
-
-    pid->Measure = 0.0f;
-    pid->Last_Measure = 0.0f;
-    pid->Err = 0.0f;
-    pid->Last_Err = 0.0f;
-    pid->Last_ITerm = 0.0f;
-    pid->Pout = 0.0f;
-    pid->Iout = 0.0f;
-    pid->Dout = 0.0f;
-    pid->ITerm = 0.0f;
-    pid->Output = 0.0f;
-    pid->Last_Output = 0.0f;
-    pid->Last_Dout = 0.0f;
-    pid->Ref = 0.0f;
-    pid->DWT_CNT = 0U;
-    pid->dt = 0.0f;
+    return (gimbal_imu_initialized != 0U) && INS_Read(attitude);
 }
 
-static void ResetPitchPidRuntime(void)
+static void RequestPitchPidReset(uint8_t mask)
 {
-    if (motor_pitch == NULL) {
-        return;
+    pitch_pid_reset_request |= mask & DJI_MOTOR_PID_RESET_ALL;
+}
+
+static bool PublishYawCommand(float reference,
+                              Motor_Working_Type_e working_state,
+                              bool imu_available,
+                              uint8_t pid_reset_mask)
+{
+    DJIMotorCommand command;
+
+    if (!DJIMotorGetCommand(motor_yaw, &command)) {
+        return false;
+    }
+    command.settings.angle_feedback_source =
+        imu_available ? OTHER_FEED : MOTOR_FEED;
+    command.settings.speed_feedback_source =
+        imu_available ? OTHER_FEED : MOTOR_FEED;
+    command.settings.outer_loop_type = ANGLE_LOOP;
+    command.reference = reference;
+    command.working_state = working_state;
+    command.pid_reset_mask = pid_reset_mask;
+    return DJIMotorPublishCommand(motor_yaw, &command);
+}
+
+static bool PublishPitchCommand(Closeloop_Type_e outer_loop,
+                                float reference,
+                                Motor_Working_Type_e working_state,
+                                bool imu_available)
+{
+    DJIMotorCommand command;
+
+    if (!DJIMotorGetCommand(motor_pitch, &command)) {
+        return false;
+    }
+    command.settings.angle_feedback_source = MOTOR_FEED;
+    command.settings.speed_feedback_source =
+        imu_available ? OTHER_FEED : MOTOR_FEED;
+    command.settings.outer_loop_type = outer_loop;
+    command.reference = reference;
+    command.current_feedforward = pitch_current_ff;
+    command.external_input_mask |= DJI_MOTOR_EXTERNAL_CURRENT_FF;
+    command.working_state = working_state;
+    command.pid_reset_mask = pitch_pid_reset_request;
+    if (!DJIMotorPublishCommand(motor_pitch, &command)) {
+        return false;
     }
 
-    ResetPidState(&motor_pitch->motor_controller.angle_PID);
-    ResetPidState(&motor_pitch->motor_controller.speed_PID);
-    ResetPidState(&motor_pitch->motor_controller.current_PID);
+    pitch_pid_reset_request = DJI_MOTOR_PID_RESET_NONE;
+    return true;
 }
 
 static void ResetPitchState(void)
@@ -159,14 +187,12 @@ static void UpdatePitchGravityFeedforward(void)
 
 static float GetPitchSpeedFeedback(void)
 {
-    if (gimbal_imu != NULL) {
-        pitch_imu_speed_fdb = gimbal_imu->Gyro[0];
-    } else if (motor_pitch != NULL) {
-        pitch_imu_speed_fdb = MotorSpeed(motor_pitch);
-    } else {
-        pitch_imu_speed_fdb = 0.0f;
+    attitude_t attitude;
+
+    if (ReadAttitude(&attitude)) {
+        return attitude.Gyro[0];
     }
-    return pitch_imu_speed_fdb;
+    return (motor_pitch != NULL) ? MotorSpeed(motor_pitch) : 0.0f;
 }
 
 static uint8_t IsVTMouseActive(const Input_Data_t *input)
@@ -268,7 +294,7 @@ static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_
 
     if (pitch_cmd_active != 0U) {
         if (pitch_ctrl_mode != AXIS_CTRL_SPEED) {
-            ResetPitchPidRuntime();
+            RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
         }
         pitch_ctrl_mode = AXIS_CTRL_SPEED;
         pitch_brake_stable_count = 0U;
@@ -281,7 +307,7 @@ static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_
         pitch_ctrl_mode = AXIS_CTRL_BRAKE;
         pitch_brake_stable_count = 0U;
         pitch_brake_start_ms = now_ms;
-        ResetPidState(&motor_pitch->motor_controller.speed_PID);
+        RequestPitchPidReset(DJI_MOTOR_PID_RESET_SPEED);
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
         if (fabsf(GetPitchSpeedFeedback()) <= PITCH_BRAKE_SPEED_EPS) {
             if (pitch_brake_stable_count < 255U) {
@@ -295,17 +321,21 @@ static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_
             (now_ms - pitch_brake_start_ms) >= PITCH_BRAKE_TIMEOUT_MS) {
             pitch_hold_ref = pitch_release_hold_ref;
             pitch_ctrl_mode = AXIS_CTRL_ANGLE;
-            ResetPitchPidRuntime();
+            RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
         }
     }
 }
 
-void Gimbal_Init(void)
+bool Gimbal_Init(void)
 {
     Motor_Init_Config_s yaw_config;
     Motor_Init_Config_s pitch_config;
+    attitude_t attitude;
 
-    gimbal_imu = INS_Init();
+    gimbal_imu_initialized = (INS_Init() != NULL) ? 1U : 0U;
+    motor_yaw_imu_angle_fdb = 0.0f;
+    motor_yaw_imu_speed_fdb = 0.0f;
+    motor_pitch_imu_speed_fdb = 0.0f;
 
     yaw_config = (Motor_Init_Config_s){
         .motor_type = GM6020,
@@ -330,8 +360,12 @@ void Gimbal_Init(void)
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .MaxOut = YAW_SEPARATE_SPEED_MAX_OUT,
             },
-            .other_angle_feedback_ptr = (gimbal_imu != NULL) ? &gimbal_imu->YawTotalAngle : NULL,
-            .other_speed_feedback_ptr = (gimbal_imu != NULL) ? &gimbal_imu->Gyro[2] : NULL,
+            .other_angle_feedback_ptr = (gimbal_imu_initialized != 0U)
+                                            ? &motor_yaw_imu_angle_fdb
+                                            : NULL,
+            .other_speed_feedback_ptr = (gimbal_imu_initialized != 0U)
+                                            ? &motor_yaw_imu_speed_fdb
+                                            : NULL,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
@@ -365,8 +399,9 @@ void Gimbal_Init(void)
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .MaxOut = PITCH_SPEED_MAX_OUT,
             },
-            .other_speed_feedback_ptr = &pitch_imu_speed_fdb,
-            .current_feedforward_ptr = &pitch_current_ff,
+            .other_speed_feedback_ptr = (gimbal_imu_initialized != 0U)
+                                            ? &motor_pitch_imu_speed_fdb
+                                            : NULL,
         },
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
@@ -382,23 +417,40 @@ void Gimbal_Init(void)
     motor_pitch = DJIMotorInit(&pitch_config);
 
     if (motor_yaw != NULL) {
-        DJIMotorOuterLoop(motor_yaw, ANGLE_LOOP);
-        DJIMotorStop(motor_yaw);
-        yaw_hold_ref = (gimbal_imu != NULL)
-                           ? gimbal_imu->YawTotalAngle
-                           : MotorTotalAngle(motor_yaw);
+        bool imu_available = ReadAttitude(&attitude);
+
+        yaw_hold_ref = imu_available ? attitude.YawTotalAngle
+                                     : MotorTotalAngle(motor_yaw);
+        (void)PublishYawCommand(yaw_hold_ref, MOTOR_STOP, imu_available,
+                                DJI_MOTOR_PID_RESET_ALL);
     }
 
     if (motor_pitch != NULL) {
-        DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
-        DJIMotorStop(motor_pitch);
         pitch_hold_ref = MotorTotalAngle(motor_pitch);
         pitch_release_hold_ref = pitch_hold_ref;
+        RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
+        (void)PublishPitchCommand(SPEED_LOOP, 0.0f, MOTOR_STOP,
+                                  ReadAttitude(&attitude));
     }
 
     ResetPitchState();
     current_mode = GIMBAL_FOLLOW_CHASSIS;
     last_mode_logged = current_mode;
+    return (gimbal_imu_initialized != 0U) && (motor_yaw != NULL) &&
+           (motor_pitch != NULL);
+}
+
+void Gimbal_MotorStep(void)
+{
+    attitude_t attitude;
+
+    if (!ReadAttitude(&attitude)) {
+        return;
+    }
+
+    motor_yaw_imu_angle_fdb = attitude.YawTotalAngle;
+    motor_yaw_imu_speed_fdb = attitude.Gyro[2];
+    motor_pitch_imu_speed_fdb = attitude.Gyro[0];
 }
 
 void Gimbal_Update(Input_Data_t *input, float chassis_wz)
@@ -407,6 +459,10 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
     float dt_s = 0.02f;
     float yaw_speed_cmd;
     float pitch_speed_cmd;
+    float pitch_reference;
+    Closeloop_Type_e pitch_outer_loop;
+    attitude_t attitude;
+    bool imu_available;
     Gimbal_Cmd_t cmd = {0};
     (void)chassis_wz;
 
@@ -426,17 +482,16 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         dt_s = ClampFloat(dt_s, 0.001f, 0.05f);
     }
     gimbal_last_tick = now_ms;
+    imu_available = ReadAttitude(&attitude);
 
     if (!gimbal_enabled) {
-        DJIMotorEnable(motor_yaw);
-        DJIMotorEnable(motor_pitch);
         gimbal_enabled = 1U;
-        yaw_hold_ref = (gimbal_imu != NULL)
-                           ? gimbal_imu->YawTotalAngle
-                           : MotorTotalAngle(motor_yaw);
+        yaw_hold_ref = imu_available ? attitude.YawTotalAngle
+                                     : MotorTotalAngle(motor_yaw);
         pitch_hold_ref = MotorTotalAngle(motor_pitch);
         pitch_release_hold_ref = pitch_hold_ref;
         ResetPitchState();
+        RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
     }
 
     current_mode = input->gimbal_mode;
@@ -454,10 +509,8 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
     }
     yaw_hold_ref += yaw_speed_cmd * dt_s;
 
-    DJIMotorChangeFeed(motor_yaw, ANGLE_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
-    DJIMotorChangeFeed(motor_yaw, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
-    DJIMotorOuterLoop(motor_yaw, ANGLE_LOOP);
-    DJIMotorSetRef(motor_yaw, yaw_hold_ref);
+    (void)PublishYawCommand(yaw_hold_ref, MOTOR_ENALBED, imu_available,
+                            DJI_MOTOR_PID_RESET_NONE);
 
     pitch_speed_cmd = float_constrain(input->pitch_speed, -GM6020_SPEED_MAX, GM6020_SPEED_MAX);
     if (fabsf(pitch_speed_cmd) < SelectPitchDeadzone(input)) {
@@ -472,21 +525,20 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
                                 : (int16_t)ClampFloat(fabsf(pitch_speed_cmd) / SelectPitchSpeedFullScale(input) *
                                                           RC_STICK_SCALE,
                                                       0.0f, RC_STICK_SCALE);
-        DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
-        DJIMotorSetRef(motor_pitch, pitch_speed_cmd);
+        pitch_outer_loop = SPEED_LOOP;
+        pitch_reference = pitch_speed_cmd;
         if (fabsf(pitch_speed_cmd) >= 300.0f && pitch_abs >= 220) {
             pitch_hold_ref = MotorTotalAngle(motor_pitch);
         }
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
-        DJIMotorChangeFeed(motor_pitch, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
-        DJIMotorOuterLoop(motor_pitch, SPEED_LOOP);
-        DJIMotorSetRef(motor_pitch, 0.0f);
+        pitch_outer_loop = SPEED_LOOP;
+        pitch_reference = 0.0f;
     } else {
-        DJIMotorChangeFeed(motor_pitch, ANGLE_LOOP, MOTOR_FEED);
-        DJIMotorChangeFeed(motor_pitch, SPEED_LOOP, (gimbal_imu != NULL) ? OTHER_FEED : MOTOR_FEED);
-        DJIMotorOuterLoop(motor_pitch, ANGLE_LOOP);
-        DJIMotorSetRef(motor_pitch, pitch_hold_ref);
+        pitch_outer_loop = ANGLE_LOOP;
+        pitch_reference = pitch_hold_ref;
     }
+    (void)PublishPitchCommand(pitch_outer_loop, pitch_reference,
+                              MOTOR_ENALBED, imu_available);
 
     if (pitch_ctrl_mode != last_pitch_ctrl_mode) {
         MDBG_GMB("pitch loop -> %u", (unsigned)pitch_ctrl_mode);
@@ -529,18 +581,19 @@ void Gimbal_Stop(void)
     yaw_speed_ref_last = 0.0f;
     pitch_speed_ref_last = 0.0f;
     pitch_current_ff = 0.0f;
-    pitch_imu_speed_fdb = 0.0f;
     ResetPitchState();
-    ResetPitchPidRuntime();
+    RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
 
     g_robot.gimbal.control_mode = CTRL_ZERO_FORCE;
     g_robot.gimbal.ref_type = REF_SPEED;
 
     if (motor_yaw != NULL) {
-        DJIMotorStop(motor_yaw);
+        (void)PublishYawCommand(yaw_hold_ref, MOTOR_STOP, INS_IsReady(),
+                                DJI_MOTOR_PID_RESET_ALL);
     }
     if (motor_pitch != NULL) {
-        DJIMotorStop(motor_pitch);
+        (void)PublishPitchCommand(SPEED_LOOP, 0.0f, MOTOR_STOP,
+                                  INS_IsReady());
     }
 }
 
@@ -556,8 +609,10 @@ float Gimbal_GetYawSpeedRef(void)
 
 float Gimbal_GetYawSpeedFdb(void)
 {
-    if (gimbal_imu != NULL) {
-        return gimbal_imu->Gyro[2];
+    attitude_t attitude;
+
+    if (ReadAttitude(&attitude)) {
+        return attitude.Gyro[2];
     }
     if (motor_yaw == NULL) {
         return 0.0f;
@@ -603,18 +658,16 @@ float Gimbal_GetPitchEncoderAngle(void)
 
 float Gimbal_GetYawIMUAngle(void)
 {
-    if (gimbal_imu == NULL) {
-        return 0.0f;
-    }
-    return gimbal_imu->YawTotalAngle;
+    attitude_t attitude;
+
+    return ReadAttitude(&attitude) ? attitude.YawTotalAngle : 0.0f;
 }
 
 float Gimbal_GetPitchIMUAngle(void)
 {
-    if (gimbal_imu == NULL) {
-        return 0.0f;
-    }
-    return gimbal_imu->Pitch;
+    attitude_t attitude;
+
+    return ReadAttitude(&attitude) ? attitude.Pitch : 0.0f;
 }
 
 float Gimbal_GetYawOffsetRawDeg(void)
@@ -641,10 +694,19 @@ float Gimbal_GetYawRelativeSpeedDeg(void)
 
 float Gimbal_GetYawLogicAngle(void)
 {
-    if (gimbal_imu == NULL) {
+    attitude_t attitude;
+
+    if (!ReadAttitude(&attitude)) {
         return 0.0f;
     }
-    return WrapAngleDeg180(gimbal_imu->YawTotalAngle - IMU_YAW_LOGIC_ZERO_TOTAL_DEG);
+    return WrapAngleDeg180(attitude.YawTotalAngle -
+                           IMU_YAW_LOGIC_ZERO_TOTAL_DEG);
+}
+
+bool Gimbal_IsHealthy(void)
+{
+    return (gimbal_imu_initialized != 0U) && INS_IsReady() &&
+           DJIMotorIsOnline(motor_yaw) && DJIMotorIsOnline(motor_pitch);
 }
 
 AxisCtrlMode_e Gimbal_GetPitchCtrlMode(void)

@@ -123,6 +123,9 @@ typedef struct // config parameter
  */
 void PIDInit(PIDInstance *pid, PID_Init_Config_s *config);
 
+/** Reset runtime history while preserving the configured gains and limits. */
+void PIDReset(PIDInstance *pid);
+
 /**
  * @brief 计算PID输出
  *

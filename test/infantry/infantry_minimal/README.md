@@ -16,10 +16,12 @@ application/infantry
   referee -> read-only interlocks
 ```
 
-The comparison target schedules INS, daemon, and motor control from a polling
-loop and executes the high-level application every 20 ms. The formal target
-uses static FreeRTOS tasks. Control parameters and application call order are
-shared, so observed differences should primarily come from scheduling.
+The comparison target schedules INS, daemon, and `InfantryApp_MotorStep()` from
+a polling loop and executes the high-level application every 20 ms. The formal
+target invokes the same APIs from static FreeRTOS tasks. Control parameters,
+command snapshots, the 100 ms command lease, safety gates, and application call
+order are shared, so observed differences should primarily come from
+scheduling.
 
 Build both targets before hardware comparison:
 

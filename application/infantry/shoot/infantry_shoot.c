@@ -33,6 +33,25 @@ static uint32_t single_shot_start_ms = 0U;
 static float loader_ref_last = 0.0f;
 static uint8_t last_continuous_mode = 0U;
 
+static bool PublishMotorCommand(DJIMotorInstance *motor,
+                                Closeloop_Type_e outer_loop,
+                                float reference,
+                                Motor_Working_Type_e working_state,
+                                bool update_working_state)
+{
+    DJIMotorCommand command;
+
+    if (!DJIMotorGetCommand(motor, &command)) {
+        return false;
+    }
+    command.settings.outer_loop_type = outer_loop;
+    command.reference = reference;
+    if (update_working_state) {
+        command.working_state = working_state;
+    }
+    return DJIMotorPublishCommand(motor, &command);
+}
+
 static float LoaderTotalAngle(void)
 {
     DJI_Motor_Measure_s measure;
@@ -56,7 +75,7 @@ static float LoaderSpeed(void)
 /*============================================================================
  * 公共函数
  *============================================================================*/
-void Shoot_Init(void)
+bool Shoot_Init(void)
 {
     // 摩擦轮电机配置 - M3508速度环
     Motor_Init_Config_s friction_config = {
@@ -85,8 +104,8 @@ void Shoot_Init(void)
     };
     motor_friction_l = DJIMotorInit(&friction_config);
     if (motor_friction_l) {
-        DJIMotorOuterLoop(motor_friction_l, FRICTION_INIT_LOOP);
-        DJIMotorStop(motor_friction_l);
+        (void)PublishMotorCommand(motor_friction_l, FRICTION_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP, true);
     }
     
     // 右摩擦轮(反向)
@@ -94,8 +113,8 @@ void Shoot_Init(void)
     friction_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
     motor_friction_r = DJIMotorInit(&friction_config);
     if (motor_friction_r) {
-        DJIMotorOuterLoop(motor_friction_r, FRICTION_INIT_LOOP);
-        DJIMotorStop(motor_friction_r);
+        (void)PublishMotorCommand(motor_friction_r, FRICTION_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP, true);
     }
     
     // 拨弹电机配置 - M2006位置环
@@ -133,9 +152,12 @@ void Shoot_Init(void)
     };
     motor_loader = DJIMotorInit(&loader_config);
     if (motor_loader) {
-        DJIMotorOuterLoop(motor_loader, LOADER_INIT_LOOP);
-        DJIMotorStop(motor_loader);
+        (void)PublishMotorCommand(motor_loader, LOADER_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP, true);
     }
+
+    return (motor_friction_l != NULL) && (motor_friction_r != NULL) &&
+           (motor_loader != NULL);
 }
 
 void Shoot_Update(Input_Data_t *input)
@@ -165,30 +187,32 @@ void Shoot_Update(Input_Data_t *input)
     if (shoot_state >= SHOOT_FRICTION_ON) {
         float target_speed = FRICTION_TARGET_SPEED * MinimalReferee_FrictionSpeedScale();
         if (motor_friction_l) {
-            DJIMotorOuterLoop(motor_friction_l, FRICTION_RUN_LOOP_ON);
-            DJIMotorEnable(motor_friction_l);
-            DJIMotorSetRef(motor_friction_l, target_speed);
+            (void)PublishMotorCommand(motor_friction_l,
+                                      FRICTION_RUN_LOOP_ON, target_speed,
+                                      MOTOR_ENALBED, true);
         }
         if (motor_friction_r) {
-            DJIMotorOuterLoop(motor_friction_r, FRICTION_RUN_LOOP_ON);
-            DJIMotorEnable(motor_friction_r);
-            DJIMotorSetRef(motor_friction_r, target_speed);
+            (void)PublishMotorCommand(motor_friction_r,
+                                      FRICTION_RUN_LOOP_ON, target_speed,
+                                      MOTOR_ENALBED, true);
         }
     } else {
         if (motor_friction_l) {
-            DJIMotorOuterLoop(motor_friction_l, FRICTION_RUN_LOOP_STOP);
-            DJIMotorStop(motor_friction_l);
+            (void)PublishMotorCommand(motor_friction_l,
+                                      FRICTION_RUN_LOOP_STOP, 0.0f,
+                                      MOTOR_STOP, true);
         }
         if (motor_friction_r) {
-            DJIMotorOuterLoop(motor_friction_r, FRICTION_RUN_LOOP_STOP);
-            DJIMotorStop(motor_friction_r);
+            (void)PublishMotorCommand(motor_friction_r,
+                                      FRICTION_RUN_LOOP_STOP, 0.0f,
+                                      MOTOR_STOP, true);
         }
     }
     
     if (motor_loader == NULL || !MinimalReferee_AllowLoader()) {
         if (motor_loader) {
-            DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_STOP);
-            DJIMotorStop(motor_loader);
+            (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_STOP,
+                                      0.0f, MOTOR_STOP, true);
         }
         single_shot_active = 0;
         pending_shots = 0;
@@ -219,9 +243,9 @@ void Shoot_Update(Input_Data_t *input)
                 loader_speed_cmd = speed_target;
             }
         }
-        DJIMotorEnable(motor_loader);
-        DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_CONTINUOUS);
-        DJIMotorSetRef(motor_loader, loader_speed_cmd);
+        (void)PublishMotorCommand(motor_loader,
+                                  LOADER_RUN_LOOP_CONTINUOUS,
+                                  loader_speed_cmd, MOTOR_ENALBED, true);
         loader_ref_last = loader_speed_cmd;
         if (!last_continuous_mode) {
             MDBG_SHT("enter continuous");
@@ -253,9 +277,8 @@ void Shoot_Update(Input_Data_t *input)
         }
 
         if (single_shot_active) {
-            DJIMotorEnable(motor_loader);
-            DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_SINGLE);
-            DJIMotorSetRef(motor_loader, loader_target_angle);
+            (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_SINGLE,
+                                      loader_target_angle, MOTOR_ENALBED, true);
             loader_ref_last = loader_target_angle;
             if (fabsf(LoaderTotalAngle() - loader_target_angle) <= LOADER_SINGLE_SETTLE_EPS ||
                 (now - single_shot_start_ms) >= LOADER_SINGLE_TIMEOUT_MS) {
@@ -267,8 +290,8 @@ void Shoot_Update(Input_Data_t *input)
                 single_shot_active = 0U;
             }
         } else {
-            DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_STOP);
-            DJIMotorSetRef(motor_loader, 0.0f);
+            (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_STOP,
+                                      0.0f, MOTOR_STOP, false);
             loader_ref_last = 0.0f;
         }
         loader_speed_cmd = 0.0f;
@@ -278,8 +301,8 @@ void Shoot_Update(Input_Data_t *input)
             MDBG_SHT("exit continuous");
         }
         last_continuous_mode = 0U;
-        DJIMotorOuterLoop(motor_loader, LOADER_RUN_LOOP_STOP);
-        DJIMotorStop(motor_loader);
+        (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_STOP, 0.0f,
+                                  MOTOR_STOP, true);
         single_shot_active = 0;
         pending_shots = 0;
         loader_speed_cmd = 0.0f;
@@ -301,9 +324,27 @@ void Shoot_Stop(void)
     g_robot.shoot.control_mode = CTRL_ZERO_FORCE;
     g_robot.shoot.ref_type = REF_SPEED;
     
-    if (motor_friction_l) DJIMotorStop(motor_friction_l);
-    if (motor_friction_r) DJIMotorStop(motor_friction_r);
-    if (motor_loader) DJIMotorStop(motor_loader);
+    if (motor_friction_l) {
+        (void)PublishMotorCommand(motor_friction_l,
+                                  FRICTION_RUN_LOOP_STOP, 0.0f,
+                                  MOTOR_STOP, true);
+    }
+    if (motor_friction_r) {
+        (void)PublishMotorCommand(motor_friction_r,
+                                  FRICTION_RUN_LOOP_STOP, 0.0f,
+                                  MOTOR_STOP, true);
+    }
+    if (motor_loader) {
+        (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_STOP, 0.0f,
+                                  MOTOR_STOP, true);
+    }
+}
+
+bool Shoot_IsHealthy(void)
+{
+    return DJIMotorIsOnline(motor_friction_l) &&
+           DJIMotorIsOnline(motor_friction_r) &&
+           DJIMotorIsOnline(motor_loader);
 }
 
 ShootState_e Shoot_GetState(void)

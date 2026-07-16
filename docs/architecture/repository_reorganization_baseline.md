@@ -61,11 +61,14 @@ layers. The platform-runtime milestone then established monotonic time,
 millisecond device deadlines, fixed CAN/UART/device-health/DJI storage, a
 caller-owned EKF workspace, and heap-free formal diagnostics. The deferred
 ingress milestone moved formal protocol parsing out of interrupts and added
-coherent ET08/VT/DJI read snapshots. At the current baseline:
+coherent ET08/VT/DJI read snapshots. The control-ownership milestone then added
+complete motor-command mailboxes, task-owned PID runtime, INS snapshots, and
+required-device fault containment, including an infantry-composition 100 ms
+command lease. At the current baseline:
 
-- all four native tests, all 30 embedded test targets, and formal `app.elf`
+- all five native tests, all 30 embedded test targets, and formal `app.elf`
   build successfully;
-- formal firmware uses 50,696 bytes RAM and 95,028 bytes Flash in Debug;
+- formal firmware uses 51,240 bytes RAM and 96,868 bytes Flash in Debug;
 - formal `app.elf` has no linked heap-allocation or libc-formatting symbol;
 - team-origin narration is limited to provenance/license documentation;
 - hardware validation and inactive-component cleanup remain pending.

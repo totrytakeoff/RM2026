@@ -77,14 +77,16 @@ int main(void)
 #if MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0)
     BSPLogInit();
 #endif
-    InfantryApp_Init();
+    if (!InfantryApp_Init()) {
+        Error_Handler();
+    }
     
     last_tick = DWT_GetTimeline_ms();
     // 主循环
     while (1) {
         INS_Task();
         DaemonTask();
-        DJIMotorControl();
+        InfantryApp_MotorStep();
 
         uint32_t now = DWT_GetTimeline_ms();
         uint32_t dt = now - last_tick;

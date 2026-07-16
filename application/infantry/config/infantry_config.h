@@ -88,6 +88,16 @@
 #define INFANTRY_HEALTH_TASK_PERIOD_MS      5U
 #define INFANTRY_DIAGNOSTICS_TASK_PERIOD_MS 10U
 
+/* 20 ms 控制任务失活时，5 ms 电机任务独立执行的命令租约。 */
+#define INFANTRY_MOTOR_COMMAND_TIMEOUT_MS    100U
+
+#if INFANTRY_MOTOR_COMMAND_TIMEOUT_MS <= MAIN_LOOP_PERIOD_MS
+#error "INFANTRY_MOTOR_COMMAND_TIMEOUT_MS must exceed one control period"
+#endif
+#if INFANTRY_MOTOR_COMMAND_TIMEOUT_MS >= 0x80000000UL
+#error "INFANTRY_MOTOR_COMMAND_TIMEOUT_MS exceeds the wrap-safe range"
+#endif
+
 /* 任务健康判定：连续超期、心跳丢失或栈余量不足均触发安全停机。 */
 #define INFANTRY_TASK_STARTUP_GRACE_MS          100U
 #define INFANTRY_TASK_HEARTBEAT_PERIODS         4U

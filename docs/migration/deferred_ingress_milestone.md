@@ -111,3 +111,7 @@ aggregated into the top-level safety manager. A missing actuator therefore
 stays locally stopped, but does not yet force a robot-wide initialization or
 runtime fault. That aggregation is required before the framework can claim
 whole-robot device-fault containment.
+
+This historical debt was closed by `control_ownership_milestone.md`, which adds
+complete motor-command mailboxes, task-owned PID runtime, INS snapshots,
+initialization results, and whole-robot required-device fault aggregation.

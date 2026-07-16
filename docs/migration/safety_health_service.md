@@ -19,11 +19,15 @@ reusable service in the new framework.
 | `STOPPED` | At least one runtime fault is active | blocked |
 
 Fault reasons are a bit mask, so simultaneous input-offline, emergency-stop,
-task-health, and invalid-input faults are retained instead of hiding one
-another. A null input snapshot fails closed. The control task is the only owner
-of safety-state transitions. The health task publishes a single atomic boolean
-input through `InfantryApp_SetTaskHealth`, avoiding actuator changes from
-multiple tasks.
+task-health, required-device-health, and invalid-input faults are retained
+instead of hiding one another. A null input snapshot fails closed. The control
+task is the only owner of safety-state transitions. The health task publishes a
+single atomic boolean input through `InfantryApp_SetTaskHealth`, avoiding
+actuator changes from multiple tasks. Required DJI motor deadlines and INS
+readiness are aggregated separately as `DEVICE_UNHEALTHY`; the 5 ms motor layer
+also gates each offline actuator locally. A separate 100 ms motor-command lease
+contains complete control-task starvation without requiring that task to run
+and process its own unhealthy heartbeat.
 
 Recovery remains automatic when all inputs are healthy. This is intentional
 behavior compatibility with `infantry_minimal`, not the final competition
@@ -66,7 +70,8 @@ ctest --test-dir build-host --output-on-failure
 
 CI runs these tests before configuring the embedded build. Covered transitions
 include boot, activation, input loss, emergency stop, task-health failure,
-combined reasons, automatic recovery, and null-argument fail-safe behavior.
+isolated device-health failure, combined reasons, automatic recovery, and
+null-argument fail-safe behavior.
 
 The same native suite now also verifies the independent
 `components/services/device_health` deadline service. Its millisecond timeout,
@@ -79,7 +84,7 @@ in `platform_runtime_milestone.md`.
   a continuous ten-minute run.
 - Force each software fault independently and confirm all actuator modules stop.
 - Decide stack and deadline thresholds from measurements instead of estimates.
-- Add an independent hardware watchdog; the health task cannot detect its own
-  complete starvation or a scheduler-wide lockup.
+- Add an independent hardware watchdog; the command lease still depends on the
+  system tick and motor task, so it cannot contain a scheduler-wide lockup.
 - Decide whether competition firmware requires an explicit operator re-arm
   after emergency stop or task-health failure.

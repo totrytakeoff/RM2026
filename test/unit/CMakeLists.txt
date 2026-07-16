@@ -116,3 +116,32 @@ target_compile_options(test_rx_queue PRIVATE
 )
 
 add_test(NAME rx_queue COMMAND test_rx_queue)
+
+add_library(rm_pid_host STATIC
+    ../../components/algorithms/pid/controller.c
+)
+target_include_directories(rm_pid_host PUBLIC
+    stubs
+    ../../components/algorithms/pid
+)
+target_compile_features(rm_pid_host PUBLIC c_std_11)
+target_compile_options(rm_pid_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_pid_reset
+    pid_reset_test.c
+)
+target_link_libraries(test_pid_reset PRIVATE rm_pid_host m)
+target_compile_features(test_pid_reset PRIVATE c_std_11)
+target_compile_options(test_pid_reset PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_test(NAME pid_reset COMMAND test_pid_reset)

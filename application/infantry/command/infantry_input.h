@@ -6,12 +6,14 @@
 #ifndef INFANTRY_INPUT_H
 #define INFANTRY_INPUT_H
 
+#include <stdbool.h>
+
 #include "infantry_types.h"
 
 /**
  * @brief 输入模块初始化
  */
-void Input_Init(void);
+bool Input_Init(void);
 void Input_UpdateET08(Input_Data_t *et08_data);
 void Input_UpdateVT(Input_Data_t *vt_data);
 void Input_Arbitrate(const Input_Data_t *vt_data, const Input_Data_t *et08_data, Input_Data_t *out);

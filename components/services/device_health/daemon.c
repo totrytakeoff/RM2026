@@ -119,6 +119,10 @@ bool DaemonIsOnline(const DaemonInstance *instance)
                              memory_order_acquire) == 0U) {
         return false;
     }
+    if (atomic_load_explicit(&instance->offline_notified,
+                             memory_order_acquire) != 0U) {
+        return false;
+    }
 
     const uint32_t deadline_ms = atomic_load_explicit(&instance->deadline_ms,
                                                       memory_order_acquire);

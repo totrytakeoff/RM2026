@@ -22,6 +22,7 @@ static RmSafetyInputs HealthyInputs(void)
         .input_online = true,
         .emergency_stop = false,
         .task_health_ok = true,
+        .device_health_ok = true,
     };
     return inputs;
 }
@@ -63,10 +64,12 @@ static void TestFaultReasonsAndRecovery(void)
 
     inputs.emergency_stop = true;
     inputs.task_health_ok = false;
+    inputs.device_health_ok = false;
     CHECK(RmSafety_Update(&manager, &inputs));
     CHECK(manager.reasons == (RM_SAFETY_REASON_INPUT_OFFLINE |
                               RM_SAFETY_REASON_EMERGENCY_STOP |
-                              RM_SAFETY_REASON_TASK_UNHEALTHY));
+                              RM_SAFETY_REASON_TASK_UNHEALTHY |
+                              RM_SAFETY_REASON_DEVICE_UNHEALTHY));
 
     inputs = HealthyInputs();
     CHECK(RmSafety_Update(&manager, &inputs));
@@ -86,6 +89,27 @@ static void TestNotReadyIsDisarmed(void)
     CHECK(manager.state == RM_SAFETY_STATE_DISARMED);
     CHECK(manager.reasons == RM_SAFETY_REASON_NOT_READY);
     CHECK(!RmSafety_OutputPermitted(&manager));
+}
+
+static void TestDeviceFaultStopsAndRecovers(void)
+{
+    RmSafetyManager manager;
+    RmSafetyInputs inputs = HealthyInputs();
+
+    RmSafety_Init(&manager);
+    CHECK(RmSafety_Update(&manager, &inputs));
+
+    inputs.device_health_ok = false;
+    CHECK(RmSafety_Update(&manager, &inputs));
+    CHECK(manager.state == RM_SAFETY_STATE_STOPPED);
+    CHECK(manager.reasons == RM_SAFETY_REASON_DEVICE_UNHEALTHY);
+    CHECK(!RmSafety_OutputPermitted(&manager));
+
+    inputs.device_health_ok = true;
+    CHECK(RmSafety_Update(&manager, &inputs));
+    CHECK(manager.state == RM_SAFETY_STATE_ACTIVE);
+    CHECK(manager.reasons == RM_SAFETY_REASON_NONE);
+    CHECK(RmSafety_OutputPermitted(&manager));
 }
 
 static void TestNullArgumentsRemainSafe(void)
@@ -111,6 +135,7 @@ int main(void)
     TestBootAndActivation();
     TestFaultReasonsAndRecovery();
     TestNotReadyIsDisarmed();
+    TestDeviceFaultStopsAndRecovers();
     TestNullArgumentsRemainSafe();
 
     if (failures != 0U) {

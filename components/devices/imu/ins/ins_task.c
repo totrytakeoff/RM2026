@@ -19,8 +19,13 @@
 #include "user_lib.h"
 #include "general_def.h"
 #include "master_process.h"
+#include "rm_critical.h"
+
+#include <string.h>
 
 static INS_t INS;
+static attitude_t ins_snapshot;
+static uint8_t ins_snapshot_valid;
 static IMU_Param_t IMU_Param;
 static PIDInstance TempCtrl = {0};
 
@@ -34,6 +39,23 @@ static float dt = 0, t = 0;
 static float RefTemp = 40; // 恒温设定温度
 
 static void IMU_Param_Correction(IMU_Param_t *param, float gyro[3], float accel[3]);
+
+static void INS_PublishSnapshot(void)
+{
+    const attitude_t next = {
+        .Gyro = {INS.Gyro[X], INS.Gyro[Y], INS.Gyro[Z]},
+        .Accel = {INS.Accel[X], INS.Accel[Y], INS.Accel[Z]},
+        .Roll = INS.Roll,
+        .Pitch = INS.Pitch,
+        .Yaw = INS.Yaw,
+        .YawTotalAngle = INS.YawTotalAngle,
+    };
+    RmCriticalState state = RmCritical_Enter();
+
+    memcpy(&ins_snapshot, &next, sizeof(next));
+    ins_snapshot_valid = 1U;
+    RmCritical_Exit(state);
+}
 
 static void IMUPWMSet(uint16_t pwm)
 {
@@ -82,7 +104,14 @@ attitude_t *INS_Init(void)
     if (!INS.init)
         INS.init = 1;
     else
-        return (attitude_t *)&INS.Gyro;
+        return &ins_snapshot;
+
+    {
+        RmCriticalState state = RmCritical_Enter();
+        memset(&ins_snapshot, 0, sizeof(ins_snapshot));
+        ins_snapshot_valid = 0U;
+        RmCritical_Exit(state);
+    }
 
     HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
 
@@ -112,7 +141,35 @@ attitude_t *INS_Init(void)
     // noise of accel is relatively big and of high freq,thus lpf is used
     INS.AccelLPF = 0.0085;
     DWT_GetDeltaT(&INS_DWT_Count);
-    return (attitude_t *)&INS.Gyro; // @todo: 这里偷懒了,不要这样做! 修改INT_t结构体可能会导致异常,待修复.
+    return &ins_snapshot;
+}
+
+bool INS_Read(attitude_t *attitude)
+{
+    RmCriticalState state;
+
+    if (attitude == NULL) {
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    if (ins_snapshot_valid == 0U) {
+        memset(attitude, 0, sizeof(*attitude));
+        RmCritical_Exit(state);
+        return false;
+    }
+    memcpy(attitude, &ins_snapshot, sizeof(*attitude));
+    RmCritical_Exit(state);
+    return true;
+}
+
+bool INS_IsReady(void)
+{
+    RmCriticalState state = RmCritical_Enter();
+    bool ready = ins_snapshot_valid != 0U;
+
+    RmCritical_Exit(state);
+    return ready;
 }
 
 /* 注意以1kHz的频率运行此任务 */
@@ -166,6 +223,8 @@ void INS_Task(void)
         INS.Pitch = QEKF_INS.Pitch;
         INS.Roll = QEKF_INS.Roll;
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
+
+        INS_PublishSnapshot();
 
         VisionSetAltitude(INS.Yaw, INS.Pitch, INS.Roll);
     }

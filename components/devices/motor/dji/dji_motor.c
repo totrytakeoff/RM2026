@@ -3,7 +3,9 @@
 #include "bsp_dwt.h"
 #include "bsp_log.h"
 #include "rm_critical.h"
+#include "rm_time.h"
 #include <math.h>
+#include <stdatomic.h>
 #include <string.h>
 
 static uint8_t idx = 0; // register idx,是该文件的全局电机索引,在注册时使用
@@ -32,6 +34,64 @@ static CANInstance sender_assignment[6] = {
 
 /** Enable only command groups containing a successfully registered motor. */
 static uint8_t sender_enable_flag[6] = {0};
+static atomic_bool global_output_enabled = ATOMIC_VAR_INIT(true);
+/* Disabled by default so existing single-loop demos retain their behavior. */
+static _Atomic uint32_t command_timeout_ms = ATOMIC_VAR_INIT(0U);
+
+static void DJIMotorRecordCommandPublication(DJIMotorInstance *motor,
+                                             uint32_t now_ms)
+{
+    motor->command_last_publish_ms = now_ms;
+    motor->command_generation++;
+    motor->command_published = 1U;
+}
+
+static void DJIMotorExpireCommand(DJIMotorInstance *motor,
+                                  uint32_t generation)
+{
+    RmCriticalState state = RmCritical_Enter();
+
+    /* A newer publication wins if it arrived after the command snapshot. */
+    if (motor->command_generation == generation) {
+        motor->command_published = 0U;
+    }
+    RmCritical_Exit(state);
+}
+
+static void DJIMotorResetPidRuntime(DJIMotorInstance *motor, uint8_t mask)
+{
+    if ((mask & DJI_MOTOR_PID_RESET_CURRENT) != 0U) {
+        PIDReset(&motor->motor_controller.current_PID);
+    }
+    if ((mask & DJI_MOTOR_PID_RESET_SPEED) != 0U) {
+        PIDReset(&motor->motor_controller.speed_PID);
+    }
+    if ((mask & DJI_MOTOR_PID_RESET_ANGLE) != 0U) {
+        PIDReset(&motor->motor_controller.angle_PID);
+    }
+}
+
+static void DJIMotorConsumeCommand(DJIMotorInstance *motor,
+                                   DJIMotorCommand *command,
+                                   uint32_t *last_publish_ms,
+                                   uint32_t *generation,
+                                   bool *published)
+{
+    RmCriticalState state = RmCritical_Enter();
+
+    memcpy(command, &motor->command_mailbox, sizeof(*command));
+    command->pid_reset_mask = motor->pending_pid_reset_mask;
+    *last_publish_ms = motor->command_last_publish_ms;
+    *generation = motor->command_generation;
+    *published = motor->command_published != 0U;
+    motor->pending_pid_reset_mask = DJI_MOTOR_PID_RESET_NONE;
+    RmCritical_Exit(state);
+
+    motor->motor_settings = command->settings;
+    motor->motor_controller.pid_ref = command->reference;
+    motor->stop_flag = command->working_state;
+    DJIMotorResetPidRuntime(motor, command->pid_reset_mask);
+}
 
 /**
  * @brief 根据电调/拨码开关上的ID,根据说明书的默认id分配方式计算发送ID和接收ID,
@@ -146,6 +206,91 @@ bool DJIMotorGetMeasure(const DJIMotorInstance *motor,
     return true;
 }
 
+bool DJIMotorGetCommand(const DJIMotorInstance *motor,
+                        DJIMotorCommand *command)
+{
+    RmCriticalState state;
+
+    if ((motor == NULL) || (command == NULL)) {
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    memcpy(command, &motor->command_mailbox, sizeof(*command));
+    RmCritical_Exit(state);
+    command->pid_reset_mask = DJI_MOTOR_PID_RESET_NONE;
+    return true;
+}
+
+bool DJIMotorPublishCommand(DJIMotorInstance *motor,
+                            const DJIMotorCommand *command)
+{
+    RmCriticalState state;
+    uint32_t now_ms;
+    uint8_t reset_mask;
+
+    if ((motor == NULL) || (command == NULL)) {
+        return false;
+    }
+
+    reset_mask = command->pid_reset_mask & DJI_MOTOR_PID_RESET_ALL;
+    now_ms = RmTime_NowMs();
+    state = RmCritical_Enter();
+    memcpy(&motor->command_mailbox, command, sizeof(*command));
+    motor->command_mailbox.pid_reset_mask = DJI_MOTOR_PID_RESET_NONE;
+    motor->pending_pid_reset_mask |= reset_mask;
+    DJIMotorRecordCommandPublication(motor, now_ms);
+    RmCritical_Exit(state);
+    return true;
+}
+
+bool DJIMotorSetCommandTimeout(uint32_t timeout_ms)
+{
+    if (timeout_ms >= UINT32_C(0x80000000)) {
+        return false;
+    }
+    atomic_store_explicit(&command_timeout_ms, timeout_ms,
+                          memory_order_release);
+    return true;
+}
+
+bool DJIMotorIsOnline(const DJIMotorInstance *motor)
+{
+    RmCriticalState state;
+    bool feedback_initialized;
+
+    if (motor == NULL) {
+        return false;
+    }
+    state = RmCritical_Enter();
+    feedback_initialized = motor->feedback_initialized != 0U;
+    RmCritical_Exit(state);
+    return feedback_initialized && DaemonIsOnline(motor->daemon);
+}
+
+bool DJIMotorAllOnline(void)
+{
+    if (idx == 0U) {
+        return false;
+    }
+    for (size_t i = 0U; i < idx; ++i) {
+        if (!DJIMotorIsOnline(dji_motor_instance[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void DJIMotorSetGlobalOutputEnabled(bool enabled)
+{
+    atomic_store_explicit(&global_output_enabled, enabled, memory_order_release);
+}
+
+bool DJIMotorGlobalOutputEnabled(void)
+{
+    return atomic_load_explicit(&global_output_enabled, memory_order_acquire);
+}
+
 static void DecodeDJIMotor(CANInstance *can_instance)
 {
     const uint8_t *rx_buffer;
@@ -161,10 +306,10 @@ static void DecodeDJIMotor(CANInstance *can_instance)
 
     rx_buffer = can_instance->rx_buff;
     motor = (DJIMotorInstance *)can_instance->id;
-    if (!DJIMotorGetMeasure(motor, &next)) {
-        return;
-    }
+    state = RmCritical_Enter();
+    memcpy(&next, &motor->measure, sizeof(next));
     first_feedback = (motor->feedback_initialized == 0U);
+    RmCritical_Exit(state);
 
     motor->dt = DWT_GetDeltaT(&motor->feed_cnt);
 
@@ -229,6 +374,8 @@ DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config)
     // motor basic setting 电机基本设置
     instance->motor_type = config->motor_type;                         // 6020 or 2006 or 3508
     instance->motor_settings = config->controller_setting_init_config;
+    instance->command_mailbox.settings = config->controller_setting_init_config;
+    instance->command_mailbox.working_state = MOTOR_STOP;
 
     // motor controller init 电机控制器初始化
     PIDInit(&instance->motor_controller.current_PID, &config->controller_param_init_config.current_PID);
@@ -285,28 +432,45 @@ DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config)
 /* 电流反馈来自电调；外部力矩传感器应作为独立反馈源接入。 */
 void DJIMotorChangeFeed(DJIMotorInstance *motor, Closeloop_Type_e loop, Feedback_Source_e type)
 {
+    RmCriticalState state;
+    uint32_t now_ms;
+
     if (motor == NULL) {
         return;
     }
+    if ((loop != ANGLE_LOOP) && (loop != SPEED_LOOP)) {
+        LOGERROR("[dji_motor] loop type error, check memory access and func param");
+        return;
+    }
+    now_ms = RmTime_NowMs();
+    state = RmCritical_Enter();
     if (loop == ANGLE_LOOP)
-        motor->motor_settings.angle_feedback_source = type;
-    else if (loop == SPEED_LOOP)
-        motor->motor_settings.speed_feedback_source = type;
+        motor->command_mailbox.settings.angle_feedback_source = type;
     else
-        LOGERROR("[dji_motor] loop type error, check memory access and func param"); // 检查是否传入了正确的LOOP类型,或发生了指针越界
+        motor->command_mailbox.settings.speed_feedback_source = type;
+    DJIMotorRecordCommandPublication(motor, now_ms);
+    RmCritical_Exit(state);
 }
 
 void DJIMotorStop(DJIMotorInstance *motor)
 {
     if (motor != NULL) {
-        motor->stop_flag = MOTOR_STOP;
+        uint32_t now_ms = RmTime_NowMs();
+        RmCriticalState state = RmCritical_Enter();
+        motor->command_mailbox.working_state = MOTOR_STOP;
+        DJIMotorRecordCommandPublication(motor, now_ms);
+        RmCritical_Exit(state);
     }
 }
 
 void DJIMotorEnable(DJIMotorInstance *motor)
 {
     if (motor != NULL) {
-        motor->stop_flag = MOTOR_ENALBED;
+        uint32_t now_ms = RmTime_NowMs();
+        RmCriticalState state = RmCritical_Enter();
+        motor->command_mailbox.working_state = MOTOR_ENALBED;
+        DJIMotorRecordCommandPublication(motor, now_ms);
+        RmCritical_Exit(state);
     }
 }
 
@@ -314,7 +478,11 @@ void DJIMotorEnable(DJIMotorInstance *motor)
 void DJIMotorOuterLoop(DJIMotorInstance *motor, Closeloop_Type_e outer_loop)
 {
     if (motor != NULL) {
-        motor->motor_settings.outer_loop_type = outer_loop;
+        uint32_t now_ms = RmTime_NowMs();
+        RmCriticalState state = RmCritical_Enter();
+        motor->command_mailbox.settings.outer_loop_type = outer_loop;
+        DJIMotorRecordCommandPublication(motor, now_ms);
+        RmCritical_Exit(state);
     }
 }
 
@@ -322,7 +490,11 @@ void DJIMotorOuterLoop(DJIMotorInstance *motor, Closeloop_Type_e outer_loop)
 void DJIMotorSetRef(DJIMotorInstance *motor, float ref)
 {
     if (motor != NULL) {
-        motor->motor_controller.pid_ref = ref;
+        uint32_t now_ms = RmTime_NowMs();
+        RmCriticalState state = RmCritical_Enter();
+        motor->command_mailbox.reference = ref;
+        DJIMotorRecordCommandPublication(motor, now_ms);
+        RmCritical_Exit(state);
     }
 }
 
@@ -337,18 +509,55 @@ void DJIMotorControl()
     Motor_Controller_s *motor_controller;   // 电机控制器
     DJI_Motor_Measure_s measure_snapshot;
     const DJI_Motor_Measure_s *measure;
+    DJIMotorCommand command;
+    uint32_t last_publish_ms;
+    uint32_t command_generation;
+    uint32_t now_ms = RmTime_NowMs();
+    uint32_t timeout_ms = atomic_load_explicit(
+        &command_timeout_ms, memory_order_acquire);
+    bool command_published;
+    bool command_fresh;
     float pid_measure, pid_ref;             // PID 测量值和参考值
 
     // 遍历所有电机实例，计算串级 PID 并填充发送报文。
     for (size_t i = 0; i < idx; ++i)
     {
         motor = dji_motor_instance[i];
+        DJIMotorConsumeCommand(motor, &command, &last_publish_ms,
+                               &command_generation, &command_published);
+        command_fresh = (timeout_ms == 0U) ||
+                        (command_published &&
+                         (RmTime_ElapsedMs(now_ms, last_publish_ms) <
+                          timeout_ms));
+        if ((timeout_ms != 0U) && command_published && !command_fresh) {
+            DJIMotorExpireCommand(motor, command_generation);
+        }
         motor_setting = &motor->motor_settings;
         motor_controller = &motor->motor_controller;
+        group = motor->sender_group;
+        num = motor->message_num;
         if (!DJIMotorGetMeasure(motor, &measure_snapshot)) {
+            memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
             continue;
         }
         measure = &measure_snapshot;
+
+        if (!command_fresh ||
+            (command.working_state != MOTOR_ENALBED) ||
+            !DJIMotorGlobalOutputEnabled() || !DJIMotorIsOnline(motor)) {
+            if (motor->output_active != 0U) {
+                DJIMotorResetPidRuntime(motor, DJI_MOTOR_PID_RESET_ALL);
+            }
+            motor->output_active = 0U;
+            memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
+            motor->last_total_angle = measure->total_angle;
+            continue;
+        }
+        if (motor->output_active == 0U) {
+            DJIMotorResetPidRuntime(motor, DJI_MOTOR_PID_RESET_ALL);
+            motor->output_active = 1U;
+        }
+
         pid_ref = motor_controller->pid_ref;
         if (motor_setting->motor_reverse_flag == MOTOR_DIRECTION_REVERSE)
             pid_ref *= -1;
@@ -367,9 +576,12 @@ void DJIMotorControl()
         if ((motor_setting->close_loop_type & ANGLE_LOOP) && motor_setting->outer_loop_type == ANGLE_LOOP)
         {
             if (motor_setting->angle_feedback_source == OTHER_FEED)
-                pid_measure = (motor_controller->other_angle_feedback_ptr != NULL)
-                                  ? *motor_controller->other_angle_feedback_ptr
-                                  : measure->total_angle;
+                pid_measure = ((command.external_input_mask &
+                                DJI_MOTOR_EXTERNAL_ANGLE) != 0U)
+                                  ? command.other_angle_feedback
+                                  : ((motor_controller->other_angle_feedback_ptr != NULL)
+                                         ? *motor_controller->other_angle_feedback_ptr
+                                         : measure->total_angle);
             else
                 pid_measure = measure->total_angle * motor->angle_feedback_sign; // MOTOR_FEED,对total angle闭环,防止在边界处出现突跃
             // 更新pid_ref进入下一个环
@@ -380,14 +592,20 @@ void DJIMotorControl()
         if ((motor_setting->close_loop_type & SPEED_LOOP) && (motor_setting->outer_loop_type & (ANGLE_LOOP | SPEED_LOOP)))
         {
             if (motor_setting->feedforward_flag & SPEED_FEEDFORWARD)
-                pid_ref += (motor_controller->speed_feedforward_ptr != NULL)
-                               ? *motor_controller->speed_feedforward_ptr
-                               : 0.0f;
+                pid_ref += ((command.external_input_mask &
+                             DJI_MOTOR_EXTERNAL_SPEED_FF) != 0U)
+                               ? command.speed_feedforward
+                               : ((motor_controller->speed_feedforward_ptr != NULL)
+                                      ? *motor_controller->speed_feedforward_ptr
+                                      : 0.0f);
 
             if (motor_setting->speed_feedback_source == OTHER_FEED)
-                pid_measure = (motor_controller->other_speed_feedback_ptr != NULL)
-                                  ? *motor_controller->other_speed_feedback_ptr
-                                  : measure->speed_aps;
+                pid_measure = ((command.external_input_mask &
+                                DJI_MOTOR_EXTERNAL_SPEED) != 0U)
+                                  ? command.other_speed_feedback
+                                  : ((motor_controller->other_speed_feedback_ptr != NULL)
+                                         ? *motor_controller->other_speed_feedback_ptr
+                                         : measure->speed_aps);
             else // MOTOR_FEED
                 pid_measure = measure->speed_aps;
             // 更新pid_ref进入下一个环
@@ -396,9 +614,12 @@ void DJIMotorControl()
 
         // 电流环使用电调反馈，位于控制链最内层。
         if (motor_setting->feedforward_flag & CURRENT_FEEDFORWARD)
-            pid_ref += (motor_controller->current_feedforward_ptr != NULL)
-                           ? *motor_controller->current_feedforward_ptr
-                           : 0.0f;
+            pid_ref += ((command.external_input_mask &
+                         DJI_MOTOR_EXTERNAL_CURRENT_FF) != 0U)
+                           ? command.current_feedforward
+                           : ((motor_controller->current_feedforward_ptr != NULL)
+                                  ? *motor_controller->current_feedforward_ptr
+                                  : 0.0f);
         if (motor_setting->close_loop_type & CURRENT_LOOP)
         {
             pid_ref = PIDCalculate(&motor_controller->current_PID, measure->real_current, pid_ref);
@@ -411,14 +632,8 @@ void DJIMotorControl()
         set = (int16_t)pid_ref;
 
         // 按电机组填入发送数据。
-        group = motor->sender_group;
-        num = motor->message_num;
         sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);
         sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff);
-
-        // 停止状态直接清零该电机对应的两个字节。
-        if (motor->stop_flag == MOTOR_STOP)
-            memset(sender_assignment[group].tx_buff + 2 * num, 0, 2u);
 
         motor->last_total_angle = measure->total_angle;
     }

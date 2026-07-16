@@ -48,6 +48,9 @@ formal-runtime baseline is documented in
 `docs/migration/platform_runtime_milestone.md`.
 The bounded CAN/UART ingress and coherent device-snapshot contract is
 documented in `docs/migration/deferred_ingress_milestone.md`.
+The motor-command, command-lease, PID ownership, INS snapshot, and
+required-device fault-containment contract is documented in
+`docs/migration/control_ownership_milestone.md`.
 The approved repository ownership model and final directory layout are recorded
 in `docs/architecture/repository_reorganization_baseline.md`.
 

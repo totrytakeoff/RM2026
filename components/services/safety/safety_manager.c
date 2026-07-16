@@ -50,6 +50,9 @@ bool RmSafety_Update(RmSafetyManager *manager, const RmSafetyInputs *inputs)
     if (!inputs->task_health_ok) {
         next_reasons |= RM_SAFETY_REASON_TASK_UNHEALTHY;
     }
+    if (!inputs->device_health_ok) {
+        next_reasons |= RM_SAFETY_REASON_DEVICE_UNHEALTHY;
+    }
 
     if (next_reasons == RM_SAFETY_REASON_NONE) {
         next_state = RM_SAFETY_STATE_ACTIVE;

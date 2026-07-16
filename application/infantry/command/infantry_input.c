@@ -95,12 +95,15 @@ static uint8_t ET08_RequestTakeover(const Input_Data_t *et08_data)
     return 0U;
 }
 
-void Input_Init(void)
+bool Input_Init(void)
 {
-    (void)ET08_InitWithTimeout(&RC_UART, RC_ONLINE_TIMEOUT_MS);
+    bool et08_ready =
+        ET08_InitWithTimeout(&RC_UART, RC_ONLINE_TIMEOUT_MS) != NULL;
+    bool vt_ready = false;
+
     vt_allowed = (Input_ShouldDisableVTForDebug() == 0U) ? 1U : 0U;
     if (vt_allowed) {
-        (void)VT_Init(&VT_UART);
+        vt_ready = VT_Init(&VT_UART) != NULL;
     } else {
         MDBG_IN("VT disabled due to uart conflict(debug uart=%u vt uart=%u)", MINIMAL_DEBUG_UART_PORT, VT_UART_PORT);
     }
@@ -108,6 +111,7 @@ void Input_Init(void)
     last_et08_online = 0U;
     last_vt_online = 0U;
     last_any_online_tick = RmTime_NowMs();
+    return et08_ready || vt_ready;
 }
 
 void Input_UpdateET08(Input_Data_t *et08_data)

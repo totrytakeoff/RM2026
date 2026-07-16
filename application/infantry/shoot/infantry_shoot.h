@@ -6,6 +6,8 @@
 #ifndef INFANTRY_SHOOT_H
 #define INFANTRY_SHOOT_H
 
+#include <stdbool.h>
+
 #include "infantry_types.h"
 
 /*============================================================================
@@ -21,7 +23,7 @@ typedef enum {
 /**
  * @brief 发射初始化
  */
-void Shoot_Init(void);
+bool Shoot_Init(void);
 
 /**
  * @brief 发射更新
@@ -33,6 +35,7 @@ void Shoot_Update(Input_Data_t *input);
  * @brief 发射停止
  */
 void Shoot_Stop(void);
+bool Shoot_IsHealthy(void);
 ShootState_e Shoot_GetState(void);
 float Shoot_GetLoaderRef(void);
 float Shoot_GetLoaderFeedback(void);

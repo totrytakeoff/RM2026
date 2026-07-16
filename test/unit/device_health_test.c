@@ -118,6 +118,36 @@ static void TestClockWrap(void)
     CHECK(offline_count == 1U);
 }
 
+static void TestOfflineStateStaysLatchedAcrossHalfRange(void)
+{
+    unsigned offline_count = 0U;
+    const DaemonConfig config = {
+        .timeout_ms = 10U,
+        .initial_grace_ms = 10U,
+        .callback = CountOffline,
+        .owner = &offline_count,
+    };
+    DaemonInstance *instance;
+
+    fake_now_ms = 100U;
+    DaemonServiceInit();
+    instance = DaemonRegister(&config);
+    CHECK(instance != NULL);
+    DaemonReload(instance);
+
+    fake_now_ms = 110U;
+    DaemonTask();
+    CHECK(!DaemonIsOnline(instance));
+    CHECK(offline_count == 1U);
+
+    /* Serial deadline arithmetic becomes ambiguous this far after expiry. */
+    fake_now_ms += UINT32_C(0x80000000);
+    CHECK(!DaemonIsOnline(instance));
+
+    DaemonReload(instance);
+    CHECK(DaemonIsOnline(instance));
+}
+
 static void TestDefaultsCapacityAndNullSafety(void)
 {
     const DaemonConfig config = {0};
@@ -173,6 +203,7 @@ int main(void)
     TestDeadlineAndReload();
     TestPollRateDoesNotChangeTimeout();
     TestClockWrap();
+    TestOfflineStateStaysLatchedAcrossHalfRange();
     TestDefaultsCapacityAndNullSafety();
     TestRejectsAmbiguousDeadlines();
 

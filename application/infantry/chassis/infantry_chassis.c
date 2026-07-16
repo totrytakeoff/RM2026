@@ -38,6 +38,22 @@ static float filtered_wz = 0.0f;
 static float follow_wz_integral = 0.0f;
 static uint32_t chassis_last_tick = 0U;
 
+static bool PublishMotorCommand(DJIMotorInstance *motor,
+                                Closeloop_Type_e outer_loop,
+                                float reference,
+                                Motor_Working_Type_e working_state)
+{
+    DJIMotorCommand command;
+
+    if (!DJIMotorGetCommand(motor, &command)) {
+        return false;
+    }
+    command.settings.outer_loop_type = outer_loop;
+    command.reference = reference;
+    command.working_state = working_state;
+    return DJIMotorPublishCommand(motor, &command);
+}
+
 static float ClampFloat(float value, float min_value, float max_value)
 {
     if (value < min_value) {
@@ -63,7 +79,7 @@ static void OmniInverseKinematics(float vx, float vy, float wz, float out[4])
     out[3] = v_bl / CHASSIS_WHEEL_RADIUS;
 }
 
-void Chassis_Init(void)
+bool Chassis_Init(void)
 {
     Motor_Init_Config_s config = {
         .motor_type = M3508,
@@ -100,30 +116,33 @@ void Chassis_Init(void)
 
     motor_fr = DJIMotorInit(&config);
     if (motor_fr != NULL) {
-        DJIMotorOuterLoop(motor_fr, CHASSIS_INIT_LOOP);
-        DJIMotorStop(motor_fr);
+        (void)PublishMotorCommand(motor_fr, CHASSIS_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP);
     }
 
     config.can_init_config.tx_id = CHASSIS_MOTOR_FL_ID;
     motor_fl = DJIMotorInit(&config);
     if (motor_fl != NULL) {
-        DJIMotorOuterLoop(motor_fl, CHASSIS_INIT_LOOP);
-        DJIMotorStop(motor_fl);
+        (void)PublishMotorCommand(motor_fl, CHASSIS_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP);
     }
 
     config.can_init_config.tx_id = CHASSIS_MOTOR_BR_ID;
     motor_br = DJIMotorInit(&config);
     if (motor_br != NULL) {
-        DJIMotorOuterLoop(motor_br, CHASSIS_INIT_LOOP);
-        DJIMotorStop(motor_br);
+        (void)PublishMotorCommand(motor_br, CHASSIS_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP);
     }
 
     config.can_init_config.tx_id = CHASSIS_MOTOR_BL_ID;
     motor_bl = DJIMotorInit(&config);
     if (motor_bl != NULL) {
-        DJIMotorOuterLoop(motor_bl, CHASSIS_INIT_LOOP);
-        DJIMotorStop(motor_bl);
+        (void)PublishMotorCommand(motor_bl, CHASSIS_INIT_LOOP, 0.0f,
+                                  MOTOR_STOP);
     }
+
+    return (motor_fr != NULL) && (motor_fl != NULL) &&
+           (motor_br != NULL) && (motor_bl != NULL);
 }
 
 void Chassis_Update(Input_Data_t *input)
@@ -244,36 +263,24 @@ void Chassis_Update(Input_Data_t *input)
     }
 
     if (!chassis_enabled) {
-        if (motor_fr != NULL) {
-            DJIMotorEnable(motor_fr);
-        }
-        if (motor_fl != NULL) {
-            DJIMotorEnable(motor_fl);
-        }
-        if (motor_br != NULL) {
-            DJIMotorEnable(motor_br);
-        }
-        if (motor_bl != NULL) {
-            DJIMotorEnable(motor_bl);
-        }
         chassis_enabled = 1U;
     }
 
     if (motor_fr != NULL) {
-        DJIMotorOuterLoop(motor_fr, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_fr, last_wheel_ref[0]);
+        (void)PublishMotorCommand(motor_fr, CHASSIS_RUN_LOOP_NORMAL,
+                                  last_wheel_ref[0], MOTOR_ENALBED);
     }
     if (motor_fl != NULL) {
-        DJIMotorOuterLoop(motor_fl, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_fl, last_wheel_ref[1]);
+        (void)PublishMotorCommand(motor_fl, CHASSIS_RUN_LOOP_NORMAL,
+                                  last_wheel_ref[1], MOTOR_ENALBED);
     }
     if (motor_br != NULL) {
-        DJIMotorOuterLoop(motor_br, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_br, last_wheel_ref[2]);
+        (void)PublishMotorCommand(motor_br, CHASSIS_RUN_LOOP_NORMAL,
+                                  last_wheel_ref[2], MOTOR_ENALBED);
     }
     if (motor_bl != NULL) {
-        DJIMotorOuterLoop(motor_bl, CHASSIS_RUN_LOOP_NORMAL);
-        DJIMotorSetRef(motor_bl, last_wheel_ref[3]);
+        (void)PublishMotorCommand(motor_bl, CHASSIS_RUN_LOOP_NORMAL,
+                                  last_wheel_ref[3], MOTOR_ENALBED);
     }
 
     MDBG_CHS("mode=%u spin=%u off=%ld cmd(vx=%ld vy=%ld wz=%ld) filt(vx=%ld vy=%ld wz=%ld)",
@@ -304,21 +311,27 @@ void Chassis_Stop(void)
     g_robot.chassis.ref_type = REF_SPEED;
 
     if (motor_fr != NULL) {
-        DJIMotorSetRef(motor_fr, 0.0f);
-        DJIMotorStop(motor_fr);
+        (void)PublishMotorCommand(motor_fr, CHASSIS_RUN_LOOP_NORMAL, 0.0f,
+                                  MOTOR_STOP);
     }
     if (motor_fl != NULL) {
-        DJIMotorSetRef(motor_fl, 0.0f);
-        DJIMotorStop(motor_fl);
+        (void)PublishMotorCommand(motor_fl, CHASSIS_RUN_LOOP_NORMAL, 0.0f,
+                                  MOTOR_STOP);
     }
     if (motor_br != NULL) {
-        DJIMotorSetRef(motor_br, 0.0f);
-        DJIMotorStop(motor_br);
+        (void)PublishMotorCommand(motor_br, CHASSIS_RUN_LOOP_NORMAL, 0.0f,
+                                  MOTOR_STOP);
     }
     if (motor_bl != NULL) {
-        DJIMotorSetRef(motor_bl, 0.0f);
-        DJIMotorStop(motor_bl);
+        (void)PublishMotorCommand(motor_bl, CHASSIS_RUN_LOOP_NORMAL, 0.0f,
+                                  MOTOR_STOP);
     }
+}
+
+bool Chassis_IsHealthy(void)
+{
+    return DJIMotorIsOnline(motor_fr) && DJIMotorIsOnline(motor_fl) &&
+           DJIMotorIsOnline(motor_br) && DJIMotorIsOnline(motor_bl);
 }
 
 float Chassis_GetWz(void)

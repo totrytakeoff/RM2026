@@ -1,6 +1,6 @@
 # Infantry FreeRTOS migration baseline
 
-Date: 2026-07-15
+Date: 2026-07-16
 
 ## Scope
 
@@ -26,9 +26,10 @@ The source of truth for infantry behavior is now `application/infantry`.
   constraint from the minimal firmware.
 - PID values, limits, calibration values, and control-mode transitions are not
   retuned during the migration.
-- Offline, emergency-stop, or critical-task faults stop chassis, gimbal, and
-  shooter together. Once all faults clear, the safety state automatically
-  returns to active as in the minimal baseline.
+- Offline, emergency-stop, critical-task, INS-readiness, initialization, or
+  required-motor faults stop chassis, gimbal, and shooter together. Once all
+  faults clear, the safety state automatically returns to active as in the
+  minimal baseline.
 
 ## FreeRTOS task baseline
 
@@ -67,6 +68,15 @@ it before running motor control. ET08, VT, and DJI feedback are copied through
 coherent snapshot APIs before application use. See
 `deferred_ingress_milestone.md` for overflow and compatibility semantics.
 
+The 20 ms application now publishes complete per-motor command snapshots. The
+5 ms motor task exclusively owns mutable motor settings, PID runtime, and CAN
+output. A 100 ms command lease makes the motor task reject stale output even if
+the control task itself no longer runs. INS attitude crosses tasks through
+`INS_Read()`, and required motor/INS health is aggregated into the safety
+manager. See
+`control_ownership_milestone.md` for the command, reset, and output-gate
+contracts.
+
 ## Build baseline
 
 ```bash
@@ -84,9 +94,9 @@ Expected status at this baseline:
 - formal firmware builds;
 - bare-metal comparison firmware builds;
 - all 30 embedded demo/regression firmware targets build;
-- all four native unit-test programs pass;
-- formal firmware RAM usage is 50,696 bytes (38.68%) and Flash usage is 95,028
-  bytes (9.06%) in Debug, including an 8 KiB main-stack reservation and no C
+- all five native unit-test programs pass;
+- formal firmware RAM usage is 51,240 bytes (39.09%) and Flash usage is 96,868
+  bytes (9.24%) in Debug, including an 8 KiB main-stack reservation and no C
   heap reservation;
 - the formal image contains no linked C/FreeRTOS heap-allocation or libc
   formatting symbol;
@@ -101,6 +111,7 @@ the comparison firmware for tuning:
 - [ ] VT online/offline transitions stop and recover without output jumps;
 - [ ] ET08 takeover and release match the comparison firmware;
 - [ ] emergency stop disables chassis, gimbal, friction wheels, and loader;
+- [ ] suspending the control task zeros all DJI command slots within 105 ms;
 - [ ] chassis FOLLOW, SEPARATE, and spin behavior match the comparison firmware;
 - [ ] yaw and pitch feedback directions are correct after task separation;
 - [ ] single, double, and continuous fire state transitions are unchanged;
@@ -119,13 +130,14 @@ the comparison firmware for tuning:
 - Several components not linked into `app.elf` still provide heap-backed
   compatibility APIs and cannot be promoted into the formal firmware yet.
 - Module APIs and configuration macros retain some `Minimal*` naming.
-- Motor commands/PID runtime and INS attitude data still cross task boundaries
-  through transitional mutable structures; their ownership must be narrowed.
-- Device initialization failures and individual motor-health deadlines are not
-  yet aggregated into the top-level safety state.
+- Public DJI instance fields remain as a compatibility surface for old demos,
+  although the formal application uses only command and measurement snapshots.
+- BMI088 startup retry is still unbounded, and INS has no independent sensor
+  plausibility/data-ready health deadline beyond task health and first publish.
 - The mutable `g_robot` context is still shared with diagnostic code.
-- A hardware watchdog is not implemented yet; the software health task cannot
-  diagnose its own total starvation.
+- A hardware watchdog is not implemented yet. The command lease covers a
+  stalled control task only while the tick and motor task still execute; it
+  cannot contain scheduler-wide or MCU starvation.
 - CubeMX `.ioc` is not yet tracked.
 - the formal main-stack reservation is conservatively 8 KiB until interrupt
   nesting and startup behavior are measured on hardware;

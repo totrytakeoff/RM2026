@@ -15,6 +15,7 @@
 #ifndef __INS_TASK_H
 #define __INS_TASK_H
 
+#include <stdbool.h>
 #include "stdint.h"
 #include "BMI088driver.h"
 #include "QuaternionEKF.h"
@@ -83,6 +84,12 @@ typedef struct
  *
  */
 attitude_t *INS_Init(void);
+
+/** Copy one coherent attitude result published by the 1 kHz INS task. */
+bool INS_Read(attitude_t *attitude);
+
+/** True after the first complete INS solution has been published. */
+bool INS_IsReady(void);
 
 /**
  * @brief 此函数放入实时系统中,以1kHz频率运行

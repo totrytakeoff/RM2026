@@ -8,7 +8,10 @@
 #include "safety_manager.h"
 
 /** Initialize the infantry modules. Call before the scheduler starts. */
-void InfantryApp_Init(void);
+bool InfantryApp_Init(void);
+
+/** Execute the 5 ms actuator stage from the dedicated motor task. */
+void InfantryApp_MotorStep(void);
 
 /** Execute one deterministic high-level control step. */
 void InfantryApp_ControlStep(uint32_t now_ms);
