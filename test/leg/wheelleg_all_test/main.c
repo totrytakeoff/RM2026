@@ -465,37 +465,6 @@ static uint8_t MapSwitchClosest(uint16_t raw_value)
     return best_index;
 }
 
-static uint8_t MapSwitch3PosRaw(uint16_t raw_value, uint8_t last_pos)
-{
-    uint16_t best = 0xFFFFU;
-    uint8_t best_pos = last_pos;
-
-    uint16_t diff_top = (raw_value > ET08_SC_RAW_TOP) ? (raw_value - ET08_SC_RAW_TOP)
-                                                      : (ET08_SC_RAW_TOP - raw_value);
-    best = diff_top;
-    best_pos = 0U;
-
-    uint16_t diff_mid = (raw_value > ET08_SC_RAW_MID) ? (raw_value - ET08_SC_RAW_MID)
-                                                      : (ET08_SC_RAW_MID - raw_value);
-    if (diff_mid < best) {
-        best = diff_mid;
-        best_pos = 1U;
-    }
-
-    uint16_t diff_bottom = (raw_value > ET08_SC_RAW_BOTTOM) ? (raw_value - ET08_SC_RAW_BOTTOM)
-                                                            : (ET08_SC_RAW_BOTTOM - raw_value);
-    if (diff_bottom < best) {
-        best = diff_bottom;
-        best_pos = 2U;
-    }
-
-    if (best <= ET08_SC_RAW_TOLERANCE) {
-        return best_pos;
-    }
-
-    return last_pos;
-}
-
 static void WheelMotorsInit(void)
 {
     Motor_Init_Config_s config = {
@@ -731,22 +700,6 @@ static uint8_t ET08_IsJointEnabled(const ET08_Ctrl_t *rc)
         return (rc->switch_sd_sc_state <= 2U) ? 1U : 0U;
 
     return (rc->switch_sd_sc_centered > 0) ? 1U : 0U;
-}
-
-static BalanceMode GetBalanceModeFromSC(const ET08_Ctrl_t *rc)
-{
-    static uint8_t sc_pos = 1U;
-
-    if (rc == NULL)
-        return BALANCE_MODE_DISABLE;
-
-    if (rc->switch_sd_sc_state != 0xFFu) {
-        sc_pos = (uint8_t)(rc->switch_sd_sc_state % 3U);
-    } else {
-        sc_pos = MapSwitch3PosRaw(rc->switch_sd_sc_raw, sc_pos);
-    }
-
-    return (sc_pos == 0U) ? BALANCE_MODE_ACTIVE : BALANCE_MODE_DISABLE;
 }
 
 static void UpdateControl(float dt_sec)

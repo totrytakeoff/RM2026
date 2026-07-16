@@ -81,6 +81,7 @@
 #define MAIN_LOOP_PERIOD_MS     20U     // 主循环周期(ms), 与omni_demo对齐
 #define MOTOR_STABILIZE_TIME_MS 2000U   // 上电后电机稳定等待时间
 #define INFANTRY_CPU_FREQUENCY_MHZ       168U
+#define INFANTRY_IMU_INIT_TIMEOUT_MS      15000U
 
 /* FreeRTOS迁移阶段任务周期：控制环保持minimal基线，快环独立调度。 */
 #define INFANTRY_INS_TASK_PERIOD_MS         1U
@@ -105,6 +106,13 @@
 #define INFANTRY_TASK_MAX_CONSECUTIVE_OVERRUNS  3U
 #define INFANTRY_TASK_MIN_STACK_FREE_WORDS      64U
 #define INFANTRY_TASK_STACK_SAMPLE_INTERVAL     100U
+
+/* Only the health task refreshes IWDG; a stalled scheduler or critical task resets. */
+#define INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS   1000U
+
+#if INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS <= INFANTRY_HEALTH_TASK_PERIOD_MS
+#error "INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS must exceed one health period"
+#endif
 
 /*============================================================================
  * CAN总线电机配置

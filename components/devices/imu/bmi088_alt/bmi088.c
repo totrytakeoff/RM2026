@@ -294,8 +294,7 @@ uint8_t BMI088Acquire(BMI088Instance *bmi088, BMI088_Data_t *data_store)
     return 1;
 }
 
-/* pre calibrate parameter to go here */
-#pragma message "REMEMBER TO SET PRE CALIBRATE PARAMETER IF YOU CHOOSE NOT TO CALIBRATE"
+/* Pre-calibrated fallback values must be updated for each physical robot. */
 #define BMI088_PRE_CALI_ACC_X_OFFSET 0.0f
 #define BMI088_PRE_CALI_ACC_Y_OFFSET 0.0f
 #define BMI088_PRE_CALI_ACC_Z_OFFSET 0.0f

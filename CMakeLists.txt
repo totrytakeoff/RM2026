@@ -16,7 +16,6 @@ cmake_minimum_required(VERSION 3.16)
 if(NOT CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/cmake/Toolchain.cmake" CACHE FILEPATH "Toolchain file")
 endif()
-include(${CMAKE_TOOLCHAIN_FILE})
 
 project(RM2026 C CXX ASM)
 

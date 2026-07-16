@@ -6,6 +6,8 @@
 #define BMI088_USE_SPI
 //#define BMI088_USE_IIC
 
+#define BMI088_SPI_BYTE_TIMEOUT_MS 2U
+
 /*
 #define CS1_ACCEL_GPIO_Port ACCEL_NSS_GPIO_Port
 #define CS1_ACCEL_Pin ACCEL_NSS_Pin

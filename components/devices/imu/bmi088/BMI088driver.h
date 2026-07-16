@@ -16,6 +16,7 @@
 
 #define BMI088_LONG_DELAY_TIME 80
 #define BMI088_COM_WAIT_SENSOR_TIME 150
+#define BMI088_DEFAULT_INIT_TIMEOUT_MS 15000U
 
 #define BMI088_ACCEL_IIC_ADDRESSE (0x18 << 1)
 #define BMI088_GYRO_IIC_ADDRESSE (0x68 << 1)
@@ -92,6 +93,9 @@ enum
     BMI088_GYRO_CTRL_ERROR = 0x0B,
     BMI088_GYRO_INT3_INT4_IO_CONF_ERROR = 0x0C,
     BMI088_GYRO_INT3_INT4_IO_MAP_ERROR = 0x0D,
+    BMI088_CALIBRATION_ERROR = 0x10,
+    BMI088_INIT_TIMEOUT_ERROR = 0x11,
+    BMI088_INVALID_ARGUMENT_ERROR = 0x12,
 
     BMI088_SELF_TEST_ACCEL_ERROR = 0x80,
     BMI088_SELF_TEST_GYRO_ERROR = 0x40,
@@ -108,6 +112,11 @@ extern IMU_Data_t BMI088;
  * @return uint8_t   成功则返回BMI088_NO_ERROR
  */
 extern uint8_t BMI088Init(SPI_HandleTypeDef *bmi088_SPI, uint8_t calibrate);
+
+/** Initialize with one finite budget shared by register setup and calibration. */
+extern uint8_t BMI088InitWithTimeout(SPI_HandleTypeDef *bmi088_SPI,
+                                    uint8_t calibrate,
+                                    uint32_t timeout_ms);
 
 /**
  * @brief 加速计初始化

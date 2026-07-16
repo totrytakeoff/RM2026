@@ -65,8 +65,8 @@ _Min_Stack_Size = DEFINED(RM_MIN_STACK_SIZE) ? RM_MIN_STACK_SIZE : 0x5000;
 /* Specify the memory areas */
 MEMORY
 {
-RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 128K
-CCMRAM (xrw)      : ORIGIN = 0x10000000, LENGTH = 64K
+RAM (rw)       : ORIGIN = 0x20000000, LENGTH = 128K
+CCMRAM (rw)    : ORIGIN = 0x10000000, LENGTH = 64K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 1024K
 }
 
@@ -114,20 +114,20 @@ SECTIONS
     __exidx_end = .;
   } >FLASH
 
-  .preinit_array     :
+  .preinit_array (READONLY) :
   {
     PROVIDE_HIDDEN (__preinit_array_start = .);
     KEEP (*(.preinit_array*))
     PROVIDE_HIDDEN (__preinit_array_end = .);
   } >FLASH
-  .init_array :
+  .init_array (READONLY) :
   {
     PROVIDE_HIDDEN (__init_array_start = .);
     KEEP (*(SORT(.init_array.*)))
     KEEP (*(.init_array*))
     PROVIDE_HIDDEN (__init_array_end = .);
   } >FLASH
-  .fini_array :
+  .fini_array (READONLY) :
   {
     PROVIDE_HIDDEN (__fini_array_start = .);
     KEEP (*(SORT(.fini_array.*)))
@@ -172,7 +172,7 @@ SECTIONS
   
   /* Uninitialized data section */
   . = ALIGN(4);
-  .bss :
+  .bss (NOLOAD) :
   {
     /* This is used by the startup in order to initialize the .bss secion */
     _sbss = .;         /* define a global symbol at bss start */
@@ -187,7 +187,7 @@ SECTIONS
   } >RAM
 
   /* User_heap_stack section, used to check that there is enough RAM left */
-  ._user_heap_stack :
+  ._user_heap_stack (NOLOAD) :
   {
     . = ALIGN(8);
     PROVIDE ( end = . );
@@ -209,4 +209,3 @@ SECTIONS
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 }
-

@@ -8,6 +8,7 @@
 #include "infantry_app.h"
 #include "infantry_config.h"
 #include "infantry_tasks.h"
+#include "rm_watchdog.h"
 
 bool InfantryFirmware_Init(void)
 {
@@ -28,6 +29,10 @@ bool InfantryFirmware_Init(void)
         return false;
     }
     if (!InfantryTasks_Create()) {
+        InfantryApp_ForceSafeStop();
+        return false;
+    }
+    if (!RmWatchdog_Start(INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS)) {
         InfantryApp_ForceSafeStop();
         return false;
     }

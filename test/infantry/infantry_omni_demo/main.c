@@ -251,7 +251,6 @@ static float filtered_wz = 0.0f;
 void SystemClock_Config(void);
 static void Debug_DisableWatchdogs(void);
 static void Et08SbusInit(UART_HandleTypeDef *uart_handle);
-static uint8_t Et08SbusIsOnline(void);
 static uint8_t Et08InputValid(void);
 static void EnsureFrictionMotorsReady(void);
 static void EnsureLoaderMotorReady(void);
@@ -262,7 +261,6 @@ static void SetAllMotorsZero(void);
 static uint8_t Et08GetSaPosFromState(uint8_t state);
 static uint8_t Et08GetSbPosFromState(uint8_t state);
 static uint8_t Et08GetSdPosFromState(uint8_t state);
-static uint8_t Et08GetScPosFromState(uint8_t state);
 static uint8_t Et08MapUpperSwitchPos(uint8_t state);
 static uint8_t Et08MapLowerSwitchPos(uint8_t state);
 static uint8_t Et08MapSwitchStateRaw(uint16_t raw_value);
@@ -298,11 +296,6 @@ static uint8_t Et08GetSdPosFromState(uint8_t state)
     return Et08MapUpperSwitchPos(state);
 }
 
-static uint8_t Et08GetScPosFromState(uint8_t state)
-{
-    return Et08MapLowerSwitchPos(state);
-}
-
 static uint8_t Et08MapSwitchStateRaw(uint16_t raw_value)
 {
     const int16_t levels[ET08_SWITCH_LEVEL_COUNT] = {
@@ -336,11 +329,6 @@ static uint8_t Et08MapSwitchStateRaw(uint16_t raw_value)
 static void Et08SbusInit(UART_HandleTypeDef *uart_handle)
 {
     et08_ctrl = ET08_Init(uart_handle);
-}
-
-static uint8_t Et08SbusIsOnline(void)
-{
-    return ET08_IsOnline();
 }
 
 static uint8_t Et08InputValid(void)
@@ -1152,7 +1140,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         HAL_IncTick();
     }
 }
-
 
 
 

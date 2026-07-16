@@ -28,12 +28,10 @@ target_include_directories(rm_app_infantry PUBLIC
 
 target_compile_options(rm_app_infantry PRIVATE ${MCU_FLAGS})
 
-# Transitional dependencies. These are replaced component-by-component during
-# the ownership migration; application code no longer lives in the legacy lib.
 target_link_libraries(rm_app_infantry PUBLIC
     rm_infantry_config
     rm_service_safety
-    rm_components
+    rm_components_runtime
     rm_platform_stm32f4
     rm_common
     rm_vendor_stm32_hal

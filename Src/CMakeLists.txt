@@ -27,6 +27,7 @@ set(APP_SOURCES "main.c")
 
 # 创建可执行文件
 add_executable(app.elf ${APP_SOURCES})
+set_property(TARGET app.elf APPEND PROPERTY LINK_DEPENDS ${LINKER_SCRIPT})
 
 target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 
@@ -35,11 +36,12 @@ target_include_directories(app.elf PUBLIC ${CMAKE_SOURCE_DIR}/Inc)
 # vendor 归档显式放入组内，确保 FreeRTOS 回调和平台适配符号能被重新扫描。
 target_link_libraries(app.elf 
     PRIVATE
+    rm_platform_syscalls
     -Wl,--start-group
     rm_firmware_infantry
     rm_system_freertos
     rm_app_infantry
-    rm_components
+    rm_components_runtime
     rm_platform_stm32f4
     rm_vendor_freertos
     rm_vendor_usb_device
@@ -72,6 +74,10 @@ add_custom_command(TARGET app.elf POST_BUILD
             -DNM=${CMAKE_NM}
             -DELF=$<TARGET_FILE:app.elf>
             -P ${CMAKE_SOURCE_DIR}/cmake/CheckFormalFirmwareSymbols.cmake
+    COMMAND ${CMAKE_COMMAND}
+            -DREADELF=${CMAKE_READELF}
+            -DELF=$<TARGET_FILE:app.elf>
+            -P ${CMAKE_SOURCE_DIR}/cmake/CheckElfSegments.cmake
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:app.elf> ${CMAKE_CURRENT_BINARY_DIR}/app.bin
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GLOBAL_OUTPUT_DIR}

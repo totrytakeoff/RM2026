@@ -77,6 +77,11 @@ manager. See
 `control_ownership_milestone.md` for the command, reset, and output-gate
 contracts.
 
+BMI088/INS initialization is now bounded, the health task is the sole hardware
+watchdog feeder, embedded syscalls and ELF permissions are repository-owned,
+and formal components are isolated from compatibility drivers. See
+`runtime_hardening_milestone.md` for these contracts and their hardware gates.
+
 ## Build baseline
 
 ```bash
@@ -95,12 +100,12 @@ Expected status at this baseline:
 - bare-metal comparison firmware builds;
 - all 30 embedded demo/regression firmware targets build;
 - all five native unit-test programs pass;
-- formal firmware RAM usage is 51,240 bytes (39.09%) and Flash usage is 96,868
-  bytes (9.24%) in Debug, including an 8 KiB main-stack reservation and no C
+- formal firmware RAM usage is 51,216 bytes (39.07%) and Flash usage is 97,452
+  bytes (9.29%) in Debug, including an 8 KiB main-stack reservation and no C
   heap reservation;
 - the formal image contains no linked C/FreeRTOS heap-allocation or libc
   formatting symbol;
-- existing newlib syscall and RWX linker warnings remain tracked cleanup work.
+- embedded builds complete without libnosys syscall or RWX-segment warnings.
 
 ## Hardware acceptance gates
 
@@ -108,6 +113,7 @@ These items must be recorded on hardware before the FreeRTOS target replaces
 the comparison firmware for tuning:
 
 - [ ] cold start remains output-safe during the two-second stabilization delay;
+- [ ] BMI088 absence/motion exits inside the 15-second initialization budget;
 - [ ] VT online/offline transitions stop and recover without output jumps;
 - [ ] ET08 takeover and release match the comparison firmware;
 - [ ] emergency stop disables chassis, gimbal, friction wheels, and loader;
@@ -119,30 +125,31 @@ the comparison firmware for tuning:
 - [ ] task periods and execution times remain bounded for at least 10 minutes;
 - [ ] stack high-water marks leave an agreed safety margin;
 - [ ] no stack-overflow or allocation-failure hook is reached;
+- [ ] critical-task and scheduler stalls produce an IWDG reset without false
+      resets under maximum normal load;
 - [ ] USB initialization completes and its one-shot task terminates;
 - [ ] referee read-only interlocks behave correctly when enabled.
 
 ## Known transitional debt
 
-- Application modules still call transitional motor, input, INS, referee,
-  device-health, platform, and algorithm APIs from `components/` and
-  `platform/`.
+- Application modules still call runtime motor, input, INS, referee,
+  device-health, platform, and algorithm APIs through a production component
+  set that needs finer per-domain targets.
 - Several components not linked into `app.elf` still provide heap-backed
   compatibility APIs and cannot be promoted into the formal firmware yet.
 - Module APIs and configuration macros retain some `Minimal*` naming.
 - Public DJI instance fields remain as a compatibility surface for old demos,
   although the formal application uses only command and measurement snapshots.
-- BMI088 startup retry is still unbounded, and INS has no independent sensor
-  plausibility/data-ready health deadline beyond task health and first publish.
+- INS has no independent runtime sensor plausibility/data-ready health deadline
+  beyond task health and first publish.
 - The mutable `g_robot` context is still shared with diagnostic code.
-- A hardware watchdog is not implemented yet. The command lease covers a
-  stalled control task only while the tick and motor task still execute; it
-  cannot contain scheduler-wide or MCU starvation.
+- The IWDG timeout and fault-injection behavior still require measurement on
+  each physical control board.
 - CubeMX `.ioc` is not yet tracked.
 - the formal main-stack reservation is conservatively 8 KiB until interrupt
   nesting and startup behavior are measured on hardware;
 - The former `Src/application` implementation has not yet been removed.
 
-The next ownership slice is portable algorithm cleanup and device-component
-separation: explicit PID timing, narrow public headers, protocol/transport
-boundaries, and removal of the remaining inactive heap-backed registrations.
+The next ownership slice is runtime INS plausibility and finer device/service
+separation: narrow public headers, protocol/transport boundaries, and removal
+of the remaining inactive heap-backed registrations.

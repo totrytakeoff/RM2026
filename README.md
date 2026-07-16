@@ -51,6 +51,9 @@ documented in `docs/migration/deferred_ingress_milestone.md`.
 The motor-command, command-lease, PID ownership, INS snapshot, and
 required-device fault-containment contract is documented in
 `docs/migration/control_ownership_milestone.md`.
+Bounded IMU initialization, IWDG feeding, syscall/linker cleanup, and the
+formal-versus-compatibility component boundary are documented in
+`docs/migration/runtime_hardening_milestone.md`.
 The approved repository ownership model and final directory layout are recorded
 in `docs/architecture/repository_reorganization_baseline.md`.
 

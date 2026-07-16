@@ -13,6 +13,7 @@
 #include "infantry_app.h"
 #include "infantry_config.h"
 #include "ins_task.h"
+#include "rm_watchdog.h"
 #include "rm_time.h"
 
 enum {
@@ -225,11 +226,16 @@ static void InfantryHealthTask(void *argument)
     (void)argument;
 
     for (;;) {
+        bool critical_tasks_healthy;
         uint32_t start_cycles = TaskRuntime_Begin(INFANTRY_TASK_HEALTH);
         DaemonTask();
         TaskRuntime_Record(INFANTRY_TASK_HEALTH, start_cycles);
-        InfantryApp_SetTaskHealth(
-            TaskRuntime_AreCriticalTasksHealthy(xTaskGetTickCount()));
+        critical_tasks_healthy =
+            TaskRuntime_AreCriticalTasksHealthy(xTaskGetTickCount());
+        InfantryApp_SetTaskHealth(critical_tasks_healthy);
+        if (critical_tasks_healthy) {
+            (void)RmWatchdog_Refresh();
+        }
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(INFANTRY_HEALTH_TASK_PERIOD_MS));
     }
 }

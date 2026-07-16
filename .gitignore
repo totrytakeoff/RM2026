@@ -6,6 +6,7 @@
 # Build
 **/build/
 build/
+build-*/
 *.o
 *.obj
 *.elf

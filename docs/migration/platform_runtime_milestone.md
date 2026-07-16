@@ -132,3 +132,8 @@ Existing newlib `_close`, `_lseek`, `_read`, and `_write` stub warnings and the
 RWX load-segment warning are unchanged. This is a compile and host-test gate;
 hardware timing, link-loss recovery, CAN saturation, and soak validation remain
 required before competition use.
+
+The subsequent
+[`runtime_hardening_milestone.md`](runtime_hardening_milestone.md) replaces the
+libnosys process-I/O stubs, removes the RWX segment, and adds explicit linker
+program-header verification.

@@ -332,10 +332,18 @@ bool Gimbal_Init(void)
     Motor_Init_Config_s pitch_config;
     attitude_t attitude;
 
-    gimbal_imu_initialized = (INS_Init() != NULL) ? 1U : 0U;
+    gimbal_imu_initialized =
+        (INS_InitWithTimeout(INFANTRY_IMU_INIT_TIMEOUT_MS) != NULL) ? 1U : 0U;
     motor_yaw_imu_angle_fdb = 0.0f;
     motor_yaw_imu_speed_fdb = 0.0f;
     motor_pitch_imu_speed_fdb = 0.0f;
+
+    if (gimbal_imu_initialized == 0U) {
+        MDBG_GMB("INS init failed status=%u sensor_error=0x%02x",
+                 (unsigned)INS_GetInitStatus(),
+                 (unsigned)INS_GetSensorInitError());
+        return false;
+    }
 
     yaw_config = (Motor_Init_Config_s){
         .motor_type = GM6020,

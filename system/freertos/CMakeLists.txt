@@ -12,7 +12,7 @@ target_compile_options(rm_system_freertos PRIVATE ${MCU_FLAGS})
 
 target_link_libraries(rm_system_freertos PUBLIC
     rm_app_infantry
-    rm_components
+    rm_components_runtime
     rm_platform_stm32f4
     rm_vendor_runtime
     HAL_Lib

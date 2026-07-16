@@ -79,11 +79,27 @@ typedef struct
     float Roll;
 } IMU_Param_t;
 
+typedef enum
+{
+    INS_INIT_NOT_STARTED = 0,
+    INS_INIT_IN_PROGRESS,
+    INS_INIT_READY,
+    INS_INIT_PWM_ERROR,
+    INS_INIT_SENSOR_ERROR,
+} INS_InitStatus;
+
 /**
  * @brief 初始化惯导解算系统
  *
  */
 attitude_t *INS_Init(void);
+
+/** Initialize the INS without allowing sensor setup/calibration to spin forever. */
+attitude_t *INS_InitWithTimeout(uint32_t timeout_ms);
+
+/** Initialization state and underlying BMI088 error for fault diagnostics. */
+INS_InitStatus INS_GetInitStatus(void);
+uint8_t INS_GetSensorInitError(void);
 
 /** Copy one coherent attitude result published by the 1 kHz INS task. */
 bool INS_Read(attitude_t *attitude);

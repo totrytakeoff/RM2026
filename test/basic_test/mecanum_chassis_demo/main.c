@@ -119,7 +119,6 @@ static void ChassisMotorsInit(void);
 static void UpdateChassisKinematics(void);
 static void ProcessRemoteControl(void);
 static void SendChassisInfo(void);
-static void StopAllMotors(void);
 static void SetAllMotorsZero(void);
 static void ForceMotorZero(void);
 static uint8_t DetectAndSuppressOscillation(void);
@@ -428,18 +427,6 @@ static void ProcessRemoteControl(void)
     chassis_vx = float_deadband(chassis_vx, -CHASSIS_DEADZONE_VX, CHASSIS_DEADZONE_VX);
     chassis_vy = float_deadband(chassis_vy, -CHASSIS_DEADZONE_VY, CHASSIS_DEADZONE_VY);
     chassis_wz = float_deadband(chassis_wz, -CHASSIS_DEADZONE_WZ, CHASSIS_DEADZONE_WZ);
-}
-
-/**
- * @brief 停止所有底盘电机
- */
-static void StopAllMotors(void)
-{
-    for (uint8_t i = 0; i < CHASSIS_MOTOR_COUNT; i++) {
-        if (chassis_motors[i] != NULL) {
-            DJIMotorStop(chassis_motors[i]);
-        }
-    }
 }
 
 /**

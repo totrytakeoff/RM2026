@@ -167,10 +167,11 @@ Before tuning, hardware acceptance must confirm:
 - `DJIMotorInstance` remains publicly mutable for old demos; the formal
   application no longer relies on that access, but a later compatibility
   cleanup should make the runtime portion opaque.
-- BMI088 startup still retries synchronously without a bounded failure result.
 - INS readiness confirms publication and task health, not independent sensor
   plausibility or a hardware data-ready deadline.
 - `g_robot` remains a mutable application/diagnostics context.
-- The software health task still needs an independent hardware watchdog.
 - Hardware comparison and soak-test gates remain open; this milestone is not a
   control-tuning result.
+
+Bounded BMI088 initialization and the independent IWDG feed contract are closed
+by [`runtime_hardening_milestone.md`](runtime_hardening_milestone.md).

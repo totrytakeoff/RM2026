@@ -15,7 +15,7 @@ create_embedded_test(infantry_minimal
         ${CMAKE_CURRENT_SOURCE_DIR}
     LINK_LIBRARIES
         rm_app_infantry
-        rm_components
+        rm_components_runtime
         rm_platform_stm32f4
         rm_common
         rm_vendor_stm32_hal

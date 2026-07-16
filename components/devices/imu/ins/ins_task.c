@@ -26,6 +26,8 @@
 static INS_t INS;
 static attitude_t ins_snapshot;
 static uint8_t ins_snapshot_valid;
+static INS_InitStatus ins_init_status = INS_INIT_NOT_STARTED;
+static uint8_t ins_sensor_init_error = BMI088_NO_ERROR;
 static IMU_Param_t IMU_Param;
 static PIDInstance TempCtrl = {0};
 
@@ -89,11 +91,26 @@ static void InitQuaternion(float *init_q4)
     }
     for (uint8_t i = 0; i < 3; ++i)
         acc_init[i] /= 100;
+    if (NormOf3d(acc_init) < 0.000001f) {
+        init_q4[0] = 1.0f;
+        init_q4[1] = 0.0f;
+        init_q4[2] = 0.0f;
+        init_q4[3] = 0.0f;
+        return;
+    }
     Norm3d(acc_init);
     // 计算原始加速度矢量和导航系重力加速度矢量的夹角
-    float angle = acosf(Dot3d(acc_init, gravity_norm));
+    float gravity_dot = float_constrain(Dot3d(acc_init, gravity_norm),
+                                        -1.0f, 1.0f);
+    float angle = acosf(gravity_dot);
     Cross3d(acc_init, gravity_norm, axis_rot);
-    Norm3d(axis_rot);
+    if (NormOf3d(axis_rot) < 0.000001f) {
+        axis_rot[0] = 1.0f;
+        axis_rot[1] = 0.0f;
+        axis_rot[2] = 0.0f;
+    } else {
+        Norm3d(axis_rot);
+    }
     init_q4[0] = cosf(angle / 2.0f);
     for (uint8_t i = 0; i < 2; ++i)
         init_q4[i + 1] = axis_rot[i] * sinf(angle / 2.0f); // 轴角公式,第三轴为0(没有z轴分量)
@@ -101,10 +118,21 @@ static void InitQuaternion(float *init_q4)
 
 attitude_t *INS_Init(void)
 {
-    if (!INS.init)
-        INS.init = 1;
-    else
+    return INS_InitWithTimeout(BMI088_DEFAULT_INIT_TIMEOUT_MS);
+}
+
+attitude_t *INS_InitWithTimeout(uint32_t timeout_ms)
+{
+    if (ins_init_status == INS_INIT_READY) {
         return &ins_snapshot;
+    }
+    if (ins_init_status == INS_INIT_IN_PROGRESS) {
+        return NULL;
+    }
+
+    ins_init_status = INS_INIT_IN_PROGRESS;
+    ins_sensor_init_error = BMI088_NO_ERROR;
+    INS.init = 0U;
 
     {
         RmCriticalState state = RmCritical_Enter();
@@ -113,10 +141,18 @@ attitude_t *INS_Init(void)
         RmCritical_Exit(state);
     }
 
-    HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1);
+    if (HAL_TIM_PWM_Start(&htim10, TIM_CHANNEL_1) != HAL_OK) {
+        ins_init_status = INS_INIT_PWM_ERROR;
+        return NULL;
+    }
 
-    while (BMI088Init(&hspi1, 1) != BMI088_NO_ERROR)
-        ;
+    ins_sensor_init_error = BMI088InitWithTimeout(&hspi1, 1U, timeout_ms);
+    if (ins_sensor_init_error != BMI088_NO_ERROR) {
+        IMUPWMSet(0U);
+        (void)HAL_TIM_PWM_Stop(&htim10, TIM_CHANNEL_1);
+        ins_init_status = INS_INIT_SENSOR_ERROR;
+        return NULL;
+    }
     IMU_Param.scale[X] = 1;
     IMU_Param.scale[Y] = 1;
     IMU_Param.scale[Z] = 1;
@@ -141,7 +177,19 @@ attitude_t *INS_Init(void)
     // noise of accel is relatively big and of high freq,thus lpf is used
     INS.AccelLPF = 0.0085;
     DWT_GetDeltaT(&INS_DWT_Count);
+    INS.init = 1U;
+    ins_init_status = INS_INIT_READY;
     return &ins_snapshot;
+}
+
+INS_InitStatus INS_GetInitStatus(void)
+{
+    return ins_init_status;
+}
+
+uint8_t INS_GetSensorInitError(void)
+{
+    return ins_sensor_init_error;
 }
 
 bool INS_Read(attitude_t *attitude)

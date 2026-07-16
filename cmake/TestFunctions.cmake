@@ -46,6 +46,8 @@ function(create_embedded_test test_name)
         ${ARG_EXTRA_SOURCES}
         ${CMAKE_SOURCE_DIR}/test/error_handler_stub.c
     )
+    set_property(TARGET ${test_target_name} APPEND PROPERTY
+        LINK_DEPENDS ${ARG_LINKER_SCRIPT})
     
     # 汇编文件属性也不再需要，因为它在 HAL_Lib 中处理
     
@@ -64,6 +66,7 @@ function(create_embedded_test test_name)
     # 链接库 (mirroring the main app.elf linkage)
     target_link_libraries(${test_target_name}
         PUBLIC
+        rm_platform_syscalls
         -Wl,--start-group
         ${ARG_LINK_LIBRARIES}
         HAL_Lib
@@ -96,6 +99,10 @@ function(create_embedded_test test_name)
     
     # 生成HEX和BIN文件
     add_custom_command(TARGET ${test_target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+                -DREADELF=${CMAKE_READELF}
+                -DELF=$<TARGET_FILE:${test_target_name}>
+                -P ${CMAKE_SOURCE_DIR}/cmake/CheckElfSegments.cmake
         COMMAND ${CMAKE_COMMAND} -E make_directory ${test_output_dir}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${GLOBAL_OUTPUT_DIR}
         COMMAND ${CMAKE_OBJCOPY} -Oihex $<TARGET_FILE:${test_target_name}> ${test_output_dir}/${test_target_name}.hex

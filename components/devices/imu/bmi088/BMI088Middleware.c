@@ -23,7 +23,12 @@ void BMI088_GYRO_NS_H(void)
 
 uint8_t BMI088_read_write_byte(uint8_t txdata)
 {
-    uint8_t rx_data;
-    HAL_SPI_TransmitReceive(BMI088_SPI, &txdata, &rx_data, 1, 1000);
+    uint8_t rx_data = 0xFFU;
+
+    if ((BMI088_SPI == NULL) ||
+        (HAL_SPI_TransmitReceive(BMI088_SPI, &txdata, &rx_data, 1,
+                                BMI088_SPI_BYTE_TIMEOUT_MS) != HAL_OK)) {
+        return 0xFFU;
+    }
     return rx_data;
 }
