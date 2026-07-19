@@ -1,8 +1,10 @@
 # 轮腿关节电机调参说明（DM8009P MIT）
 
+文档更新日期：2026-07-19
+
 适用范围
 - 目标：MIT 模式下让关节在负载下稳定定姿、抖动最小
-- 适用测试：`test/wheelleg_joint_test`、`test/wheelleg_balance_test`
+- 适用测试：`tests/firmware/leg/wheelleg_joint_test`、`tests/firmware/leg/wheelleg_balance_test`
 - MIT 通用原理参考：`docs/motor/dm8009p_mit_tuning_guide.md`
 
 总线与ID
@@ -18,7 +20,7 @@
   - 膝目标：`HIP_TARGET_L/R + KNEE_TARGET_L/R`
 
 参数修改位置
-- 关节目标、每电机增益：`test/wheelleg_balance_test/main.c`
+- 关节目标、每电机增益：`tests/firmware/leg/wheelleg_balance_test/main.c`
   - `HIP_TARGET_*`、`KNEE_TARGET_*`
   - `FL_KP/KD`、`FR_KP/KD`、`RL_KP/KD`、`RR_KP/KD`
   - `HIP_TFF_*`、`KNEE_TFF_*`

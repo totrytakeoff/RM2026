@@ -1,155 +1,118 @@
-# Infantry FreeRTOS migration baseline
+# 步兵 FreeRTOS 迁移基线
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-## Scope
+## 1. 范围
 
-The first migration target is the single-board infantry firmware. Hero,
-wheel-leg, dual-board communication, control retuning, and new algorithms are
-outside this baseline.
+第一阶段只针对单板步兵固件。英雄、轮腿、双板通信、控制参数重调和新控制算法
+不在本基线范围内。
 
-The source of truth for infantry behavior is now `application/infantry`.
+步兵行为唯一事实源为 `applications/infantry`：
 
-- `app.elf` executes it through statically allocated FreeRTOS tasks.
-- `test_infantry_minimal` executes the same code from the original bare-metal
-  scheduling shell for behavior comparison.
-- `Src/application` is no longer linked into `app.elf` and remains only as a
-  temporary migration reference.
+- `app.elf` 通过全静态 FreeRTOS 任务执行该逻辑。
+- `test_infantry_minimal` 在原裸机调度外壳中执行同一套应用和电机阶段 API，用于实板行为对照。
+- 废弃 `Src/application` 已删除，仅从 Git 历史追溯。
 
-## Preserved behavior
+## 2. 必须保持的行为
 
-- VT is the primary input and ET08 can take over according to the existing
-  switch policy.
-- High-level control order remains gimbal, chassis, then shooter.
-- The high-level control period remains 20 ms.
-- Motor-control scheduling initially remains 5 ms to preserve the CAN send-rate
-  constraint from the minimal firmware.
-- PID values, limits, calibration values, and control-mode transitions are not
-  retuned during the migration.
-- Offline, emergency-stop, critical-task, INS-readiness, initialization, or
-  required-motor faults stop chassis, gimbal, and shooter together. Once all
-  faults clear, the safety state automatically returns to active as in the
-  minimal baseline.
+- VT 为主输入，ET08 按现有开关策略接管。
+- 高层控制顺序保持“云台→底盘→发射”。
+- 高层控制周期保持 20 ms，电机阶段保持 5 ms。
+- PID、限幅、标定值、方向和模式转换不在结构迁移中调整。
+- 输入离线、急停、关键任务不健康、INS 未就绪、初始化失败或必需电机离线时，
+  底盘、云台和发射必须一起停止。
+- 所有故障清除后仍自动恢复 `ACTIVE`，用于对照原始行为；比赛最终是否要求人工重新解除待实板决策。
 
-## FreeRTOS task baseline
+## 3. FreeRTOS 任务基线
 
-All application tasks use `xTaskCreateStatic` and `vTaskDelayUntil`.
+所有应用任务使用 `xTaskCreateStatic` 和 `vTaskDelayUntil`。
 
-| Task | Period | Priority | Stack |
+| 任务 | 周期 | 优先级 | 栈 |
 | --- | ---: | ---: | ---: |
 | `ins` | 1 ms | idle + 4 | 1024 words |
 | `motor` | 5 ms | idle + 3 | 384 words |
 | `health` | 5 ms | idle + 3 | 256 words |
 | `control` | 20 ms | idle + 2 | 768 words |
 | `diagnostics` | 10 ms | idle + 1 | 384 words |
-| `usb_init` | one shot | idle + 1 | 128 words |
+| `usb_init` | 一次性 | idle + 1 | 128 words |
 
-FreeRTOS dynamic allocation is disabled. Stack-overflow checking and the
-allocation-failure hook are enabled as defensive configuration.
-Task stack sizes are deliberately conservative until hardware high-water marks
-have been collected.
+FreeRTOS 动态分配关闭，启用栈溢出检查和分配失败 hook。当前栈值在取得实板
+high-water 记录前保守设置。
 
-The critical tasks now publish heartbeat, release interval, execution time,
-deadline-miss, and stack high-water data. Three consecutive deadline misses, a
-four-period heartbeat loss after the startup grace period, or fewer than 64
-unused stack words drives the application safety state to `STOPPED`.
-`diagnostics` remains observable but non-critical because its transport may
-block without making actuator control unsafe. See `safety_health_service.md`.
+关键任务记录心跳、释放间隔、工作执行时间、deadline miss 和历史最小剩余栈。
+以下任一条会将安全状态推入 `STOPPED`：
 
-CAN, UART, device-health, DJI motor, EKF, and diagnostic-formatting storage on
-the formal path is now static. Device timeouts use monotonic millisecond
-deadlines and are independent of the health-task period. See
-`platform_runtime_milestone.md` for capacities, timeout values, and remaining
-transport constraints.
+- 100 ms 启动宽限后，关键任务连续四个配置周期无心跳；
+- 连续三次释放间隔超过周期的 125%，或工作执行时间达到/超过任务周期；
+- 历史剩余栈低于 64 words。
 
-The formal firmware selects deferred CAN/UART dispatch before registering any
-device. Interrupts only retain bounded receive data; the 5 ms motor task parses
-it before running motor control. ET08, VT, and DJI feedback are copied through
-coherent snapshot APIs before application use. See
-`deferred_ingress_milestone.md` for overflow and compatibility semantics.
+`diagnostics` 可观测但不作为安全关键任务，因为 UART/RTT 输出可能阻塞。
 
-The 20 ms application now publishes complete per-motor command snapshots. The
-5 ms motor task exclusively owns mutable motor settings, PID runtime, and CAN
-output. A 100 ms command lease makes the motor task reject stale output even if
-the control task itself no longer runs. INS attitude crosses tasks through
-`INS_Read()`, and required motor/INS health is aggregated into the safety
-manager. See
-`control_ownership_milestone.md` for the command, reset, and output-gate
-contracts.
+## 4. 已建立的运行时约束
 
-BMI088/INS initialization is now bounded, the health task is the sole hardware
-watchdog feeder, embedded syscalls and ELF permissions are repository-owned,
-and formal components are isolated from compatibility drivers. See
-`runtime_hardening_milestone.md` for these contracts and their hardware gates.
+- CAN、UART、设备健康、DJI 电机、EKF、诊断格式化和 FreeRTOS 任务使用静态存储。
+- 设备超时使用单调毫秒截止，不依赖健康任务轮询频率。
+- 正式固件在注册设备前选择延后 CAN/UART dispatch；中断只保留有界数据，5 ms 电机任务解析。
+- ET08、VT、DJI 反馈和 INS 通过一致快照跨任务读取。
+- 20 ms 应用任务发布每个电机的完整命令；5 ms 电机任务独占 PID 运行态和 CAN 输出。
+- 正式组合启用 100 ms 命令租约，即使控制任务卡死，电机任务也会拒绝过期命令。
+- BMI088/INS 初始化总预算 15 s，失败后保持全局输出门关闭。
+- IWDG 只由 5 ms 健康任务且只在所有关键任务健康时喂狗。
+- 新建的 HardFault 路径关中断、保留异常记录，然后等待 IWDG 复位或调试器检查。
 
-## Build baseline
+## 5. 构建基线
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --target app.elf test_infantry_minimal --parallel
 cmake --build build --parallel
 
-cmake -S test/unit -B build-host -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-host
+cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host --parallel
 ctest --test-dir build-host --output-on-failure
 ```
 
-Expected status at this baseline:
+当前期望门禁：
 
-- formal firmware builds;
-- bare-metal comparison firmware builds;
-- all 30 embedded demo/regression firmware targets build;
-- all five native unit-test programs pass;
-- formal firmware RAM usage is 51,216 bytes (39.07%) and Flash usage is 97,452
-  bytes (9.29%) in Debug, including an 8 KiB main-stack reservation and no C
-  heap reservation;
-- the formal image contains no linked C/FreeRTOS heap-allocation or libc
-  formatting symbol;
-- embedded builds complete without libnosys syscall or RWX-segment warnings.
+- 正式 `app.elf` 成功构建；
+- 裸机对照 `test_infantry_minimal` 成功构建；
+- 30 个嵌入式 demo/回归 target 全部成功构建；
+- 5 个主机测试程序全部通过；
+- Debug 正式固件 RAM 51,304 字节（39.14%），Flash 97,772 字节（9.32%）；
+- 8 KiB 主栈预留、0 字节 C 堆预留，并包含一份 `.noinit` HardFault 保留记录；
+- 正式镜像不链入 C/FreeRTOS 堆分配或 libc 格式化符号；
+- 嵌入式构建无 libnosys syscall 警告，ELF LOAD 段无 RWX。
 
-## Hardware acceptance gates
+## 6. 实板验收清单
 
-These items must be recorded on hardware before the FreeRTOS target replaces
-the comparison firmware for tuning:
+在 FreeRTOS 固件取代对照固件并开始调参前，必须记录：
 
-- [ ] cold start remains output-safe during the two-second stabilization delay;
-- [ ] BMI088 absence/motion exits inside the 15-second initialization budget;
-- [ ] VT online/offline transitions stop and recover without output jumps;
-- [ ] ET08 takeover and release match the comparison firmware;
-- [ ] emergency stop disables chassis, gimbal, friction wheels, and loader;
-- [ ] suspending the control task zeros all DJI command slots within 105 ms;
-- [ ] chassis FOLLOW, SEPARATE, and spin behavior match the comparison firmware;
-- [ ] yaw and pitch feedback directions are correct after task separation;
-- [ ] single, double, and continuous fire state transitions are unchanged;
-- [ ] no CAN mailbox saturation occurs with the 5 ms motor task;
-- [ ] task periods and execution times remain bounded for at least 10 minutes;
-- [ ] stack high-water marks leave an agreed safety margin;
-- [ ] no stack-overflow or allocation-failure hook is reached;
-- [ ] critical-task and scheduler stalls produce an IWDG reset without false
-      resets under maximum normal load;
-- [ ] USB initialization completes and its one-shot task terminates;
-- [ ] referee read-only interlocks behave correctly when enabled.
+- [ ] 冷启动两秒稳定期内所有输出保持安全。
+- [ ] BMI088 断开或不断移动时，15 s 内失败退出且执行器不动作。
+- [ ] VT 上线/离线可停止并平滑恢复，ET08 接管/释放与对照固件一致。
+- [ ] 急停同时禁用底盘、云台、摩擦轮和拨弹电机。
+- [ ] 暂停控制任务后，所有 DJI 命令槽在 105 ms 内归零。
+- [ ] 底盘 FOLLOW、SEPARATE 和小陀螺行为与对照固件一致。
+- [ ] yaw/pitch 反馈方向正确，pitch 切换无明显冲击。
+- [ ] 单发、双发和连发状态转换不变。
+- [ ] 5 ms 电机任务下无 CAN 邮箱持续饱和。
+- [ ] 所有任务执行时间和释放间隔在至少 10 分钟运行中有界。
+- [ ] 所有栈 high-water 留有约定安全余量，不进入栈溢出/分配失败 hook。
+- [ ] 分别卡住关键任务和整个调度器时会触发 IWDG 复位，正常极限负载不误复位。
+- [ ] USB 初始化完成后一次性任务正常退出。
+- [ ] 裁判系统启用后，只读限制与功率/热量保护逻辑符合预期。
 
-## Known transitional debt
+## 7. 已知过渡技术债
 
-- Application modules still call runtime motor, input, INS, referee,
-  device-health, platform, and algorithm APIs through a production component
-  set that needs finer per-domain targets.
-- Several components not linked into `app.elf` still provide heap-backed
-  compatibility APIs and cannot be promoted into the formal firmware yet.
-- Module APIs and configuration macros retain some `Minimal*` naming.
-- Public DJI instance fields remain as a compatibility surface for old demos,
-  although the formal application uses only command and measurement snapshots.
-- INS has no independent runtime sensor plausibility/data-ready health deadline
-  beyond task health and first publish.
-- The mutable `g_robot` context is still shared with diagnostic code.
-- The IWDG timeout and fault-injection behavior still require measurement on
-  each physical control board.
-- CubeMX `.ioc` is not yet tracked.
-- the formal main-stack reservation is conservatively 8 KiB until interrupt
-  nesting and startup behavior are measured on hardware;
-- The former `Src/application` implementation has not yet been removed.
+- 正式组件集仍需继续拆分为更窄的算法、服务和设备 target。
+- 未链入 `app.elf` 的多个兼容模块仍提供堆注册 API，不得直接提升到正式固件。
+- 部分模块 API/配置宏仍保留 `Minimal*` 命名。
+- `DJIMotorInstance` 为历史 demo 保留公开可变字段；正式应用已不依赖该路径。
+- INS 在首次发布后尚无独立的传感器合理性/data-ready 运行时截止。
+- `g_robot` 上下文仍与诊断共享。
+- 应用公开头仍间接暴露部分板级生成头，结构已分层但接口未完全纯化。
+- IWDG 实际超时和 fault injection 必须在每块物理控制板上测量。
+- CubeMX `.ioc` 尚未追踪。
+- 正式主栈暂保守预留 8 KiB，需根据中断嵌套与启动实测收紧。
 
-The next ownership slice is runtime INS plausibility and finer device/service
-separation: narrow public headers, protocol/transport boundaries, and removal
-of the remaining inactive heap-backed registrations.
+下一个软件所有权切片是 INS 运行时合理性、更窄的设备/服务 API，以及剩余非活动堆注册路径的移除。

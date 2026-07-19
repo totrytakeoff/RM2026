@@ -1,117 +1,72 @@
-# Deferred communication ingress milestone
+# 延后通信入站里程碑
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-This milestone removes protocol parsing and device-state publication from the
-formal infantry firmware's CAN/UART interrupt path. It does not change PID
-parameters, actuator limits, input arbitration, or control-mode transitions.
+本里程碑将正式步兵固件的 CAN/UART 协议解析与设备状态发布移出中断。
+不改 PID、执行器限幅、输入仲裁和控制模式转换。
 
-## Data flow
+## 1. 数据流
 
 ```text
-CAN/UART interrupt
-    -> copy bounded receive data
+CAN/UART 中断
+    -> 复制有界接收数据
     -> endpoint inbox
-    -> 5 ms motor task dispatch
-    -> protocol validation and parsing
-    -> coherent device snapshot
-    -> control/diagnostic consumer
+    -> 5 ms 电机任务 dispatch
+    -> 协议校验和解析
+    -> 发布一致设备快照
+    -> 控制/诊断消费者
 ```
 
-The existing motor task owns dispatch before `DJIMotorControl()`. This keeps
-motor feedback parsing and PID consumption in one task and makes ingress work
-part of the existing 5 ms execution/deadline monitor instead of introducing an
-unmonitored communication task.
+电机任务在 `DJIMotorControl()` 前 dispatch，使电机反馈解析和 PID 消费位于同一任务。
+入站开销也因此进入已有 5 ms 执行时间/deadline 监测，无需增加未监测的通信任务。
 
-## Inbox contracts
+## 2. Inbox 约定
 
-`platform/common/transport/rm_rx_queue` is a platform-independent,
-caller-storage queue. It never allocates memory. Its single-core ISR producer
-and task consumer are serialized by a short STM32 critical section while the
-consumer copies one retained item.
+`platform/common/transport/rm_rx_queue` 是使用调用方存储的平台无关队列，从不动态分配。
+单核 ISR 生产者和任务消费者只在复制一个保留项时进入短 STM32 临界区。
 
-| Transport | Retention | Overflow policy | Formal dispatch bound |
+| 传输 | 保留策略 | 溢出策略 | 正式 dispatch 上限 |
 | --- | --- | --- | ---: |
-| CAN | one slot per endpoint | replace unconsumed feedback with latest | 16 callbacks / 5 ms |
-| UART | four events per endpoint | discard oldest, retain newest event | 12 callbacks / 5 ms |
+| CAN | 每 endpoint 1 个槽 | 新反馈替换未消费旧反馈 | 16 callbacks / 5 ms |
+| UART | 每 endpoint 4 个事件 | 丢弃最旧、保留最新 | 12 callbacks / 5 ms |
 
-CAN feedback represents current device state, so replaying every 1 kHz motor
-frame would add latency without adding control information. Coalescing leaves
-at most one latest frame per endpoint for each dispatch step. UART retains
-event boundaries because receive-to-idle DMA may deliver partial stream data.
+CAN 反馈表示当前设备状态，回放每个 1 kHz 电机帧只会增加延迟。合并后每个 dispatch 每 endpoint
+最多处理一个最新帧。UART receive-to-idle DMA 可能提供部分流数据，因此保留事件边界。
 
-In deferred UART mode, DMA storage is separate from the callback-visible
-`recv_buff`. The ISR can restart DMA immediately without overwriting bytes that
-the task is parsing. ET08 still requires an exact 25-byte SBUS frame; VT keeps
-its stream reassembly and CRC validation.
+延后 UART 模式中，DMA 存储与回调可见 `recv_buff` 分离。ISR 可立即重启 DMA，不会覆盖任务正在解析的数据。
+ET08 仍要求精确 25 字节 SBUS 帧，VT 仍执行流重组和 CRC 校验。
 
-Queue counters distinguish expected CAN coalescing from rejected input and
-UART event overwrite. `CANGetDispatchStats()` and
-`USARTGetDispatchStats()` expose aggregate counters without formatting or
-logging in interrupt context.
+`CANGetDispatchStats()` 和 `USARTGetDispatchStats()` 提供合并、拒绝和覆写计数，不在中断中格式化日志。
 
-## Compatibility and startup
+## 3. 兼容与启动
 
-Interrupt dispatch remains the default for existing board demos. Firmware that
-wants task-context parsing must call `CANConfigureDispatch()` and
-`USARTConfigureDispatch()` before the first endpoint registration; changing
-mode afterward is rejected.
+历史板级 demo 默认仍在中断中 dispatch。需要任务上下文解析的固件必须在首个 endpoint 注册前调用
+`CANConfigureDispatch()` 和 `USARTConfigureDispatch()`，注册后不允许改模式。
 
-The formal firmware selects deferred mode before `InfantryApp_Init()`. During
-the remaining startup sequence, CAN retains the latest feedback and UART
-retains the newest four receive events. This prevents stale, unbounded startup
-backlogs while still allowing DMA and CAN reception to begin before the
-scheduler.
+正式固件在 `InfantryApp_Init()` 前选择延后模式。剩余启动期间，CAN 保留最新反馈，UART 保留最新四个事件，
+避免调度器启动前累积无界旧数据。
 
-## Coherent device reads
+## 4. 一致设备读取
 
-Deferred parsing alone does not make task-to-task state access safe. The formal
-application therefore no longer reads live ET08, VT, or DJI structures:
+延后解析不等于跨任务数据自动安全。正式应用不再直接读取可变 ET08、VT 或 DJI 实例：
 
-- `ET08_Read()` copies a protected control snapshot and confirms health before
-  and after the copy;
-- `VT_Read()` applies the same contract to CRC-validated VT state;
-- `DJIMotorGetMeasure()` copies encoder, speed, current, and temperature as one
-  protected feedback snapshot;
-- DJI decoding builds the next state locally and publishes it in one short
-  critical section;
-- the first valid DJI feedback frame establishes the encoder baseline instead
-  of being interpreted as a wrap relative to the zero-initialized structure.
+- `ET08_Read()` 在保护下复制控制快照，并在复制前后确认链路健康。
+- `VT_Read()` 对 CRC 校验后的 VT 状态使用同样约定。
+- `DJIMotorGetMeasure()` 一次复制编码器、速度、电流和温度。
+- DJI 解码先在局部构建新状态，再用一个短临界区发布。
+- 首个有效 DJI 反馈帧建立编码器基线，不会相对全零结构误判回绕。
 
-Legacy live-view getters remain for comparison demos, but new concurrent
-firmware must use snapshot APIs.
+历史 live-view getter 只为单循环对照 demo 保留，新并发固件必须使用快照 API。
 
-## Verification baseline
+## 5. 验证与历史数据
 
-The native suite now contains four programs. The receive-queue test covers FIFO
-order, index wrap, newest-data overflow, single-slot coalescing, rejected input,
-and destination-capacity failure. The existing safety, device-health, and
-formatter tests remain unchanged.
+主机接收队列测试覆盖 FIFO 顺序、索引回绕、保留最新溢出、单槽合并、无效输入与目标容量不足。
 
-In Debug, the formal image uses 50,696 bytes RAM (38.68% of 128 KiB) and 95,028
-bytes Flash (9.06% of 1 MiB). The additional RAM is fixed UART DMA/event inbox
-storage; no heap reservation was reintroduced. The linked-symbol guard still
-reports no C/FreeRTOS allocation, `_sbrk`, `snprintf`, or `vsnprintf` symbol.
+2026-07-16 该里程碑建立时，Debug 正式镜像使用 RAM 50,696 字节、Flash 95,028 字节；
+增量 RAM 是固定 UART DMA/事件 inbox，没有恢复堆预留。当前数据以
+[步兵 FreeRTOS 迁移基线](infantry_freertos_baseline.md)为准。
 
-Compilation and host tests cannot validate interrupt timing or bus behavior.
-Hardware acceptance still requires CAN-load measurement, UART burst/partial
-frame injection, link-loss recovery, task execution-time observation, and a
-long-running soak test.
+编译和主机测试不能代替中断时序、总线负载、UART burst/部分帧注入、断链恢复和长时间 soak 验收。
 
-## Remaining ownership debt
-
-Motor command fields and PID runtime are still shared between the 20 ms control
-task and 5 ms motor task through transitional mutable motor objects. INS
-attitude is likewise published as a live structure. These are the next
-ownership boundaries to replace with command/state snapshots; this milestone
-only claims coherent communication feedback ingress.
-
-Device initialization results and individual motor-health deadlines are not yet
-aggregated into the top-level safety manager. A missing actuator therefore
-stays locally stopped, but does not yet force a robot-wide initialization or
-runtime fault. That aggregation is required before the framework can claim
-whole-robot device-fault containment.
-
-This historical debt was closed by `control_ownership_milestone.md`, which adds
-complete motor-command mailboxes, task-owned PID runtime, INS snapshots,
-initialization results, and whole-robot required-device fault aggregation.
+本里程碑当时留下的电机命令/PID/INS 所有权债务已由
+[控制所有权与设备故障包络里程碑](control_ownership_milestone.md)关闭。

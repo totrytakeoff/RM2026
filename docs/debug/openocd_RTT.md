@@ -1,10 +1,12 @@
 # OpenOCD RTT 一键日志（推荐）
 
+文档更新日期：2026-07-19
+
 ## 推荐用法（一条命令）
 
 ```bash
-cd /home/myself/workspace/RM2026
-./script/log.sh
+cd /path/to/RM2026
+./scripts/log.sh
 ```
 
 默认行为：
@@ -16,10 +18,10 @@ cd /home/myself/workspace/RM2026
 ## 常用参数
 
 ```bash
-./script/log.sh --cfg config/openocd/openocd_dap.cfg
-./script/log.sh --reset-run 0
-./script/log.sh --rtt-port 19021 --channel 0
-./script/log.sh --keep-openocd
+./scripts/log.sh --cfg platform/boards/infantry_f407/openocd/openocd_dap.cfg
+./scripts/log.sh --reset-run 0
+./scripts/log.sh --rtt-port 19021 --channel 0
+./scripts/log.sh --keep-openocd
 ```
 
 ## 串口资源规范
@@ -48,7 +50,7 @@ cmake -B build -S . -DBSP_LOG_USE_UART=1 -DBSP_LOG_UART_PORT=1
 1. 启动 OpenOCD：
 
 ```bash
-openocd -f config/openocd/openocd_dap.cfg
+openocd -f platform/boards/infantry_f407/openocd/openocd_dap.cfg
 ```
 
 2. 连接 telnet 并执行：

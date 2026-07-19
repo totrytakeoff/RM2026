@@ -1,19 +1,18 @@
-# Third-party notices
+# 第三方来源与许可说明
 
-This repository contains third-party code under its respective licenses.
-Copyright notices embedded in vendor source files remain authoritative.
+文档更新日期：2026-07-19
 
-## YueLu basic_framework
+本仓库包含按各自许可证分发的第三方代码。第三方源文件中保留的版权和
+许可声明具有最终效力。
 
-Portions of the transitional BSP and robot modules originate from the YueLu
-team open-source `basic_framework`. The referenced upstream distribution
-contains the following MIT license:
+## 跃鹿战队 basic_framework
 
-Historical headers in the PID, CAN communication, DJI motor, motor-definition,
-and remote-control sources also carried the notice
-`Copyright (c) 2022 HNU YueLu EC all rights reserved`. Those source-level team
-labels are consolidated here so ordinary repository-owned APIs and narration
-remain origin-neutral without dropping the upstream attribution.
+部分早期 BSP 与机器人模块来源于跃鹿战队开源 `basic_framework`。所参考的
+上游发行版包含下列 MIT 许可文本；为避免法律文本语义偏差，此处保留英文原文。
+
+历史 PID、CAN 通信、DJI 电机、电机定义和遥控源文件头中还曾包含
+`Copyright (c) 2022 HNU YueLu EC all rights reserved`。相关战队标识统一在本文档
+说明，使普通项目 API 和叙事保持中性，同时不丢失上游归属。
 
 ```text
 MIT License
@@ -39,5 +38,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-STM32 HAL, CMSIS, FreeRTOS, STM32 USB Device, CMSIS-DSP, and SEGGER sources are
-kept under `third_party/` with their own authoritative license notices.
+STM32 HAL、CMSIS、FreeRTOS、STM32 USB Device、CMSIS-DSP 和 SEGGER 源码位于
+`third_party/`，并保留各自具有最终效力的许可声明。

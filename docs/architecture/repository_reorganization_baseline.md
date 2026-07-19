@@ -1,79 +1,61 @@
-# RM2026 repository reorganization baseline
+# RM2026 仓库重组基线
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-Status: approved implementation baseline
+状态：顶层所有权收口已完成；API 细分、兼容模块清理与实板验收继续进行。
 
-## Objective
+## 1. 目标
 
-The repository will stop treating vendor code, platform adapters, reusable
-robot components, application behavior, and firmware composition as one
-framework library. The final source tree must have explicit ownership and an
-acyclic dependency direction while preserving the proven infantry behavior
-during migration.
+仓库不再把第三方代码、板级生成代码、平台适配、可复用组件、机器人行为和
+固件组合当成一个“框架大库”。最终要达成：
 
-The migration has three product goals:
+1. 将裸机对照固件中已验证的步兵逻辑迁入稳定、可观测的 FreeRTOS 固件。
+2. 建立仓库自有的路径、target、API、命名、测试和文档叙事。
+3. 在开始控制参数优化前，建立可量化的安全、时序、内存和实板验收门禁。
+4. 结构迁移期间不调 PID、执行器限幅、方向和模式转换逻辑。
 
-1. Move the stable infantry behavior from the comparison demo into a reliable
-   FreeRTOS firmware without retuning control behavior during structural work.
-2. Replace the former upstream-shaped library wrapper with repository-owned
-   targets, APIs, naming, tests, and documentation.
-3. Establish measurable safety, timing, memory, and hardware acceptance gates
-   before control optimization begins.
+## 2. 历史问题
 
-## Current baseline
+重组前主要问题包括：
 
-Before this reorganization:
+- 上游风格的大目录同时混合 CMSIS、STM32 HAL、FreeRTOS、USB、DSP、BSP、算法、
+  设备驱动和服务。
+- 递归源码/头文件搜索使内部实现全局可见，无法判断正式固件真正依赖哪些模块。
+- 应用头文件暴露 `main.h` 和 HAL handle，算法头文件暴露 HAL/RTOS/DWT 实现细节。
+- 正式 `app.elf` 需要链接组处理静态库循环依赖。
+- FreeRTOS 虽禁用动态分配，但多个注册和算法路径仍使用 C 堆。
+- 设备超时以健康任务调用次数表达，任务周期会改变真实超时时间。
+- 中断中执行协议解析和高层状态发布，缺少有界入站队列。
+- 顶层 `Inc`、`Src`、`hal`、`system`、`application`、`test`、`script` 和 `config` 所有权混乱。
 
-- `lib/HNUYueLuRM` mixes CMSIS, STM32 HAL, FreeRTOS, USB Device, CMSIS-DSP,
-  SEGGER RTT, BSP code, algorithms, device drivers, services, and unused
-  experimental modules in one 63 MB tree.
-- Recursive source discovery compiles every BSP and module into broad archives,
-  while recursive public include paths make internal headers globally visible.
-- `app.elf` requires linker groups because CMake dependencies are cyclic.
-- The formal firmware actually pulls only 15 robot module objects and four BSP
-  objects from those broad archives.
-- FreeRTOS dynamic allocation is disabled, but CAN, UART, device-health, motor,
-  math, and Kalman initialization still use the C library heap.
-- Device timeouts are expressed as health-task invocation counts. Changing the
-  health task period therefore changes timeout behavior.
-- INS directly publishes vision data, which pulls the vision protocol, CRC, and
-  UART stack into the attitude path.
-- Application headers expose HAL handles through `main.h`, while algorithm
-  headers expose HAL, RTOS, DWT, and CMSIS-DSP implementation details.
-- `Src/application` is obsolete and excluded from the formal build but remains
-  in the working tree.
-- The embedded test tree contains 30 board-level/demo targets and roughly
-  20,000 lines of test entry-point code, most of which link broad framework
-  archives instead of exact dependencies.
+## 3. 2026-07-19 结构收口结果
 
-The safety/health migration milestone is commit `935e25d`. At that point:
+已完成：
 
-- host safety tests pass;
-- formal `app.elf`, `test_infantry_minimal`, and all embedded targets build;
-- formal firmware uses 68,624 bytes RAM and 88,312 bytes flash in Debug;
-- hardware validation is still pending;
-- existing newlib syscall and RWX linker warnings remain known debt.
+- 删除废弃 `Src/application`，其历史仍可从 Git 追溯。
+- 顶层 `Inc`、`Src`、`hal`、`system`、`application`、`test`、`script` 和 `config` 已消失。
+- CubeMX 生成源、板级头、启动、链接、OpenOCD 和 HardFault 保留逻辑归属
+  `platform/boards/infantry_f407`。
+- 正式入口、FreeRTOS 任务/hooks 和固件组合归属 `firmware/infantry_f407`。
+- 机器人行为、板级测试、主机测试和工具入口分别收口到
+  `applications`、`tests/firmware`、`tests/host` 和 `scripts`。
+- 删除未引用的 `minimal_config1.h` 与 `test_imu` 板级配置副本；备用底盘接线测试
+  改用语义化名称 `infantry_chassis_gimbal_et08_alt_wiring_demo`。
+- GitHub Actions 主机测试入口已同步为 `tests/host`，与本地验证命令一致。
+- `HAL_Lib`、`HAL_IRQ` 和 `rm_system_freertos` 已替换为仓库自有 target。
+- CMake 正式烧录/校验改用 `BIN + 0x08000000`；HEX/ELF 默认使用镜像内地址。
+- HardFault 不再错误返回，而是保留异常栈帧和 SCB 故障寄存器到 `.noinit`。
+- 正式路径使用静态任务和静态容量，链接后自动审计堆/格式化符号与 ELF 段权限。
 
-The subsequent structural milestone removed the former framework wrapper and
-moved owned platform/components plus external vendors into their current
-layers. The platform-runtime milestone then established monotonic time,
-millisecond device deadlines, fixed CAN/UART/device-health/DJI storage, a
-caller-owned EKF workspace, and heap-free formal diagnostics. The deferred
-ingress milestone moved formal protocol parsing out of interrupts and added
-coherent ET08/VT/DJI read snapshots. The control-ownership milestone then added
-complete motor-command mailboxes, task-owned PID runtime, INS snapshots, and
-required-device fault containment, including an infantry-composition 100 ms
-command lease. At the current baseline:
+当前 Debug 正式镜像：
 
-- all five native tests, all 30 embedded test targets, and formal `app.elf`
-  build successfully;
-- formal firmware uses 51,240 bytes RAM and 96,868 bytes Flash in Debug;
-- formal `app.elf` has no linked heap-allocation or libc-formatting symbol;
-- team-origin narration is limited to provenance/license documentation;
-- hardware validation and inactive-component cleanup remain pending.
+- RAM：51,304 字节（39.14%）；
+- Flash：97,772 字节（9.32%）；
+- 主栈预留：8 KiB；
+- C 堆预留：0 字节；
+- 额外保留 HardFault 记录，看门狗复位后仍可用调试器读取。
 
-## Target dependency direction
+## 4. 依赖方向
 
 ```text
 applications ------> components/devices ------> platform ------> third_party
@@ -83,177 +65,82 @@ applications ------> components/devices ------> platform ------> third_party
 firmware ------> applications + components + platform + FreeRTOS
 ```
 
-Rules:
+规则：
 
-- `third_party` contains unmodified external dependencies and never depends on
-  repository-owned code.
-- `platform` owns MCU and board adaptation and depends only on third-party code.
-- `components` contains reusable algorithms, services, and device drivers and
-  never depends on a robot application.
-- `applications` contains robot behavior and must not include HAL, FreeRTOS, or
-  CMSIS-OS headers.
-- `firmware` owns task creation, board binding, interrupt/runtime composition,
-  and the executable entry point.
-- Control-path objects use caller-owned storage or fixed static capacity. No
-  runtime heap allocation is permitted in competition firmware.
-- Timeouts use absolute time units and monotonic timestamps, never scheduler
-  invocation counts.
-- Interrupt handlers copy bounded data and publish events; they do not block,
-  format logs, or execute high-level robot behavior.
+- `third_party` 只保存外部依赖；STM32 HAL 编译期只注入当前板级的 HAL 配置头。
+- `platform` 负责 MCU 和板级适配，不得依赖机器人应用。
+- `components` 保存可复用算法、服务和设备，不得依赖具体机器人应用。
+- `applications` 只描述机器人行为，目标是不直接暴露 HAL、FreeRTOS 和 CMSIS-OS。
+- `firmware` 负责任务创建、板级绑定、中断/运行时组合和可执行入口。
+- 正式控制路径只使用调用方存储或固定静态容量，禁止运行时动态分配。
+- 超时使用单调时间戳和绝对时间单位，不使用调度调用次数。
+- 中断只复制有界数据并发布事件，不阻塞、不格式化日志、不执行高层行为。
 
-## Target repository layout
+## 5. 当前目录基线
 
 ```text
 RM2026/
-|-- applications/
-|   `-- infantry/
-|       |-- include/rm/app/infantry/
-|       |-- src/
-|       |-- command/
-|       |-- chassis/
-|       |-- gimbal/
-|       |-- shooter/
-|       |-- referee/
-|       `-- config/
+|-- applications/infantry/
 |-- components/
 |   |-- algorithms/
-|   |   |-- math/
-|   |   |-- pid/
-|   |   |-- filters/
-|   |   |-- quaternion_ekf/
-|   |   `-- checksum/
 |   |-- devices/
-|   |   |-- motor/{dji,dm}/
-|   |   |-- imu/{bmi088,dm,ins}/
-|   |   |-- remote/{et08,vt}/
-|   |   |-- referee/
-|   |   `-- vision/
 |   `-- services/
-|       |-- safety/
-|       |-- device_health/
-|       `-- log/
 |-- platform/
-|   |-- stm32f4/{can,uart,spi,time,usb,log_backends}/
-|   `-- boards/infantry_f407/{include,generated,startup,linker}/
-|-- firmware/
-|   `-- infantry_f407/{config,freertos}/
+|   |-- common/
+|   |-- stm32f4/
+|   `-- boards/infantry_f407/
+|       |-- include/
+|       |-- generated/
+|       |-- startup/
+|       |-- linker/
+|       |-- openocd/
+|       `-- fault/
+|-- firmware/infantry_f407/
+|   `-- freertos/
 |-- third_party/
-|   |-- cmsis/
-|   |-- cmsis_dsp/
-|   |-- stm32f4xx_hal/
-|   |-- freertos_kernel/
-|   |-- stm32_usb_device/
-|   `-- segger_rtt/
 |-- tests/
-|   |-- host/{algorithms,protocols,services}/
-|   `-- firmware/{bringup,regression,experiments}/
-|-- cmake/{toolchains,modules}/
+|   |-- host/
+|   `-- firmware/{basic,hero,infantry,leg}/
+|-- cmake/
 |-- docs/
 |-- scripts/
 `-- tools/
 ```
 
-The final tree does not contain top-level `lib`, `hal`, `Inc`, `Src`, `system`,
-`services`, `test`, or `config/linker` directories. Their owned content moves
-to the layers above; obsolete content is removed and remains recoverable from
-Git history.
+## 6. 源码所有权映射
 
-## Source ownership mapping
-
-| Current source | Final ownership |
+| 内容 | 归属 |
 | --- | --- |
-| CMSIS and STM32 HAL | `third_party` |
-| FreeRTOS, USB Device, CMSIS-DSP, SEGGER RTT | `third_party` |
-| CAN, UART, SPI, DWT, USB platform adapters | `platform/stm32f4` |
-| CubeMX-generated board files, startup, linker script | `platform/boards/infantry_f407` |
-| Scalar/vector math, PID, Kalman, quaternion EKF, checksums | `components/algorithms` |
-| Safety, device health, logging facade | `components/services` |
-| DJI/DM motors, BMI088/DM IMU, INS, ET08, VT, referee, vision | `components/devices` |
-| Stable infantry control behavior | `applications/infantry` |
-| FreeRTOS tasks and executable composition | `firmware/infantry_f407` |
-| Board bring-up and behavior comparison images | `tests/firmware` |
-| Pure algorithms, protocols, and state machines | `tests/host` |
+| CMSIS、STM32 HAL、FreeRTOS、USB Device、CMSIS-DSP、SEGGER RTT | `third_party` |
+| CAN/UART/SPI/DWT/USB/时间/看门狗适配 | `platform/stm32f4` |
+| CubeMX 生成源、板级头、启动、链接、OpenOCD、fault capture | `platform/boards/infantry_f407` |
+| 数学、PID、滤波、四元数 EKF、校验 | `components/algorithms` |
+| 安全、设备健康、消息/传输服务 | `components/services` |
+| 电机、IMU/INS、遥控、裁判、视觉 | `components/devices` |
+| 步兵行为 | `applications/infantry` |
+| FreeRTOS 任务与正式固件组合 | `firmware/infantry_f407` |
+| 板级 bring-up、对照、回归固件 | `tests/firmware` |
+| 纯算法、协议和状态机测试 | `tests/host` |
 
-Modules with no production or test consumer are not promoted into the active
-framework. They are audited against planned hardware, then removed unless an
-owner, target, and verification path are assigned.
+无正式消费者也无测试消费者的模块不进入正式框架。必须为其明确指定负责人、target
+和验证路径，否则在兼容清理阶段移除。
 
-## Naming and public API policy
+## 7. 命名与 CMake 规则
 
-- Files use `snake_case.c` and `snake_case.h`.
-- Public C types use `RmXxx`.
-- Public functions use `RmXxx_Action`.
-- Public macros use `RM_XXX`.
-- CMake implementation targets use `rm_xxx` and aliases use `RM::xxx`.
-- Public headers use namespaced paths such as `<rm/device/dji_motor.h>`.
-- Ambiguous names such as `user_lib`, `daemon`, `general_def`, and broad
-  `framework` archives are removed.
-- Team-origin naming is removed from paths, targets, public APIs, and ordinary
-  project narration. Required copyright/license notices remain authoritative;
-  provenance is documented in `THIRD_PARTY_NOTICES.md`.
+- 新 C 文件使用 `snake_case.c/.h`。
+- 公开类型使用 `RmXxx`，公开函数使用 `RmXxx_Action`，公开宏使用 `RM_XXX`。
+- CMake 实现 target 使用 `rm_xxx`，alias 使用 `RM::xxx`。
+- 每个维护中的 target 显式列出源码，禁止 `GLOB_RECURSE`。
+- 依赖默认 `PRIVATE`；只在公开头实际暴露依赖时使用 `PUBLIC`。
+- 主机构建与 ARM 交叉构建必须使用独立构建树。
+- 来源战队命名不出现在普通路径、target、API 和项目叙事中；归属只在
+  `THIRD_PARTY_NOTICES.md` 和必要架构历史中保留。
 
-## CMake policy
-
-- Every maintained component has its own target and explicit source list.
-- Recursive source and include discovery is removed.
-- Dependencies are `PRIVATE` unless a public header exposes the dependency.
-- `app.elf` eventually links only `RM::firmware_infantry`.
-- Linker groups are removed after dependency cycles are eliminated.
-- Host and ARM builds use separate presets/toolchains.
-- Third-party targets do not inherit repository-owned strict warning policy.
-- Each test links only the components it verifies.
-
-## Migration sequence
-
-### 1. Structural ownership
-
-- Move vendor sources into `third_party` and create vendor targets.
-- Move BSP, modules, services, and DM code into their target ownership roots.
-- Replace all former framework target names and include paths.
-- Preserve behavior while eliminating the old wrapper directory.
-
-### 2. Platform runtime
-
-- Replace heap-backed CAN/UART registration with caller-owned or fixed storage.
-- Introduce a monotonic integer time API.
-- Split log facade from RTT/UART backends.
-- Replace invocation-count health checks with timestamp deadlines.
-
-### 3. Portable algorithms
-
-- Split `user_lib` into focused math/vector utilities.
-- Pass `dt_s` explicitly to PID updates.
-- Give Kalman/EKF caller-owned workspaces.
-- Remove HAL/RTOS includes from algorithm public headers.
-- Add host tests before switching application consumers.
-
-### 4. Device components
-
-- Migrate device health, DJI motor, ET08/VT, BMI088/INS, referee, DM devices,
-  and vision in dependency order.
-- Separate protocol parsing from transport adapters.
-- Remove vision publication from INS.
-
-### 5. Application and firmware closure
-
-- Split control parameters, task policy, and board mapping.
-- Remove HAL and RTOS dependencies from the infantry application.
-- Move all task/runtime composition into the concrete firmware target.
-- Remove obsolete CubeMX-era and comparison implementations.
-
-### 6. Test and final cleanup
-
-- Organize host, bring-up, regression, and experimental tests explicitly.
-- Consolidate duplicate demos and remove recursive CMake discovery.
-- Remove compatibility targets, paths, headers, and unused modules.
-
-## Per-milestone gates
-
-Every structural milestone must pass:
+## 8. 验证命令
 
 ```bash
-cmake -S test/unit -B build-host -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-host
+cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host --parallel
 ctest --test-dir build-host --output-on-failure
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -261,18 +148,20 @@ cmake --build build --target app.elf test_infantry_minimal --parallel
 cmake --build build --parallel
 ```
 
-It must also record formal RAM/flash usage, preserve control parameters and
-execution order unless explicitly scoped otherwise, and leave a clean Git
-worktree after a focused commit.
+每次结构修改还必须：
 
-## Final acceptance
+- 记录正式镜像 RAM/Flash；
+- 通过堆/格式化符号和 ELF 非 RWX 审计；
+- 保持控制参数和执行顺序，除非任务明确授权改变；
+- 更新当前日期的中文基线记录。
 
-- Former framework directories and CMake target names are absent.
-- `app.elf` has no `malloc`, `calloc`, `free`, or `pvPortMalloc` reference.
-- Application sources do not include HAL, FreeRTOS, or CMSIS-OS headers.
-- `app.elf` does not require linker groups.
-- Host safety, algorithms, and protocol tests pass.
-- Formal, comparison, and supported bring-up firmware targets build.
-- Input loss, emergency stop, and task-health faults stop every actuator.
-- Hardware runs record bounded task timing, adequate stack margin, and no CAN
-  mailbox saturation for the agreed soak duration.
+## 9. 未完成验收
+
+- [ ] 应用公开头不再暴露 HAL/FreeRTOS/CMSIS-OS。
+- [ ] `app.elf` 不再需要链接组。
+- [ ] 拆分 `rm_components_runtime`，移除不再支持的兼容驱动和重复 demo。
+- [ ] 建立 INS 运行时 data-ready/合理性健康截止。
+- [ ] 实板验证输入丢失、急停、任务故障和设备故障会关闭所有执行器。
+- [ ] 实板记录任务最大执行时间、释放间隔、栈余量、CAN 邮箱压力与长时间运行结果。
+
+上述项完成前，当前代码是“可编译、可进入实板验收”的迁移基线，不是已完成赛场验收的最终固件。

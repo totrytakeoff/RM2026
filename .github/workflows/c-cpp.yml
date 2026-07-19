@@ -19,7 +19,7 @@ jobs:
           arm-none-eabi-gcc --version
 
       - name: Configure host unit tests
-        run: cmake -S test/unit -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S tests/host -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Debug
 
       - name: Run host unit tests
         run: |

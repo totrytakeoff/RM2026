@@ -1,177 +1,107 @@
-# Control ownership and device-fault containment milestone
+# 控制所有权与设备故障包络里程碑
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-This milestone closes the command/PID/INS ownership debt left after deferred
-communication ingress. It preserves the infantry control parameters and state
-transitions, but changes how data crosses the 1 ms, 5 ms, and 20 ms task
-boundaries.
+本里程碑关闭延后通信入站后剩余的命令、PID 和 INS 所有权问题。它保持步兵控制参数和状态转换，
+只改变数据如何跨越 1 ms、5 ms 和 20 ms 任务边界。
 
-## Runtime ownership
+## 1. 运行时所有权
 
 ```text
-1 ms INS task
-    -> solve attitude
-    -> publish protected attitude snapshot
+1 ms INS 任务
+    -> 解算姿态
+    -> 发布受保护姿态快照
 
-20 ms control task
-    -> read input, referee, motor-measurement, and attitude snapshots
-    -> calculate chassis/gimbal/shooter behavior
-    -> atomically publish one complete command per motor
+20 ms 控制任务
+    -> 读取输入、裁判、电机测量和姿态快照
+    -> 计算底盘/云台/发射行为
+    -> 原子发布每个电机的完整命令
 
-5 ms motor task
-    -> dispatch retained CAN/UART ingress
-    -> refresh gimbal's high-rate IMU feedback snapshot
-    -> consume motor commands
-    -> reject commands older than the configured lease
-    -> own PID runtime and motor settings
-    -> apply local/global safety gates
-    -> transmit grouped CAN current commands
+5 ms 电机任务
+    -> dispatch 保留的 CAN/UART 入站
+    -> 更新云台高频 IMU 反馈快照
+    -> 消费电机命令并拒绝过期命令
+    -> 独占 PID 运行态和电机 settings
+    -> 应用局部/全局安全门
+    -> 发送分组 CAN 电流命令
 ```
 
-The formal application's 20 ms path no longer writes `motor_settings`,
-`motor_controller`, `stop_flag`, or any `PIDInstance` runtime field. Those
-objects are now updated only inside `DJIMotorControl()`.
+正式应用的 20 ms 路径不再直接改写 `motor_settings`、`motor_controller`、`stop_flag`
+或任何 `PIDInstance` 运行字段；这些对象只在 `DJIMotorControl()` 中更新。
 
-## Motor command contract
+## 2. 电机命令约定
 
-Every fixed-storage `DJIMotorInstance` contains a `DJIMotorCommand` mailbox. A
-command carries the complete persistent state needed for one motor:
+每个固定存储 `DJIMotorInstance` 含一个 `DJIMotorCommand` mailbox。一份命令包含单个电机所需的完整持久状态：
 
-- reference value;
-- outer-loop and feedback-source settings;
-- enabled/stopped state;
-- optional value-based external feedback or feedforward inputs;
-- an edge-triggered PID reset mask.
+- 参考值；
+- 外环、反馈源和控制设置；
+- 启用/停止状态；
+- 可选数值外部反馈或前馈；
+- 边沿触发 PID reset 掩码。
 
-`DJIMotorPublishCommand()` copies the persistent command in one short critical
-section. PID reset bits are OR-latched separately so that a second publication
-cannot erase an unconsumed reset request. `DJIMotorControl()` copies the command,
-clears the latched reset bits, and then applies it to the private runtime
-objects.
+`DJIMotorPublishCommand()` 在一个短临界区中复制完整持久命令。PID reset 位单独 OR 锁存，
+新命令不会覆盖尚未消费的 reset 请求。`DJIMotorControl()` 复制命令、清除已消费 reset 位，
+然后应用到私有运行对象。
 
-`PIDReset()` is now an algorithm API that clears measurement, error, integral,
-derivative, output, timing, and error-handler history while preserving gains,
-limits, filters, and improvement flags. Mode changes request resets through the
-mailbox instead of modifying a live PID from the control task.
+`PIDReset()` 清除测量、误差、积分、微分、输出、计时和错误处理历史，保留增益、限幅、滤波和改进标志。
+模式切换通过 mailbox 请求 reset，不从控制任务直接改可变 PID。
 
-The legacy setters remain source-compatible for board demos. They now update
-the same mailbox under a critical section. They are compatibility operations,
-not a multi-field transaction; new concurrent application code must use the
-complete-command API. The command-age check is disabled by default for those
-legacy demos and enabled explicitly by the formal infantry composition.
+历史 setter 为 demo 保持源兼容，但它们不是多字段事务。新并发应用必须使用完整命令 API。
 
-Every successful full-command publication records the same coherent monotonic
-timestamp as its mailbox contents. The formal application publishes at 20 ms
-and configures a 100 ms lease. If the control task stops running, the 5 ms motor
-task rejects all stale commands after five missed application periods even
-though the last command was enabled and the robot-wide gate remains open. An
-expired generation stays latched off until a newer command is published, so a
-32-bit millisecond-clock wrap cannot revive an old command.
+每次完整命令发布与 mailbox 内容一起记录同一个单调时间戳。正式应用每 20 ms 发布，租约 100 ms。
+控制任务停止后，5 ms 电机任务在五个应用周期后拒绝过期命令。过期 generation 保持锁止到更新命令到达，
+避免毫秒时钟回绕让旧命令重新生效。
 
-## Output containment
+## 3. 输出包络
 
-A DJI motor produces nonzero CAN output only when all four conditions are true:
+DJI 电机只有在下列四个条件全部成立时才能产生非零 CAN 输出：
 
-1. its consumed command is enabled;
-2. the robot-wide atomic output gate is enabled;
-3. its own feedback daemon is online and at least one valid frame was decoded;
-4. its command is inside the configured age lease.
+1. 已消费命令处于 enabled；
+2. 机器人全局原子输出门已开；
+3. 该电机反馈 daemon 在线且至少解码过一个有效帧；
+4. 命令在配置租约内。
 
-The 20 ms safety path closes the robot-wide gate before publishing module stop
-commands. On recovery it publishes the complete gimbal, chassis, and shooter
-command set before reopening the gate. Independently, the 5 ms motor task zeros
-an individual motor as soon as that motor's 20 ms feedback deadline expires,
-without waiting for the next high-level safety evaluation. It likewise zeros
-stale commands without depending on the stalled control task to observe its
-own heartbeat fault.
+20 ms 安全路径在发布模块停止命令前先关闭全局门。恢复时先发布云台、底盘和发射的完整命令集，
+再重新开门。5 ms 电机任务在单个电机 20 ms 反馈截止过期后立即归零对应槽，不等待高层评估。
 
-PID runtime is reset on output disable/enable transitions. A stopped or offline
-motor does not continue integrating an invisible command and therefore cannot
-resume with accumulated PID history.
+PID 在输出禁用/启用边沿 reset，停止或离线电机不会积累隐形积分并在恢复时冲击。
 
-## INS snapshot contract
+## 4. INS 快照约定
 
-`INS_Task()` now builds and publishes a complete `attitude_t` snapshot after
-each EKF update. `INS_Read()` copies that snapshot under the same short
-single-core critical-section contract used by other formal device snapshots.
-`INS_IsReady()` becomes true only after the first complete solution.
+`INS_Task()` 每次 EKF 更新后发布完整 `attitude_t`。`INS_Read()` 使用与其他正式设备相同的短临界区复制快照。
+`INS_IsReady()` 只在首个完整解算发布后为真。
 
-The formal gimbal no longer retains or reads the mutable INS implementation
-object. The 20 ms behavior path uses `INS_Read()`. The 5 ms motor stage also
-copies the newest INS result into three gimbal feedback scalars that are written
-and consumed only inside the motor task. This preserves the previous 200 Hz
-motor-loop access to yaw angle, yaw rate, and pitch rate instead of reducing IMU
-feedback to the 50 Hz application rate.
+20 ms 云台行为通过 `INS_Read()` 读取，不保留可变 INS 实现指针。5 ms 电机阶段也将最新 INS 结果复制到
+仅电机任务写/读的 yaw angle、yaw rate 和 pitch rate 反馈标量，保留 200 Hz 电机环带宽。
 
-`INS_Init()` still returns a pointer to the published snapshot for source
-compatibility with older single-loop demos. Concurrent firmware must use
-`INS_Read()`.
+历史 `INS_Init()` 返回指针只为单循环 demo 源兼容，并发固件必须使用 `INS_Read()`。
 
-## Initialization and device health
+## 5. 初始化与设备健康
 
-The infantry input, chassis, gimbal, shooter, and top-level application
-initializers now report success. The formal firmware refuses to create tasks
-when a required input endpoint, motor endpoint, motor health deadline, or INS
-instance cannot be initialized.
+输入、底盘、云台、发射和顶层应用初始化均返回成功/失败。任一必需输入 endpoint、电机 endpoint、
+电机健康截止或 INS 实例初始化失败时，正式固件拒绝创建运行时任务。
 
-At runtime, the safety manager receives a separate `device_health_ok` input and
-reports `RM_SAFETY_REASON_DEVICE_UNHEALTHY`. The formal aggregate covers:
+运行时安全管理器单独接收 `device_health_ok` 并报告 `RM_SAFETY_REASON_DEVICE_UNHEALTHY`。
+正式汇总覆盖四个底盘电机、yaw/pitch 电机与首个 INS 解算、两个摩擦轮与拨弹电机。
+输入离线和任务不健康分别保留为独立原因，同时故障不会被压成一个布尔量。
 
-- all four chassis motors;
-- yaw and pitch motors plus the first valid INS solution;
-- both friction motors and the loader motor.
+## 6. 验证与历史数据
 
-Input link health remains a distinct `INPUT_OFFLINE` reason. Scheduler timing
-and stack health remain a distinct `TASK_UNHEALTHY` reason, so simultaneous
-faults remain observable rather than being collapsed into one boolean.
+主机 PID 测试确认 reset 清除所有运行字段但保留控制器配置；安全测试覆盖独立设备故障和自动恢复。
 
-## Verification baseline
+2026-07-16 该里程碑建立时，Debug 正式镜像使用 RAM 51,240 字节、Flash 96,868 字节；
+相对前一基线的 544 字节 RAM 增量全部是固定命令和租约状态。当前数据以
+[步兵 FreeRTOS 迁移基线](infantry_freertos_baseline.md)为准。
 
-The native suite contains five strict-warning programs. In addition to safety,
-device-health, formatting, and retained-ingress tests, the PID test verifies
-that runtime reset clears every state field while preserving controller
-configuration. The safety test covers an isolated device fault and automatic
-recovery.
+实板必须验证：单电机断反馈的 5 ms 局部归零、全局 `DEVICE_UNHEALTHY`、恢复无 PID 冲击、
+yaw/pitch 反馈方向与带宽、pitch 模式切换平滑性、全局急停、控制任务暂停后 105 ms 内归零，
+以及增加快照复制后的任务执行时间/栈余量。
 
-The following build set passes:
+## 7. 剩余所有权技术债
 
-- formal FreeRTOS `app.elf`;
-- bare-metal `test_infantry_minimal` using the same application and motor-stage
-  APIs;
-- all 30 embedded demo/regression firmware targets;
-- all five native unit-test programs.
+- `DJIMotorInstance` 为历史 demo 保留公开可变字段，正式应用已不使用。
+- INS 就绪只证明已发布且任务健康，尚不是独立传感器合理性/data-ready 截止。
+- `g_robot` 仍是应用/诊断共享的可变上下文。
+- 所有控制等价与 fault timing 结论仍等待实板比对和 soak 测试。
 
-In Debug, the formal image uses 51,240 bytes RAM (39.09% of 128 KiB) and 96,868
-bytes Flash (9.24% of 1 MiB). Compared with the deferred-ingress baseline, the
-544-byte RAM increase is entirely fixed static state, dominated by per-motor
-command and lease storage. No runtime heap or libc formatting symbol was
-reintroduced; the linked-symbol audit still passes.
-
-Compilation does not prove control equivalence or fault timing on hardware.
-Before tuning, hardware acceptance must confirm:
-
-- each motor feedback loss zeros that CAN slot within one 5 ms motor period and
-  drives the whole robot to `DEVICE_UNHEALTHY` on the next control step;
-- recovery starts with reset PID history and no output impulse;
-- yaw/pitch feedback signs and bandwidth match the comparison firmware;
-- pitch speed/brake/angle transitions remain smooth;
-- global emergency stop closes every actuator output before command recovery;
-- suspending the control task leaves every DJI command slot at zero no later
-  than the 100 ms command lease plus one 5 ms motor period;
-- task execution time and motor stack high-water margin remain acceptable with
-  the added snapshot copies.
-
-## Remaining ownership debt
-
-- `DJIMotorInstance` remains publicly mutable for old demos; the formal
-  application no longer relies on that access, but a later compatibility
-  cleanup should make the runtime portion opaque.
-- INS readiness confirms publication and task health, not independent sensor
-  plausibility or a hardware data-ready deadline.
-- `g_robot` remains a mutable application/diagnostics context.
-- Hardware comparison and soak-test gates remain open; this milestone is not a
-  control-tuning result.
-
-Bounded BMI088 initialization and the independent IWDG feed contract are closed
-by [`runtime_hardening_milestone.md`](runtime_hardening_milestone.md).
+BMI088 有界初始化和独立 IWDG 喂狗约定见[运行时加固里程碑](runtime_hardening_milestone.md)。

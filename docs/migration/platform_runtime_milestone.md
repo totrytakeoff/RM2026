@@ -1,139 +1,86 @@
-# Platform runtime milestone
+# 平台运行时里程碑
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-This milestone establishes the first repository-owned runtime path used by the
-formal infantry firmware. It changes storage, timing, recovery, and diagnostic
-infrastructure without retuning PID parameters, actuator limits, or application
-mode transitions.
+本里程碑建立正式步兵固件使用的仓库自有运行时路径。它只调整存储、计时、恢复和诊断基础设施，
+不改 PID、执行器限幅和应用模式转换。
 
-## Runtime contracts
+## 1. 单调时间
 
-### Monotonic time
+`platform/stm32f4/time/rm_time.h` 是应用可见的平台时钟：
 
-`platform/stm32f4/time/rm_time.h` is the application-facing platform clock.
+- `RmTime_NowMs()` 返回无符号 HAL 毫秒 tick。
+- `RmTime_NowUs()` 返回基于 DWT 扩展的 64 位微秒时间线。
+- `RmTime_ElapsedMs()` 使用无符号减法，可跨越 32 位毫秒回绕。
+- `RmTime_DeadlineReached()` 使用序列号算法，配置截止不得超过未来 `2^31` ms。
 
-- `RmTime_NowMs()` returns the unsigned HAL millisecond tick.
-- `RmTime_NowUs()` returns the DWT-backed 64-bit microsecond timeline.
-- `RmTime_ElapsedMs()` uses unsigned subtraction and is valid across the
-  32-bit millisecond wrap.
-- `RmTime_DeadlineReached()` uses serial-number arithmetic; configured
-  deadlines must be less than `2^31` ms into the future.
+DWT 32 到 64 位扩展在任务/中断间串行化，并按 `2^32` 周期处理回绕。168 MHz 下必须至少
+每约 25.6 s 采样一次；正式 INS、电机、PID 和 CAN 活动远高于此频率。
 
-The DWT 32-to-64-bit extension is serialized across task and interrupt callers
-and uses `2^32` cycles per wrap. It must still be sampled at least once per DWT
-wrap, approximately 25.6 seconds at 168 MHz. The formal control path samples it
-far more frequently through INS, motor, PID, and CAN activity.
+## 2. 设备健康
 
-### Device health
+`components/services/device_health` 管理最多 64 个固定实例。注册时使用毫秒超时和启动宽限，
+有效喂入写入新的绝对截止。因此健康任务周期不再改变设备超时。
 
-`components/services/device_health` now owns a fixed registry of 64 opaque
-instances. Registration selects an explicit timeout and startup grace in
-milliseconds. A valid feed writes a new absolute deadline; health-task polling
-frequency no longer changes the timeout.
+新实例在首次有效喂入前不视为在线；启动宽限只延后首次离线回调。每段离线仅回调一次，
+下一次有效喂入后重新布防。一旦判定离线，状态保持到新喂入，避免长时间运行的回绕歧义让旧设备“复活”。
 
-Feeds may originate in CAN/UART interrupts while the health task evaluates
-deadlines. Atomic deadline and transition state prevents an interrupt feed from
-suppressing the next genuine offline notification. A newly registered instance
-is not online until its first valid feed; startup grace only postpones the first
-offline callback. The callback then runs once per offline episode and is
-re-armed by the next valid feed. Once declared offline, that transition remains
-latched until a new feed, preventing serial-number ambiguity after very long
-uptime from reviving stale device health.
-
-Current device deadlines are:
-
-| Consumer | Deadline |
+| 消费者 | 截止 |
 | --- | ---: |
-| DJI and HT motor feedback | 20 ms |
-| LK motor feedback | 50 ms |
-| DT7 and virtual DBUS | 100 ms |
-| Vision UART / USB | 100 ms / 50 ms |
-| VT input | 200 ms |
-| Referee link | 300 ms |
-| ET08 compatibility default | 4000 ms |
-| ET08 in formal infantry firmware | 1000 ms |
+| DJI/HT 电机反馈 | 20 ms |
+| LK 电机反馈 | 50 ms |
+| DT7/虚拟 DBUS | 100 ms |
+| 视觉 UART/USB | 100 ms / 50 ms |
+| VT 输入 | 200 ms |
+| 裁判链路 | 300 ms |
+| ET08 兼容默认 | 4000 ms |
+| 正式步兵 ET08 | 1000 ms |
 
-Zero-valued configuration fields select the 1000 ms service defaults. Values
-at or above `2^31` ms are rejected because their wrapped ordering is ambiguous.
+全零配置选择服务默认 1000 ms，大于等于 `2^31` ms 的值会被拒绝。
 
-### CAN and UART registration
+## 3. CAN/UART 注册
 
-CAN and UART endpoint objects are no longer allocated from the C heap.
+CAN 和 UART endpoint 不再从 C 堆分配。
 
-| Resource | Fixed capacity | Registration rule |
+| 资源 | 固定容量 | 注册规则 |
 | --- | ---: | --- |
-| CAN endpoint | 16 total | unique standard RX ID per CAN handle |
-| CAN filters | 14 per bus | one 16-bit ID-list bank per endpoint |
-| UART endpoint | 3 total | one endpoint per UART handle |
-| UART receive buffer | 256 bytes per endpoint | requested length must fit |
+| CAN endpoint | 总计 16 | 每个 CAN handle 下标准 RX ID 唯一 |
+| CAN filter | 每总线 14 | 每 endpoint 一个 16 位 ID-list bank |
+| UART endpoint | 总计 3 | 每 UART handle 一个 endpoint |
+| UART 接收缓冲 | 每 endpoint 256 字节 | 请求长度必须容纳 |
 
-CAN transmit timeouts are integer microseconds. Receive callbacks drain the
-selected FIFO and copy at most eight bytes per classic-CAN frame. UART receive
-uses receive-to-idle DMA; recovery handles a busy HAL state by aborting the
-stale receive operation and starting it once more.
+CAN 发送超时使用整数微秒。接收回调排空选定 FIFO，经典 CAN 帧最多复制 8 字节。
+UART 使用 receive-to-idle DMA；HAL busy 恢复会中止旧接收后仅重启一次。
 
-At this milestone the transport callbacks still invoked protocol/device
-callbacks in interrupt context. The follow-up
-[`deferred_ingress_milestone.md`](deferred_ingress_milestone.md) closes that
-gap for the formal infantry firmware with bounded receive inboxes and coherent
-device snapshots.
+后续的[延后通信入站里程碑](deferred_ingress_milestone.md)已将正式固件中的协议回调移出中断。
 
-### Heap-free formal control path
+## 4. 正式路径无堆化
 
-The formal firmware now uses static storage for:
+正式固件的以下资源使用静态存储：
 
-- 12 DJI motor instances;
-- CAN, UART, and device-health registries;
-- the quaternion EKF Kalman workspace (about 1.6 KiB);
-- all FreeRTOS tasks and stacks;
-- bounded diagnostic formatting.
+- 12 个 DJI 电机实例；
+- CAN、UART 和设备健康 registry；
+- 四元数 EKF 的 Kalman workspace（约 1.6 KiB）；
+- 所有 FreeRTOS 任务和栈；
+- 有界诊断格式化。
 
-Its linker contract reserves no C heap and keeps an 8 KiB main stack for
-startup and interrupt context. Demo targets retain the historical linker
-defaults because several of them still exercise heap-backed compatibility
-drivers. A post-link audit fails the formal build if a forbidden heap or libc
-formatting symbol is introduced.
+正式链接器不预留 C 堆，为启动和中断上下文预留 8 KiB 主栈。每次正式链接会拒绝
+堆分配和 libc 格式化符号。
 
-`RmFormat_Snprintf()` and `RmFormat_Vsnprintf()` provide the integer, string,
-pointer, and fixed-point float formatting used by firmware logging without
-stdio allocation. They are a bounded firmware formatter, not a promise of full
-libc `printf` compatibility.
+`RmFormat_Snprintf()`/`RmFormat_Vsnprintf()` 提供固件日志所需的整数、字符串、指针和定点小数格式，
+它是有界固件 formatter，不保证完整 libc `printf` 兼容。
 
-Heap-backed compatibility APIs remain in components that are not pulled into
-`app.elf`, including GPIO/IIC/PWM/SPI registration, message bus, generic math,
-CAN communication, and several inactive device drivers. These must be migrated
-or removed before their targets can become competition-firmware dependencies.
+未进入 `app.elf` 的兼容模块仍含堆注册 API，包括部分 GPIO/IIC/PWM/SPI、消息总线、
+通用数学、CAN 通信和非活动设备驱动。它们在迁移或删除前不得成为比赛固件依赖。
 
-## Verification baseline
+## 5. 验证与历史数据
 
-The native suite contains three independently linked test programs for safety,
-device-health deadlines, and formatting. It covers exact deadline boundaries,
-poll-rate independence, clock wrap, long-offline latching, one-shot callbacks,
-invalid deadline rejection, registry capacity, formatting flags and widths,
-float rounding, and buffer truncation.
+主机测试覆盖 deadline 边界、轮询频率无关性、时钟回绕、长期离线锁定、一次性回调、
+非法截止、registry 容量、格式宽度/标志、浮点舍入和缓冲截断。
 
-On 2026-07-16 the following passed in Debug:
+2026-07-16 该里程碑建立时，Debug 正式镜像使用 RAM 45,872 字节、Flash 92,476 字节；
+这是历史对比数据，当前数据以[步兵 FreeRTOS 迁移基线](infantry_freertos_baseline.md)为准。
 
-- all three native test programs;
-- formal `app.elf`;
-- bare-metal `test_infantry_minimal` comparison target;
-- all 30 embedded demo/regression targets.
+后续[运行时加固里程碑](runtime_hardening_milestone.md)已补齐 newlib 边界、消除 RWX LOAD 段并加入程序头审计。
 
-The formal image uses 45,872 bytes RAM (35.00% of 128 KiB) and 92,476 bytes
-Flash (8.82% of 1 MiB). Static registries increased `.bss`, while removing the
-unused 20 KiB C-heap reservation and reducing the main-stack reservation from
-20 KiB to 8 KiB made the reported RAM budget reflect the formal runtime.
-
-The automatic linked-symbol audit produces no C/FreeRTOS allocation, `_sbrk`,
-`snprintf`, or `vsnprintf` symbol in `app.elf`.
-
-Existing newlib `_close`, `_lseek`, `_read`, and `_write` stub warnings and the
-RWX load-segment warning are unchanged. This is a compile and host-test gate;
-hardware timing, link-loss recovery, CAN saturation, and soak validation remain
-required before competition use.
-
-The subsequent
-[`runtime_hardening_milestone.md`](runtime_hardening_milestone.md) replaces the
-libnosys process-I/O stubs, removes the RWX segment, and adds explicit linker
-program-header verification.
+本里程碑是软件构建/主机测试门禁，不能替代实板时序、断链恢复、CAN 饱和和长时间 soak 验证。

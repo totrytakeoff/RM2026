@@ -4,7 +4,7 @@
 # @project RM2026
 # @author YZ-Control/myself
 # @version 1.0.0
-# @date 2025-12-07
+# @date 2026-07-19
 # @details 统一设置 arm-none-eabi 编译器、MCU 编译/链接参数、链接脚本路径与 DSP 库，供所有 CMake 目标共享。
 # =============================================================================
 
@@ -36,7 +36,7 @@ set(CMAKE_SIZE         ${ARM_NONE_EABI_SIZE})
 set(MCU_FLAGS "-mcpu=cortex-m4;-mthumb;-mthumb-interwork;-mfloat-abi=hard;-mfpu=fpv4-sp-d16"
     CACHE STRING "MCU specific compiler flags")
 
-set(MCU_LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/config/linker/STM32F407IGHx_FLASH.ld"
+set(MCU_LINKER_SCRIPT "${RM_BOARD_ROOT}/linker/STM32F407IGHx_FLASH.ld"
     CACHE FILEPATH "Linker script for STM32F407IGHx")
 
 set(DSP_LIB "${CMAKE_SOURCE_DIR}/third_party/cmsis_dsp/Lib/libarm_cortexM4lf_math.a"

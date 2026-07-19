@@ -1,1 +1,1 @@
-add_subdirectory(infantry)
+add_subdirectory(infantry_f407)

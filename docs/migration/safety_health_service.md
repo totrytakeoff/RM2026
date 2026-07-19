@@ -1,90 +1,65 @@
-# Safety and task-health service
+# 安全与任务健康服务
 
-Date: 2026-07-16
+更新日期：2026-07-19
 
-This slice replaces the infantry application's local safe-stop boolean with a
-repository-owned, platform-independent safety state machine. It also makes the
-FreeRTOS task assumptions measurable before any control retuning begins.
+本切片用仓库自有、与平台无关的安全状态机替代步兵应用中的局部安全布尔量，
+并在开始控制调参前使 FreeRTOS 任务假设可测量、可观测。
 
-## Safety contract
+## 安全约定
 
-`components/services/safety` has no HAL or FreeRTOS dependency and is the first
-reusable service in the new framework.
+`components/services/safety` 不依赖 HAL 或 FreeRTOS。
 
-| State | Meaning | Actuator updates |
+| 状态 | 含义 | 执行器更新 |
 | --- | --- | --- |
-| `BOOT` | Manager initialized but not evaluated | blocked |
-| `DISARMED` | Application initialization is incomplete | blocked |
-| `ACTIVE` | Every safety input is healthy | permitted |
-| `STOPPED` | At least one runtime fault is active | blocked |
+| `BOOT` | 管理器已初始化、尚未评估 | 禁止 |
+| `DISARMED` | 应用初始化未完成 | 禁止 |
+| `ACTIVE` | 所有安全输入健康 | 允许 |
+| `STOPPED` | 存在至少一个运行时故障 | 禁止 |
 
-Fault reasons are a bit mask, so simultaneous input-offline, emergency-stop,
-task-health, required-device-health, and invalid-input faults are retained
-instead of hiding one another. A null input snapshot fails closed. The control
-task is the only owner of safety-state transitions. The health task publishes a
-single atomic boolean input through `InfantryApp_SetTaskHealth`, avoiding
-actuator changes from multiple tasks. Required DJI motor deadlines and INS
-readiness are aggregated separately as `DEVICE_UNHEALTHY`; the 5 ms motor layer
-also gates each offline actuator locally. A separate 100 ms motor-command lease
-contains complete control-task starvation without requiring that task to run
-and process its own unhealthy heartbeat.
+故障原因使用位掩码，同时保留输入离线、急停、任务不健康、必需设备不健康和输入无效等原因。
+空输入快照按故障关闭处理。
 
-Recovery remains automatic when all inputs are healthy. This is intentional
-behavior compatibility with `infantry_minimal`, not the final competition
-arming policy. A deliberate operator re-arm state can be added after hardware
-comparison without changing chassis, gimbal, or shooter code.
+20 ms 控制任务是安全状态转换的唯一所有者。5 ms 健康任务通过
+`InfantryApp_SetTaskHealth()` 发布单个原子布尔值，避免多任务同时改写执行器。
+必需 DJI 电机截止和 INS 就绪状态单独汇总为 `DEVICE_UNHEALTHY`；5 ms 电机层还会对
+单个离线执行器就地归零。100 ms 电机命令租约可在控制任务完全停止时拒绝过期输出。
 
-## Task-health contract
+所有输入恢复健康时会自动恢复，这是对照 `infantry_minimal` 的行为兼容，不代表最终比赛解除策略。
 
-Each static task records:
+## 任务健康约定
 
-- expected period and run count;
-- last and maximum start-to-start interval;
-- last and maximum workload execution time using the DWT cycle counter;
-- total and consecutive deadline misses;
-- last heartbeat tick;
-- historical minimum unused stack words from FreeRTOS.
+每个静态任务记录：
 
-For `ins`, `motor`, `control`, and `health`, any of these conditions sets that
-task's bit in `unhealthy_mask`:
+- 期望周期、运行次数和最后心跳 tick；
+- 最后/最大启动间隔；
+- 基于 DWT 周期计数器的最后/最大工作执行时间；
+- 总超期次数和连续超期次数；
+- FreeRTOS 历史最小剩余栈 words。
 
-- no heartbeat for four configured periods after a 100 ms startup grace;
-- three consecutive releases later than 125% of the configured period, or
-  three consecutive workload executions at least as long as the period;
-- historical stack margin below 64 words.
+`ins`、`motor`、`control` 和 `health` 在以下任一条件下进入 `unhealthy_mask`：
 
-`diagnostics` collects the same metrics but is not safety-critical because UART
-or RTT output may block. A consistent copy is available through
-`InfantryTasks_GetHealthSnapshot` for telemetry and debugger inspection.
+- 100 ms 启动宽限后，超过四个配置周期无心跳；
+- 连续三次释放晚于配置周期的 125%，或工作执行时间达到/超过周期；
+- 历史剩余栈低于 64 words。
 
-## Automated verification
+`diagnostics` 记录同样的指标，但由于 UART/RTT 可能阻塞，不作为安全关键任务。
+`InfantryTasks_GetHealthSnapshot()` 向遥测和调试器提供一致快照。
 
-The safety service is compiled with the native compiler under strict warnings
-and tested independently from the ARM firmware:
+## 自动验证
 
 ```bash
-cmake -S test/unit -B build-host -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-host
+cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host --parallel
 ctest --test-dir build-host --output-on-failure
 ```
 
-CI runs these tests before configuring the embedded build. Covered transitions
-include boot, activation, input loss, emergency stop, task-health failure,
-isolated device-health failure, combined reasons, automatic recovery, and
-null-argument fail-safe behavior.
+主机测试覆盖启动、激活、输入丢失、急停、任务故障、单独设备故障、多原因并存、自动恢复和空参数故障关闭。
+同一测试集还验证设备健康服务的毫秒截止、时钟回绕、一次性离线回调、固定容量和空参数安全。
 
-The same native suite now also verifies the independent
-`components/services/device_health` deadline service. Its millisecond timeout,
-wrap, one-shot transition, fixed-capacity, and null-safety contract is recorded
-in `platform_runtime_milestone.md`.
+## 仍需实板完成
 
-## Hardware work still required
-
-- Record all five stack margins and maximum execution/release intervals during
-  a continuous ten-minute run.
-- Force each software fault independently and confirm all actuator modules stop.
-- Decide stack and deadline thresholds from measurements instead of estimates.
-- Add an independent hardware watchdog; the command lease still depends on the
-  system tick and motor task, so it cannot contain a scheduler-wide lockup.
-- Decide whether competition firmware requires an explicit operator re-arm
-  after emergency stop or task-health failure.
+- 记录五个任务连续 10 分钟的栈余量、最大执行时间和最大释放间隔。
+- 分别注入每个软件故障，确认底盘、云台和发射全部停止。
+- 根据实测数据而不是估计值确定最终栈和 deadline 阈值。
+- 验证关键任务或整个调度器停止时 IWDG 能复位，极限正常负载不误复位。
+- 决定急停或任务故障后是否必须操作手人工重新解除。

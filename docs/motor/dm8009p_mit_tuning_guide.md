@@ -1,12 +1,14 @@
 # DM8009P（DM‑J8009P‑2EC）MIT 模式调参指南（RM2026）
 
+文档更新日期：2026-07-19
+
 本文基于 RM2026 框架中已重构完成的 **DM 通用驱动（MIT 直通接口）**进行说明：你直接发送 `p_des / v_des / kp / kd / t_ff`，驱动不做任何 PID 环路。  
 目标：在不同负载下获得“稳、快、不抖、不撞限”的位置控制效果，并能快速定位“该改哪个参数”。
 
 相关代码位置（以现在工程为准）：
 - 通用驱动（MIT 打包/发送、模式命令、反馈解码）：`components/devices/motor/dm/dmmotor.h`
 - DM8009P 兼容层（仅默认值 + 薄封装）：`components/devices/motor/dm/dm8009p.h`
-- 可直接烧录/调参的 demo：`test/motor_test/main.c`（`volatile g_dm_*`，支持 GDB 在线改参）
+- 可直接烧录/调参的 demo：`tests/firmware/basic/motor_test/main.c`（`volatile g_dm_*`，支持 GDB 在线改参）
 
 ---
 
@@ -129,7 +131,7 @@ MIT 给了 `v_des`，但它不是“限速开关”，它参与控制律。
 
 ### 6.2 demo 里“我到底改哪里”最快？
 
-`test/motor_test/main.c` 已提供 `volatile g_dm_*`（支持 GDB 在线改参）：
+`tests/firmware/basic/motor_test/main.c` 已提供 `volatile g_dm_*`（支持 GDB 在线改参）：
 
 - 选择 demo：`g_dm_demo_select`
   - `0`：停止发送

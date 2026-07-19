@@ -1,0 +1,29 @@
+# 步兵裸机对照固件
+
+文档更新日期：2026-07-19
+
+该 target 保留原有单循环调度外壳，用于 FreeRTOS 迁移期间的硬件对照，已不再持有步兵控制逻辑。
+
+该对照 target 与正式固件 `app.elf` 都会编译 `applications/infantry` 下的模块：
+
+```text
+applications/infantry
+  command -> 输入仲裁
+  chassis -> 麦轮运动与底盘跟随控制
+  gimbal  -> 云台偏航/俯仰控制
+  shoot   -> 摩擦轮与拨弹控制
+  referee -> 只读裁判系统联锁
+```
+
+对照 target 在轮询循环中调度 INS、守护服务和 `InfantryApp_MotorStep()`，每 20 ms
+执行一次上层应用。正式固件则由静态 FreeRTOS 任务调用相同 API。两者共享控制参数、
+命令快照、100 ms 命令租约、安全门控和应用调用顺序，因此实测差异应主要来自调度机制。
+
+上机对照前同时构建两个 target：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --target app.elf test_infantry_minimal --parallel
+```
+
+验收清单统一维护在 `docs/migration/infantry_freertos_baseline.md`。

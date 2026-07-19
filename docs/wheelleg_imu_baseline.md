@@ -1,20 +1,25 @@
-# Wheelleg IMU Baseline (DM-IMU-L1)
+# 轮腿 IMU 基线（DM-IMU-L1）
 
-Status
-- CAN2 request mode OK, USART6 output OK
-- Mounting: normal orientation, right-hand coordinate system
+文档更新日期：2026-07-19
 
-Coordinate definition (from vendor)
-- X axis: roll
-- Y axis: pitch
-- Z axis: yaw
+## 当前状态
 
-Baseline sample (static)
-- Accel (m/s^2): A[-0.571 -0.413 9.988]
-- Gyro (rad/s):  G[-0.003 -0.002 -0.006]
-- Euler (deg):  E[-2.38 3.20 -54.95]
-- Quaternion:   Q[0.887 -0.006 0.034 -0.460]
-- Valid mask:   0x0F
+- CAN2 请求模式已验证。
+- USART6 输出已验证。
+- 安装方式：正向安装，右手坐标系。
 
-Notes
-- These values are for the current mounting orientation and will be used for balance initialization.
+## 坐标定义（来自厂商）
+
+- X 轴：roll。
+- Y 轴：pitch。
+- Z 轴：yaw。
+
+## 静态基线样本
+
+- 加速度（m/s²）：`A[-0.571 -0.413 9.988]`。
+- 角速度（rad/s）：`G[-0.003 -0.002 -0.006]`。
+- 欧拉角（deg）：`E[-2.38 3.20 -54.95]`。
+- 四元数：`Q[0.887 -0.006 0.034 -0.460]`。
+- 有效位掩码：`0x0F`。
+
+以上数值只适用于当前安装方向，作为平衡初始化的对照数据，不应直接用于其他安装方向。

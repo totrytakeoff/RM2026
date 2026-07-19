@@ -4,7 +4,7 @@
 # @project RM2026
 # @author YZ-Control/myself
 # @version 1.0.0
-# @date 2025-12-07
+# @date 2026-07-19
 # @details 提供 create_embedded_test() 与 create_unit_test()，统一处理链接、下载命令与产物输出路径。
 # =============================================================================
 
@@ -39,17 +39,17 @@ function(create_embedded_test test_name)
     endif()
     
     # 创建测试可执行文件
-    # 启动文件 (.s) 已被包含在 HAL_Lib 中，此处不再需要单独添加。
+    # 启动文件由板级 target 统一提供。
     # 只需要添加测试本身的源文件即可。
     add_executable(${test_target_name}
         ${ARG_SOURCES}
         ${ARG_EXTRA_SOURCES}
-        ${CMAKE_SOURCE_DIR}/test/error_handler_stub.c
+        ${CMAKE_SOURCE_DIR}/tests/firmware/error_handler_stub.c
     )
     set_property(TARGET ${test_target_name} APPEND PROPERTY
         LINK_DEPENDS ${ARG_LINKER_SCRIPT})
     
-    # 汇编文件属性也不再需要，因为它在 HAL_Lib 中处理
+    # 汇编文件属性在板级 target 中处理。
     
     if(NOT DSP_LIB OR NOT EXISTS ${DSP_LIB})
         message(FATAL_ERROR "DSP_LIB not found: ${DSP_LIB}")
@@ -59,7 +59,6 @@ function(create_embedded_test test_name)
     target_include_directories(${test_target_name}
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_SOURCE_DIR}/Inc
             ${ARG_INCLUDE_DIRS}
     )
     
@@ -69,8 +68,8 @@ function(create_embedded_test test_name)
         rm_platform_syscalls
         -Wl,--start-group
         ${ARG_LINK_LIBRARIES}
-        HAL_Lib
-        $<TARGET_OBJECTS:HAL_IRQ>
+        rm_board_infantry_f407
+        $<TARGET_OBJECTS:rm_board_infantry_f407_irq>
         -Wl,--end-group
         rm_vendor_cmsis_dsp
         m
@@ -133,7 +132,7 @@ function(create_embedded_test test_name)
     if(OPENOCD)
         add_custom_target(flash-${test_target_name}
             COMMAND ${OPENOCD} 
-                    -f ${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg 
+                    -f ${RM_BOARD_ROOT}/openocd/openocd_dap.cfg
                     -c init -c halt 
                     -c "flash write_image erase ${test_output_dir}/${test_target_name}.bin 0x08000000" 
                     -c "verify_image ${test_output_dir}/${test_target_name}.bin 0x08000000"
@@ -145,7 +144,7 @@ function(create_embedded_test test_name)
         add_custom_target(build-and-flash-${test_target_name}
             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${test_target_name}
             COMMAND ${OPENOCD} 
-                    -f ${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg 
+                    -f ${RM_BOARD_ROOT}/openocd/openocd_dap.cfg
                     -c init -c halt 
                     -c "flash write_image erase ${test_output_dir}/${test_target_name}.bin 0x08000000" 
                     -c "verify_image ${test_output_dir}/${test_target_name}.bin 0x08000000"
@@ -216,7 +215,7 @@ function(create_unit_test test_name)
     target_include_directories(${test_target_name}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_SOURCE_DIR}/Inc
+            ${RM_BOARD_INCLUDE_DIR}
             ${ARG_INCLUDE_DIRS}
     )
     

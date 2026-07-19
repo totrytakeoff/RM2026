@@ -1,27 +1,34 @@
-# Wheelleg Wheel Hub Test Notes
+# 轮腿轮毂电机测试记录
 
-Overview
-- Test target: wheel hub motors (M3508) basic speed control
-- Test firmware: `test/wheelleg_basic_test`
-- Remote: ET08 (USART3 SBUS)
+文档更新日期：2026-07-19
 
-Wiring / Bus
-- CAN1: wheel hub motors
-- Motor IDs: 1 (left wheel), 2 (right wheel)
-- Gear ratio: 268:17 (about 15.7647:1)
+## 概述
 
-Control mapping (ET08)
-- Left stick Y -> wheel id 1 (inverted for mirror)
-- Right stick Y -> wheel id 2 (normal)
+- 测试对象：M3508 轮毂电机基本速度控制。
+- 测试固件：`tests/firmware/leg/wheelleg_basic_test`。
+- 遥控器：ET08（USART3 SBUS）。
 
-Key parameters (current code)
-- Speed max: 20000.0 deg/s (motor-side)
-- Output speed max at wheel: about 1269.1 deg/s (20000 / 15.7647)
-- Control mode: SPEED_LOOP
-- Speed PID: Kp=5.0, Ki=0.0, Kd=0.0, MaxOut=12000
-- Current PID: Kp=0.4, Ki=0.0, Kd=0.0, MaxOut=15000
+## 接线与总线
 
-Tuning notes
-- If jitter appears at certain angles, reduce Speed Kp first (20% step).
-- If still jittery, reduce Current Kp slightly (10-20% step).
-- After stable, raise Speed Kp in small steps for response.
+- CAN1：轮毂电机。
+- 电机 ID：1（左轮）、2（右轮）。
+- 减速比：268:17（约 15.7647:1）。
+
+## ET08 映射
+
+- 左摇杆 Y 轴→左轮 ID 1，为镜像安装取反。
+- 右摇杆 Y 轴→右轮 ID 2，保持正向。
+
+## 当前代码参数
+
+- 电机侧最大速度：`20000.0 deg/s`。
+- 轮端最大速度：约 `1269.1 deg/s`（`20000 / 15.7647`）。
+- 控制模式：`SPEED_LOOP`。
+- 速度 PID：`Kp=5.0, Ki=0.0, Kd=0.0, MaxOut=12000`。
+- 电流 PID：`Kp=0.4, Ki=0.0, Kd=0.0, MaxOut=15000`。
+
+## 调参备注
+
+- 特定角度出现抖动时，先按约 20% 步长降低速度环 `Kp`。
+- 仍抖动时，再将电流环 `Kp` 降低 10%–20%。
+- 稳定后再小步提升速度环 `Kp` 以恢复响应。

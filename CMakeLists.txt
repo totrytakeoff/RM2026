@@ -4,11 +4,18 @@
 # @project RM2026
 # @author YZ-Control/myself
 # @version 1.0.0
-# @date 2025-12-07
+# @date 2026-07-19
 # @details 统一加载工具链，按外部依赖、平台、组件、应用和固件分层组织构建。
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.16)
+
+set(RM_BOARD_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/boards/infantry_f407"
+    CACHE INTERNAL "Active board ownership root")
+set(RM_BOARD_INCLUDE_DIR
+    "${RM_BOARD_ROOT}/include"
+    CACHE INTERNAL "Active board-generated include directory")
 
 # =============================================================================
 # 项目基本设置（简化入口，只保留全局配置和子目录组织）
@@ -42,23 +49,18 @@ file(MAKE_DIRECTORY ${GLOBAL_OUTPUT_DIR})
 # 1. 外部依赖必须先于所有仓库自有代码定义。
 add_subdirectory(third_party)
 
-# 2. CubeMX 生成的板级配置、平台适配与可复用组件。
-add_subdirectory(hal)
+# 2. 板级配置、平台适配与可复用组件。
 add_subdirectory(platform)
 add_subdirectory(components)
 
-# 3. 应用行为、RTOS 策略与固件组合层。
-add_subdirectory(application)
-add_subdirectory(system)
+# 3. 应用行为与具体固件组合层。
+add_subdirectory(applications)
 add_subdirectory(firmware)
 
-# 4. 当前固件入口；后续迁入具体 board/firmware 目录。
-add_subdirectory(Src)
-
-# 5. 板级与回归测试目标。
+# 4. 板级与回归测试目标。
 # 定义所有测试项目的输出根目录, 以便 TestFunctions.cmake 使用
 set(TEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests CACHE INTERNAL "Root directory for test outputs")
-add_subdirectory(test)
+add_subdirectory(tests)
 
 # =============================================================================
 # 自定义全局命令 (Clean / Upload)
@@ -68,9 +70,8 @@ add_custom_target(clean-all
     COMMENT "Removing build directory..."
 )
 
-# OpenOCD 下载命令 (默认下载 app.bin)
-# 注意：这里假设最终生成的目标在 Src 目录下，如果找不到需要在 Src/CMakeLists 指定输出位置
-set(OPENOCD_CFG "${CMAKE_SOURCE_DIR}/config/openocd/openocd_dap.cfg")
+# OpenOCD 下载命令。BIN 不携地址，因此必须显式指定 Flash 基地址。
+set(OPENOCD_CFG "${RM_BOARD_ROOT}/openocd/openocd_dap.cfg")
 
 # 查找OpenOCD可执行文件
 find_program(OPENOCD_EXECUTABLE 
@@ -99,7 +100,7 @@ endif()
 
 add_custom_target(upload
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD] Starting upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; reset; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Uploading to STM32..."
@@ -108,7 +109,7 @@ add_custom_target(upload
 # 添加一个更详细的上传命令，显示更多调试信息
 add_custom_target(upload-verbose
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD-VERBOSE] Starting verbose upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; reset; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Verbose upload to STM32..."
@@ -117,7 +118,7 @@ add_custom_target(upload-verbose
 # 添加一个仅验证命令，不重新烧录
 add_custom_target(verify
     COMMAND ${CMAKE_COMMAND} -E echo "[VERIFY] Verifying STM32 flash..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; halt; verify_image ${GLOBAL_OUTPUT_DIR}/app.elf 0x08000000; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Verification completed!"
     DEPENDS app.elf
     COMMENT "Verifying STM32 flash..."

@@ -1,66 +1,58 @@
-# RM2026 Robot Control
+# RM2026 机器人控制源码
 
-STM32F407IGT6 robot-control firmware for the RoboMaster 2026 season.
+文档更新日期：2026-07-19
 
-The current primary target is the single-board infantry firmware. Its control
-logic lives in `application/infantry`, while deterministic scheduling lives in
-`system/freertos`. The original bare-metal firmware remains as a comparison
-target during migration; both targets compile the same application sources.
+本仓库是面向 RoboMaster 2026 赛季、基于 STM32F407IGT6 的机器人电控固件。
+当前主目标为单板步兵固件：机器人行为位于 `applications/infantry`，
+STM32F4 通用适配位于 `platform/stm32f4`，具体控制板和 FreeRTOS 固件组合分别由
+`platform/boards/infantry_f407` 与 `firmware/infantry_f407` 管理。保留的裸机对照固件
+与正式 FreeRTOS 固件复用同一套应用逻辑。
 
-## Build
+## 构建与测试
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --target app.elf --parallel
 cmake --build build --parallel
 
-# Native logic tests (uses the host compiler, not the ARM toolchain)
-cmake -S test/unit -B build-host -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-host
+# 主机纯逻辑测试，使用本机编译器
+cmake -S tests/host -B build-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-host --parallel
 ctest --test-dir build-host --output-on-failure
 ```
 
-Primary outputs are collected in `build/output`.
+所有可烧录的 `ELF/HEX/BIN` 产物统一收集到 `build/output`。
+构建、烧录、GDB 和 RTT 日志入口位于 `scripts`。
 
-## Repository layers
+## 仓库分层
 
-- `application/`: robot behavior and configuration.
-- `components/`: reusable algorithms, services, and device drivers.
-- `platform/`: STM32F4 platform adapters and board-support code.
-- `third_party/`: external dependencies with their original licenses.
-- `firmware/`: concrete firmware composition and startup.
-- `system/`: FreeRTOS tasks and reliability hooks.
-- `hal/`: transitional CubeMX-generated peripheral initialization.
-- `test/`: standalone board-level and comparison firmware.
-- `docs/migration/`: migration status, gates, and hardware acceptance records.
+- `applications/`：机器人行为、状态和参数。
+- `components/`：可复用算法、服务和设备驱动。
+- `platform/stm32f4/`：MCU-family 级平台适配。
+- `platform/boards/infantry_f407/`：CubeMX 生成源、板级头、启动、链接、异常保留与 OpenOCD 配置。
+- `firmware/infantry_f407/`：正式入口、FreeRTOS 任务策略和固件组合。
+- `third_party/`：保留原始许可说明的外部依赖。
+- `tests/firmware/`：板级 bring-up、对照和回归固件。
+- `tests/host/`：可在主机上独立执行的纯逻辑测试。
+- `docs/`：架构基线、迁移记录和上机验收项。
+- `scripts/`：构建、烧录、调试和日志脚本。
 
-## Migration status
+## 当前状态
 
-The stable infantry logic formerly maintained under
-`test/infantry/infantry_minimal` is now the implementation used by the formal
-FreeRTOS `app.elf`. Hardware validation is still required before treating it as
-competition-ready firmware. See
-`docs/migration/infantry_freertos_baseline.md` for current tasks and open gates.
-The safety-state and task-health contract is documented in
-`docs/migration/safety_health_service.md`.
-The monotonic-time, device-deadline, static transport-storage, and heap-free
-formal-runtime baseline is documented in
-`docs/migration/platform_runtime_milestone.md`.
-The bounded CAN/UART ingress and coherent device-snapshot contract is
-documented in `docs/migration/deferred_ingress_milestone.md`.
-The motor-command, command-lease, PID ownership, INS snapshot, and
-required-device fault-containment contract is documented in
-`docs/migration/control_ownership_milestone.md`.
-Bounded IMU initialization, IWDG feeding, syscall/linker cleanup, and the
-formal-versus-compatibility component boundary are documented in
-`docs/migration/runtime_hardening_milestone.md`.
-The approved repository ownership model and final directory layout are recorded
-in `docs/architecture/repository_reorganization_baseline.md`.
+`tests/firmware/infantry/infantry_minimal` 中验证过的步兵逻辑已迁入正式
+FreeRTOS `app.elf`。目录所有权、静态任务、输入安全、设备健康、命令租约、
+独立看门狗、无堆正式路径和链接审计已建立。在标记为比赛可用前，仍必须完成
+实板方向、故障停机、时序、栈余量、CAN 负载和长时间 soak 验收。
 
-## Provenance
+详细状态见：
 
-The early framework architecture and portions of the current transitional
-dependencies were developed from the YueLu team open-source `basic_framework`.
-The project is being reorganized into independently owned application,
-platform, component, and system layers. Required third-party notices are kept
-in `THIRD_PARTY_NOTICES.md`.
+- [仓库重组基线](docs/architecture/repository_reorganization_baseline.md)
+- [步兵 FreeRTOS 迁移基线](docs/migration/infantry_freertos_baseline.md)
+- [安全与任务健康服务](docs/migration/safety_health_service.md)
+- [运行时加固里程碑](docs/migration/runtime_hardening_milestone.md)
+
+## 来源说明
+
+项目早期架构和部分迁移代码参考了跃鹿战队开源 `basic_framework`。
+当前项目路径、target 和 API 使用仓库自有命名。完整归属与许可说明见
+`THIRD_PARTY_NOTICES.md`。

@@ -55,7 +55,7 @@ add_library(rm_vendor_stm32_hal STATIC
 add_library(RM::vendor_stm32_hal ALIAS rm_vendor_stm32_hal)
 target_include_directories(rm_vendor_stm32_hal PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/stm32f4xx_hal/Inc
-    ${CMAKE_SOURCE_DIR}/Inc
+    ${RM_BOARD_INCLUDE_DIR}
 )
 target_link_libraries(rm_vendor_stm32_hal PUBLIC rm_vendor_cmsis)
 target_compile_options(rm_vendor_stm32_hal PRIVATE ${MCU_FLAGS})
@@ -78,7 +78,7 @@ target_include_directories(rm_vendor_freertos PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/freertos_kernel/Source/include
     ${CMAKE_CURRENT_SOURCE_DIR}/freertos_kernel/Source/CMSIS_RTOS
     ${CMAKE_CURRENT_SOURCE_DIR}/freertos_kernel/Source/portable/GCC/ARM_CM4F
-    ${CMAKE_SOURCE_DIR}/Inc
+    ${RM_BOARD_INCLUDE_DIR}
 )
 target_link_libraries(rm_vendor_freertos PUBLIC rm_vendor_cmsis)
 target_compile_options(rm_vendor_freertos PRIVATE ${MCU_FLAGS})
@@ -93,7 +93,7 @@ add_library(RM::vendor_usb_device ALIAS rm_vendor_usb_device)
 target_include_directories(rm_vendor_usb_device PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/stm32_usb_device/Core/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/stm32_usb_device/Class/CDC/Inc
-    ${CMAKE_SOURCE_DIR}/Inc
+    ${RM_BOARD_INCLUDE_DIR}
 )
 target_link_libraries(rm_vendor_usb_device PUBLIC rm_vendor_stm32_hal)
 target_compile_options(rm_vendor_usb_device PRIVATE ${MCU_FLAGS})

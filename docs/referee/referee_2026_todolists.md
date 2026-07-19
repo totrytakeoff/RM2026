@@ -1,9 +1,9 @@
 # Referee 2026 TODOLists
 
-本文档用于管理 `modules/referee` 对齐 2026 协议的剩余工作项。  
+本文档用于管理 `components/devices/referee` 对齐 2026 协议的剩余工作项。
 状态字段建议：`TODO / DOING / DONE / BLOCKED`。
 
-更新时间：2026-03-12
+更新时间：2026-07-19
 
 ---
 
@@ -37,8 +37,8 @@
 
 建议修改位置：
 
-1. `Src/application/chassis/chassis.c`（功率/缓冲能量限幅）
-2. `Src/application/shoot/shoot.c`（发弹节流/热量保护）
+1. `applications/infantry/chassis/infantry_chassis.c`（功率/缓冲能量限幅）
+2. `applications/infantry/shoot/infantry_shoot.c`（发弹节流/热量保护）
 
 验收标准：
 
@@ -98,7 +98,7 @@
 建议修改位置：
 
 1. `components/devices/referee/rm_referee.c`
-2. 可配宏放到 `Src/application/robot_def.h` 或 referee 配置头
+2. 可配宏放到 `applications/infantry/config/infantry_config.h` 或 referee 配置头
 
 验收标准：
 
@@ -132,7 +132,7 @@
 
 建议位置：
 
-1. `test/` 下新增 referee 协议回放测试
+1. `tests/host/` 下新增 referee 协议回放测试
 2. `docs/referee/` 增加抓包说明
 
 验收标准：
@@ -150,4 +150,3 @@
 4. `P1-4` ID 枚举统一
 5. `P1-5` 发送节流参数化
 6. `P2` 文档与测试完善
-
