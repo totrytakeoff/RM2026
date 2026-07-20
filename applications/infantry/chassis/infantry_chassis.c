@@ -16,10 +16,13 @@
 #include "can.h"
 #include "dji_motor.h"
 #include "infantry_config.h"
+#include "infantry_chassis_follow.h"
+#include "infantry_chassis_kinematics.h"
 #include "infantry_debug.h"
 #include "infantry_gimbal.h"
 #include "infantry_referee.h"
 #include "infantry_types.h"
+#include "rm_critical.h"
 #include "rm_time.h"
 #include "user_lib.h"
 
@@ -29,7 +32,6 @@ static DJIMotorInstance *motor_br = NULL;
 static DJIMotorInstance *motor_bl = NULL;
 
 static float last_wz = 0.0f;
-static uint8_t chassis_enabled = 0U;
 static float last_wheel_ref[4] = {0.0f};
 static float last_power_scale = 1.0f;
 static float filtered_vx = 0.0f;
@@ -37,6 +39,23 @@ static float filtered_vy = 0.0f;
 static float filtered_wz = 0.0f;
 static float follow_wz_integral = 0.0f;
 static uint32_t chassis_last_tick = 0U;
+static InfantryControlMode_e last_control_mode = INFANTRY_CONTROL_FOLLOW;
+/*
+ * 上电/安全停机恢复以及小陀螺退出后，首个 FOLLOW 周期必须立即开始
+ * 消除云台相对底盘的标定零位误差，不能再被角速度低通削弱一拍。
+ */
+static uint8_t follow_recovery_pending = 1U;
+static ChassisTuningSnapshot last_tuning_snapshot;
+
+static float ReadMotorSpeedRadS(const DJIMotorInstance *motor)
+{
+    DJI_Motor_Measure_s measure;
+
+    if (motor == NULL) {
+        return 0.0f;
+    }
+    return DJIMotorGetMeasure(motor, &measure) ? measure.speed_rad_s : 0.0f;
+}
 
 static bool PublishMotorCommand(DJIMotorInstance *motor,
                                 Closeloop_Type_e outer_loop,
@@ -56,6 +75,10 @@ static bool PublishMotorCommand(DJIMotorInstance *motor,
 
 static float ClampFloat(float value, float min_value, float max_value)
 {
+    if (!isfinite(value) || !isfinite(min_value) || !isfinite(max_value) ||
+        min_value > max_value) {
+        return 0.0f;
+    }
     if (value < min_value) {
         return min_value;
     }
@@ -63,20 +86,6 @@ static float ClampFloat(float value, float min_value, float max_value)
         return max_value;
     }
     return value;
-}
-
-static void OmniInverseKinematics(float vx, float vy, float wz, float out[4])
-{
-    const float l = CHASSIS_WHEEL_BASE * 0.5f;
-    const float v_fr = vx - vy - l * wz;
-    const float v_fl = vx + vy - l * wz;
-    const float v_br = -vx - vy - l * wz;
-    const float v_bl = -vx + vy - l * wz;
-
-    out[0] = v_fr / CHASSIS_WHEEL_RADIUS;
-    out[1] = v_fl / CHASSIS_WHEEL_RADIUS;
-    out[2] = v_br / CHASSIS_WHEEL_RADIUS;
-    out[3] = v_bl / CHASSIS_WHEEL_RADIUS;
 }
 
 bool Chassis_Init(void)
@@ -108,6 +117,7 @@ bool Chassis_Init(void)
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = MOTOR_FEED,
+            .speed_unit = MOTOR_SPEED_RAD_PER_SEC,
             .outer_loop_type = SPEED_LOOP,
             .close_loop_type = SPEED_LOOP | CURRENT_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
@@ -141,6 +151,12 @@ bool Chassis_Init(void)
                                   MOTOR_STOP);
     }
 
+    MDBG_CHS("limits vmax_mm_s=%ld wmax_mrad_s=%ld motor_max_mrad_s=%ld ratio_x1000=%ld",
+             (long)(CHASSIS_MAX_TRANSLATION_SPEED * 1000.0f),
+             (long)(CHASSIS_MAX_ROTATION_SPEED_RAD_S * 1000.0f),
+             (long)(M3508_ROTOR_SPEED_LIMIT_RAD_S * 1000.0f),
+             (long)(CHASSIS_MOTOR_REDUCTION_RATIO * 1000.0f));
+
     return (motor_fr != NULL) && (motor_fl != NULL) &&
            (motor_br != NULL) && (motor_bl != NULL);
 }
@@ -149,15 +165,17 @@ void Chassis_Update(Input_Data_t *input)
 {
     uint32_t now_ms;
     float dt_s = MAIN_LOOP_PERIOD_MS / 1000.0f;
-    float yaw_offset_deg;
-    float theta_deg;
-    float cos_theta;
-    float sin_theta;
+    float yaw_offset_rad;
+    float yaw_offset_rate_rad_s;
     float manual_wz;
     float follow_wz = 0.0f;
     float wheel_speed_rad_s[4] = {0.0f};
     float power_scale;
+    uint8_t follow_mode;
+    uint8_t follow_recovery_entry;
     Chassis_Cmd_t cmd = {0};
+    InfantryChassisFollowOutput follow_output = {0};
+    ChassisTuningSnapshot tuning_snapshot = {0};
 
     if (input == NULL || !input->online || input->emergency_stop) {
         MDBG_CHS("stop by input offline/estop");
@@ -176,18 +194,39 @@ void Chassis_Update(Input_Data_t *input)
     }
     chassis_last_tick = now_ms;
 
-    yaw_offset_deg = Gimbal_GetYawOffsetLogicDeg();
-    theta_deg = -yaw_offset_deg;
-    cos_theta = cosf(theta_deg * (float)M_PI / 180.0f);
-    sin_theta = sinf(theta_deg * (float)M_PI / 180.0f);
+    yaw_offset_rad = Gimbal_GetYawOffsetLogicRad();
+    if (!isfinite(yaw_offset_rad)) {
+        yaw_offset_rad = 0.0f;
+        follow_wz_integral = 0.0f;
+    }
+    yaw_offset_rate_rad_s = Gimbal_GetYawRelativeSpeedRadS();
+    if (!isfinite(yaw_offset_rate_rad_s)) {
+        yaw_offset_rate_rad_s = 0.0f;
+    }
+    if (input->control_mode != last_control_mode) {
+        if (last_control_mode == INFANTRY_CONTROL_SPIN &&
+            input->control_mode != INFANTRY_CONTROL_SPIN) {
+            follow_recovery_pending = 1U;
+        }
+        follow_wz_integral = 0.0f;
+        filtered_wz = 0.0f;
+        last_control_mode = input->control_mode;
+    }
 
-    cmd.vx_cmd = input->vx;
-    cmd.vy_cmd = input->vy;
-    cmd.vx = cmd.vx_cmd * cos_theta + cmd.vy_cmd * sin_theta;
-    cmd.vy = -cmd.vx_cmd * sin_theta + cmd.vy_cmd * cos_theta;
-    cmd.yaw_offset_deg = yaw_offset_deg;
-    cmd.mode = (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) ? CHASSIS_FOLLOW : CHASSIS_NO_FOLLOW;
-    cmd.spin_enable = input->spin_enable;
+    follow_mode = (input->control_mode != INFANTRY_CONTROL_SPIN) ? 1U : 0U;
+    follow_recovery_entry =
+        (follow_mode != 0U && follow_recovery_pending != 0U) ? 1U : 0U;
+    cmd.vx_cmd = ClampFloat(input->chassis_x_intent, -1.0f, 1.0f) *
+                 CHASSIS_MAX_TRANSLATION_SPEED;
+    cmd.vy_cmd = ClampFloat(input->chassis_y_intent, -1.0f, 1.0f) *
+                 CHASSIS_MAX_TRANSLATION_SPEED;
+    InfantryChassis_LimitTranslation(&cmd.vx_cmd, &cmd.vy_cmd,
+                                     CHASSIS_MAX_TRANSLATION_SPEED);
+    InfantryChassis_RotateToBody(cmd.vx_cmd, cmd.vy_cmd, yaw_offset_rad,
+                                 &cmd.vx, &cmd.vy);
+    cmd.yaw_offset_rad = yaw_offset_rad;
+    cmd.mode = follow_mode ? CHASSIS_FOLLOW : CHASSIS_NO_FOLLOW;
+    cmd.spin_enable = (input->control_mode == INFANTRY_CONTROL_SPIN) ? 1U : 0U;
     cmd.control_mode = CTRL_ENABLE;
     cmd.ref_type = REF_SPEED;
 
@@ -198,39 +237,44 @@ void Chassis_Update(Input_Data_t *input)
         cmd.vy = 0.0f;
     }
 
-    manual_wz = input->wz;
-    if (input->active_input != INPUT_ACTIVE_VT) {
-        manual_wz = 0.0f;
-    }
-
-    if (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) {
+    manual_wz = ClampFloat(input->chassis_rotate_intent, -1.0f, 1.0f) *
+                CHASSIS_MAX_ROTATION_SPEED_RAD_S;
+    if (follow_mode != 0U) {
         if (fabsf(CHASSIS_FOLLOW_WZ_KI) > 1e-6f) {
-            float integral_limit = CHASSIS_FOLLOW_WZ_I_MAX / fabsf(CHASSIS_FOLLOW_WZ_KI);
-            follow_wz_integral += yaw_offset_deg * dt_s;
+            float integral_limit =
+                CHASSIS_FOLLOW_WZ_I_MAX_RAD_S /
+                fabsf(CHASSIS_FOLLOW_WZ_KI);
+            follow_wz_integral += yaw_offset_rad * dt_s;
             follow_wz_integral = ClampFloat(follow_wz_integral, -integral_limit, integral_limit);
         } else {
             follow_wz_integral = 0.0f;
         }
 
-        follow_wz =
-            -(CHASSIS_FOLLOW_WZ_KP * yaw_offset_deg +
-              CHASSIS_FOLLOW_WZ_KI * follow_wz_integral +
-              CHASSIS_FOLLOW_WZ_KD * Gimbal_GetYawRelativeSpeedDeg()) *
-            ((float)M_PI / 180.0f);
-        follow_wz = ClampFloat(follow_wz, -CHASSIS_FOLLOW_WZ_MAX, CHASSIS_FOLLOW_WZ_MAX);
+        if (InfantryChassis_CalculateFollowOutput(
+                yaw_offset_rad,
+                yaw_offset_rate_rad_s,
+                follow_wz_integral,
+                CHASSIS_FOLLOW_WZ_KP,
+                CHASSIS_FOLLOW_WZ_KI,
+                CHASSIS_FOLLOW_WZ_KD,
+                CHASSIS_FOLLOW_WZ_MAX,
+                &follow_output)) {
+            follow_wz = follow_output.limited_wz_rad_s;
+        }
         cmd.wz = follow_wz + manual_wz;
     } else {
         follow_wz_integral = 0.0f;
         cmd.wz = manual_wz;
-        if (input->spin_enable != 0U) {
-            cmd.wz += SPIN_ROTATE_SPEED_RAD_S;
+        if (input->control_mode == INFANTRY_CONTROL_SPIN) {
+            cmd.wz += CHASSIS_SPIN_SPEED_RAD_S;
         }
     }
 
     if (fabsf(cmd.wz) < CHASSIS_DEADZONE_WZ) {
         cmd.wz = 0.0f;
     }
-    cmd.wz = ClampFloat(cmd.wz, -CHASSIS_MAX_WZ, CHASSIS_MAX_WZ);
+    cmd.wz = ClampFloat(cmd.wz, -CHASSIS_MAX_ROTATION_SPEED_RAD_S,
+                        CHASSIS_MAX_ROTATION_SPEED_RAD_S);
 
     g_robot.chassis = cmd;
     last_wz = cmd.wz;
@@ -246,24 +290,59 @@ void Chassis_Update(Input_Data_t *input)
     } else {
         filtered_vx = filtered_vx * CHASSIS_SPEED_FILTER_COEF + cmd.vx * (1.0f - CHASSIS_SPEED_FILTER_COEF);
         filtered_vy = filtered_vy * CHASSIS_SPEED_FILTER_COEF + cmd.vy * (1.0f - CHASSIS_SPEED_FILTER_COEF);
-        filtered_wz = filtered_wz * CHASSIS_SPEED_FILTER_COEF + cmd.wz * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+        if (follow_recovery_entry != 0U) {
+            /* 标定正姿态恢复首拍直接生效；平移仍保留原有滤波。 */
+            filtered_wz = cmd.wz;
+        } else {
+            filtered_wz = filtered_wz * CHASSIS_SPEED_FILTER_COEF +
+                          cmd.wz * (1.0f - CHASSIS_SPEED_FILTER_COEF);
+        }
+    }
+    if (follow_recovery_entry != 0U) {
+        follow_recovery_pending = 0U;
     }
 
-    OmniInverseKinematics(filtered_vx, filtered_vy, filtered_wz, wheel_speed_rad_s);
+    InfantryChassis_OmniInverse(filtered_vx, filtered_vy, filtered_wz,
+                                CHASSIS_WHEEL_BASE, CHASSIS_WHEEL_RADIUS,
+                                wheel_speed_rad_s);
 
     for (uint8_t i = 0; i < 4U; i++) {
-        float speed_dps = wheel_speed_rad_s[i] * 180.0f / (float)M_PI;
+        float motor_speed_rad_s = InfantryChassis_WheelToMotorSpeedRadS(
+            wheel_speed_rad_s[i], CHASSIS_MOTOR_REDUCTION_RATIO);
         float speed_deadzone =
-            (input->gimbal_mode == GIMBAL_FOLLOW_CHASSIS) ? CHASSIS_FOLLOW_SPEED_DEADZONE : CHASSIS_SPEED_DEADZONE;
-        speed_dps *= CHASSIS_SPEED_SCALE * power_scale;
-        if (fabsf(speed_dps) < speed_deadzone) {
-            speed_dps = 0.0f;
+            follow_mode ? CHASSIS_FOLLOW_MOTOR_SPEED_DEADZONE_RAD_S
+                        : CHASSIS_MOTOR_SPEED_DEADZONE_RAD_S;
+        motor_speed_rad_s *= power_scale;
+        if (fabsf(motor_speed_rad_s) < speed_deadzone) {
+            motor_speed_rad_s = 0.0f;
         }
-        last_wheel_ref[i] = ClampFloat(speed_dps, -M3508_SPEED_MAX, M3508_SPEED_MAX);
+        last_wheel_ref[i] = motor_speed_rad_s;
     }
+    InfantryChassis_NormalizeWheelSpeeds(
+        last_wheel_ref, M3508_ROTOR_SPEED_LIMIT_RAD_S);
 
-    if (!chassis_enabled) {
-        chassis_enabled = 1U;
+    tuning_snapshot.input_y_intent = input->chassis_y_intent;
+    tuning_snapshot.yaw_error_rad = yaw_offset_rad;
+    tuning_snapshot.yaw_error_rate_rad_s = yaw_offset_rate_rad_s;
+    tuning_snapshot.follow_p_rad_s = follow_output.p_rad_s;
+    tuning_snapshot.follow_i_rad_s = follow_output.i_rad_s;
+    tuning_snapshot.follow_d_rad_s = follow_output.d_rad_s;
+    tuning_snapshot.follow_raw_wz_rad_s = follow_output.raw_wz_rad_s;
+    tuning_snapshot.follow_limited_wz_rad_s =
+        follow_output.limited_wz_rad_s;
+    tuning_snapshot.command_vx_m_s = cmd.vx;
+    tuning_snapshot.command_vy_m_s = cmd.vy;
+    tuning_snapshot.command_wz_rad_s = cmd.wz;
+    tuning_snapshot.filtered_vx_m_s = filtered_vx;
+    tuning_snapshot.filtered_vy_m_s = filtered_vy;
+    tuning_snapshot.filtered_wz_rad_s = filtered_wz;
+    memcpy(tuning_snapshot.wheel_ref_rad_s,
+           last_wheel_ref,
+           sizeof(last_wheel_ref));
+    {
+        RmCriticalState critical_state = RmCritical_Enter();
+        last_tuning_snapshot = tuning_snapshot;
+        RmCritical_Exit(critical_state);
     }
 
     if (motor_fr != NULL) {
@@ -283,10 +362,10 @@ void Chassis_Update(Input_Data_t *input)
                                   last_wheel_ref[3], MOTOR_ENALBED);
     }
 
-    MDBG_CHS("mode=%u spin=%u off=%ld cmd(vx=%ld vy=%ld wz=%ld) filt(vx=%ld vy=%ld wz=%ld)",
+    MDBG_CHS("mode=%u spin=%u off_mrad=%ld cmd(vx=%ld vy=%ld wz=%ld) filt(vx=%ld vy=%ld wz=%ld)",
              (unsigned)cmd.mode,
              (unsigned)cmd.spin_enable,
-             (long)(cmd.yaw_offset_deg * 10.0f),
+             (long)(cmd.yaw_offset_rad * 1000.0f),
              (long)(cmd.vx * 1000.0f),
              (long)(cmd.vy * 1000.0f),
              (long)(cmd.wz * 1000.0f),
@@ -298,17 +377,25 @@ void Chassis_Update(Input_Data_t *input)
 void Chassis_Stop(void)
 {
     last_wz = 0.0f;
-    chassis_enabled = 0U;
     last_power_scale = 0.0f;
     filtered_vx = 0.0f;
     filtered_vy = 0.0f;
     filtered_wz = 0.0f;
     follow_wz_integral = 0.0f;
     chassis_last_tick = 0U;
+    last_control_mode = INFANTRY_CONTROL_FOLLOW;
+    follow_recovery_pending = 1U;
     memset(last_wheel_ref, 0, sizeof(last_wheel_ref));
+    {
+        RmCriticalState critical_state = RmCritical_Enter();
+        memset(&last_tuning_snapshot, 0, sizeof(last_tuning_snapshot));
+        RmCritical_Exit(critical_state);
+    }
 
-    g_robot.chassis.control_mode = CTRL_ZERO_FORCE;
-    g_robot.chassis.ref_type = REF_SPEED;
+    g_robot.chassis = (Chassis_Cmd_t){
+        .control_mode = CTRL_ZERO_FORCE,
+        .ref_type = REF_SPEED,
+    };
 
     if (motor_fr != NULL) {
         (void)PublishMotorCommand(motor_fr, CHASSIS_RUN_LOOP_NORMAL, 0.0f,
@@ -339,22 +426,36 @@ float Chassis_GetWz(void)
     return last_wz;
 }
 
-float Chassis_GetFRSpeedRef(void)
+float Chassis_GetFRMotorSpeedRefRadS(void)
 {
     return last_wheel_ref[0];
 }
 
-float Chassis_GetFRSpeedFdb(void)
+float Chassis_GetFRMotorSpeedFdbRadS(void)
 {
-    DJI_Motor_Measure_s measure;
-
-    if (motor_fr == NULL) {
-        return 0.0f;
-    }
-    return DJIMotorGetMeasure(motor_fr, &measure) ? measure.speed_aps : 0.0f;
+    return ReadMotorSpeedRadS(motor_fr);
 }
 
 float Chassis_GetPowerScale(void)
 {
     return last_power_scale;
+}
+
+bool Chassis_GetTuningSnapshot(ChassisTuningSnapshot *snapshot)
+{
+    RmCriticalState critical_state;
+
+    if (snapshot == NULL) {
+        return false;
+    }
+
+    critical_state = RmCritical_Enter();
+    *snapshot = last_tuning_snapshot;
+    RmCritical_Exit(critical_state);
+
+    snapshot->wheel_fdb_rad_s[0] = ReadMotorSpeedRadS(motor_fr);
+    snapshot->wheel_fdb_rad_s[1] = ReadMotorSpeedRadS(motor_fl);
+    snapshot->wheel_fdb_rad_s[2] = ReadMotorSpeedRadS(motor_br);
+    snapshot->wheel_fdb_rad_s[3] = ReadMotorSpeedRadS(motor_bl);
+    return true;
 }

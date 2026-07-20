@@ -275,10 +275,10 @@ static void VT_LostCallback(void *id)
         USARTServiceInit(vt_usart_instance);
 }
 
-static void VT_ReinitUart(UART_HandleTypeDef *uart_handle)
+static bool VT_ReinitUart(UART_HandleTypeDef *uart_handle)
 {
     if (uart_handle == NULL)
-        return;
+        return false;
 
     (void)HAL_UART_DeInit(uart_handle);
     uart_handle->Init.BaudRate = 921600;
@@ -289,18 +289,29 @@ static void VT_ReinitUart(UART_HandleTypeDef *uart_handle)
     uart_handle->Init.HwFlowCtl = UART_HWCONTROL_NONE;
     uart_handle->Init.OverSampling = UART_OVERSAMPLING_16;
 
-    if (HAL_UART_Init(uart_handle) != HAL_OK)
+    if (HAL_UART_Init(uart_handle) != HAL_OK) {
         LOGWARNING("[vt] uart reinit failed");
+        return false;
+    }
+    return true;
 }
 
 VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
+{
+    return VT_InitWithTimeout(uart_handle, VT_DEFAULT_TIMEOUT_MS);
+}
+
+VT_Ctrl_t *VT_InitWithTimeout(UART_HandleTypeDef *uart_handle,
+                              uint32_t timeout_ms)
 {
     const VT_Ctrl_t empty = {0};
 
     VT_PublishCtrl(&empty);
     vt_init_flag = 0U;
     vt_stream_len = 0u;
-    VT_ReinitUart(uart_handle);
+    if (!VT_ReinitUart(uart_handle)) {
+        return NULL;
+    }
 
     {
         USART_Init_Config_s conf = {0};
@@ -315,7 +326,8 @@ VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle)
 
     {
         DaemonConfig daemon_conf = {
-            .timeout_ms = 200U, // 200ms timeout, VT frame interval is around 14ms
+            .timeout_ms = (timeout_ms != 0U) ? timeout_ms
+                                             : VT_DEFAULT_TIMEOUT_MS,
             .callback = VT_LostCallback,
             .owner = NULL,
         };

@@ -223,6 +223,7 @@ void CANSetDLC(CANInstance *instance, uint8_t length)
 uint8_t CANTransmit(CANInstance *instance, uint32_t timeout_us)
 {
     static uint32_t busy_count;
+    static uint32_t queue_fail_count;
     uint64_t start_us;
 
     if ((instance == NULL) || (instance->can_handle == NULL)) {
@@ -232,9 +233,12 @@ uint8_t CANTransmit(CANInstance *instance, uint32_t timeout_us)
     start_us = RmTime_NowUs();
     while (HAL_CAN_GetTxMailboxesFreeLevel(instance->can_handle) == 0U) {
         if ((RmTime_NowUs() - start_us) >= timeout_us) {
-            LOGWARNING("[bsp_can] mailbox busy, dropped frame (%lu)",
-                       (unsigned long)busy_count);
             busy_count++;
+            if ((busy_count <= 4U) ||
+                ((busy_count & (busy_count - 1U)) == 0U)) {
+                LOGWARNING("[bsp_can] mailbox busy, dropped frames=%lu",
+                           (unsigned long)busy_count);
+            }
             return 0U;
         }
     }
@@ -243,9 +247,12 @@ uint8_t CANTransmit(CANInstance *instance, uint32_t timeout_us)
                             &instance->txconf,
                             instance->tx_buff,
                             &instance->tx_mailbox) != HAL_OK) {
-        LOGWARNING("[bsp_can] failed to queue frame (%lu)",
-                   (unsigned long)busy_count);
-        busy_count++;
+        queue_fail_count++;
+        if ((queue_fail_count <= 4U) ||
+            ((queue_fail_count & (queue_fail_count - 1U)) == 0U)) {
+            LOGWARNING("[bsp_can] failed to queue frames=%lu",
+                       (unsigned long)queue_fail_count);
+        }
         return 0U;
     }
 

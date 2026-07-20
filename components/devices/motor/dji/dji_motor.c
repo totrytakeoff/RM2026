@@ -321,6 +321,11 @@ static void DecodeDJIMotor(CANInstance *can_instance)
         RPM_2_ANGLE_PER_SEC * SPEED_SMOOTH_COEF *
             (float)((int16_t)((uint16_t)rx_buffer[2] << 8U |
                               rx_buffer[3]));
+    next.speed_rad_s =
+        (1.0f - SPEED_SMOOTH_COEF) * next.speed_rad_s +
+        RPM_2_RAD_PER_SEC * SPEED_SMOOTH_COEF *
+            (float)((int16_t)((uint16_t)rx_buffer[2] << 8U |
+                              rx_buffer[3]));
     next.real_current =
         (int16_t)((1.0f - CURRENT_SMOOTH_COEF) *
                       (float)next.real_current +
@@ -356,7 +361,9 @@ static void DJIMotorLostCallback(void *motor_ptr)
         return;
     }
     uint16_t can_bus = motor->motor_can_instance->can_handle == &hcan1 ? 1 : 2;
-    LOGWARNING("[dji_motor] Motor lost, can bus [%d] , id [%d]", can_bus, motor->motor_can_instance->tx_id);
+    LOGERROR("[dji_motor] motor offline, can bus [%u], id [%lu]",
+             (unsigned)can_bus,
+             (unsigned long)motor->motor_can_instance->tx_id);
 }
 
 // 初始化并返回一个固定存储的电机实例。
@@ -607,7 +614,11 @@ void DJIMotorControl()
                                          ? *motor_controller->other_speed_feedback_ptr
                                          : measure->speed_aps);
             else // MOTOR_FEED
-                pid_measure = measure->speed_aps;
+                pid_measure =
+                    (motor_setting->speed_unit ==
+                     MOTOR_SPEED_RAD_PER_SEC)
+                        ? measure->speed_rad_s
+                        : measure->speed_aps;
             // 更新pid_ref进入下一个环
             pid_ref = PIDCalculate(&motor_controller->speed_PID, pid_measure, pid_ref);
         }

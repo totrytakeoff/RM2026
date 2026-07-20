@@ -11,12 +11,15 @@
 #include "infantry_gimbal.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "can.h"
 #include "dji_motor.h"
 #include "ins_task.h"
 #include "infantry_config.h"
 #include "infantry_debug.h"
+#include "infantry_gimbal_limits.h"
+#include "infantry_gimbal_units.h"
 #include "infantry_types.h"
 #include "rm_time.h"
 #include "user_lib.h"
@@ -25,8 +28,8 @@ static DJIMotorInstance *motor_yaw = NULL;
 static DJIMotorInstance *motor_pitch = NULL;
 static uint8_t gimbal_imu_initialized = 0U;
 
-static GimbalMode_e current_mode = GIMBAL_FOLLOW_CHASSIS;
-static GimbalMode_e last_mode_logged = GIMBAL_FOLLOW_CHASSIS;
+static InfantryControlMode_e current_mode = INFANTRY_CONTROL_FOLLOW;
+static InfantryControlMode_e last_mode_logged = INFANTRY_CONTROL_FOLLOW;
 static uint8_t gimbal_enabled = 0U;
 static uint32_t gimbal_last_tick = 0U;
 static uint32_t gimbal_debug_last_tick = 0U;
@@ -49,6 +52,13 @@ static uint8_t pitch_exit_cnt = 0U;
 static uint8_t pitch_brake_stable_count = 0U;
 static uint32_t pitch_brake_start_ms = 0U;
 static uint8_t pitch_pid_reset_request = DJI_MOTOR_PID_RESET_NONE;
+
+static const GimbalPitchLimitConfig pitch_limit_config = {
+    .min_angle_deg = GIMBAL_PITCH_MIN_DEG,
+    .max_angle_deg = GIMBAL_PITCH_MAX_DEG,
+    .soft_margin_deg = GIMBAL_PITCH_SOFT_MARGIN_DEG,
+    .command_to_imu_sign = GIMBAL_PITCH_IMU_DIRECTION_SIGN,
+};
 
 static float MotorTotalAngle(const DJIMotorInstance *motor)
 {
@@ -79,6 +89,10 @@ static float MotorSpeed(const DJIMotorInstance *motor)
 
 static float ClampFloat(float value, float min_value, float max_value)
 {
+    if (!isfinite(value) || !isfinite(min_value) || !isfinite(max_value) ||
+        min_value > max_value) {
+        return 0.0f;
+    }
     if (value < min_value) {
         return min_value;
     }
@@ -168,104 +182,41 @@ static void ResetPitchState(void)
     pitch_brake_start_ms = 0U;
 }
 
-static void UpdatePitchGravityFeedforward(void)
+static void UpdatePitchGravityFeedforward(bool imu_available,
+                                          float pitch_imu_deg)
 {
     float pitch_ff_raw;
 
-    if (motor_pitch == NULL) {
+    if (motor_pitch == NULL || !imu_available || !isfinite(pitch_imu_deg)) {
         pitch_current_ff = 0.0f;
         return;
     }
 
-    pitch_ff_raw =
-        PITCH_GRAVITY_FF_K *
-        sinf((MotorTotalAngle(motor_pitch) - PITCH_GRAVITY_FF_OFFSET_DEG) *
-             (float)M_PI / 180.0f);
-    pitch_ff_raw = ClampFloat(pitch_ff_raw, -PITCH_GRAVITY_FF_MAX, PITCH_GRAVITY_FF_MAX);
-    pitch_current_ff = pitch_current_ff * PITCH_FF_LPF + pitch_ff_raw * (1.0f - PITCH_FF_LPF);
+    pitch_ff_raw = InfantryGimbal_GravityFeedforward(
+        pitch_imu_deg, PITCH_GRAVITY_HORIZONTAL_DEG,
+        PITCH_GRAVITY_FF_K, PITCH_GRAVITY_FF_MAX);
+    pitch_current_ff = pitch_current_ff * PITCH_FF_LPF +
+                       pitch_ff_raw * (1.0f - PITCH_FF_LPF);
 }
 
 static float GetPitchSpeedFeedback(void)
 {
-    attitude_t attitude;
+    attitude_t attitude = {0};
 
     if (ReadAttitude(&attitude)) {
-        return attitude.Gyro[0];
+        return InfantryGimbal_RadPerSecToDegPerSec(attitude.Gyro[0]);
     }
     return (motor_pitch != NULL) ? MotorSpeed(motor_pitch) : 0.0f;
 }
 
-static uint8_t IsVTMouseActive(const Input_Data_t *input)
+static void UpdatePitchControlMode(const Input_Data_t *input, uint32_t now_ms)
 {
-    if (input == NULL) {
-        return 0U;
-    }
-    return (input->active_input == INPUT_ACTIVE_VT &&
-            (input->vt_raw.mouse_x != 0 || input->vt_raw.mouse_y != 0))
-               ? 1U
-               : 0U;
-}
-
-static float SelectYawDeadzone(const Input_Data_t *input)
-{
-    if (input == NULL) {
-        return GIMBAL_SPEED_DEADZONE_ET08;
-    }
-    if (input->active_input == INPUT_ACTIVE_ET08) {
-        return GIMBAL_SPEED_DEADZONE_ET08;
-    }
-    if (IsVTMouseActive(input)) {
-        return GIMBAL_SPEED_DEADZONE_VT_MOUSE;
-    }
-    return GIMBAL_SPEED_DEADZONE_VT_STICK;
-}
-
-static float SelectPitchDeadzone(const Input_Data_t *input)
-{
-    if (input == NULL) {
-        return GIMBAL_SPEED_DEADZONE_ET08;
-    }
-    if (input->active_input == INPUT_ACTIVE_ET08) {
-        return GIMBAL_SPEED_DEADZONE_ET08;
-    }
-    if (IsVTMouseActive(input)) {
-        return GIMBAL_SPEED_DEADZONE_VT_MOUSE;
-    }
-    return GIMBAL_SPEED_DEADZONE_VT_STICK;
-}
-
-static float SelectPitchSpeedFullScale(const Input_Data_t *input)
-{
-    if (input == NULL) {
-        return GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
-    }
-    if (input->active_input == INPUT_ACTIVE_ET08) {
-        return GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
-    }
-    if (IsVTMouseActive(input)) {
-        return VT_MOUSE_PITCH_MODE_FULL_SCALE;
-    }
-    return 660.0f * VT_STICK_PITCH_SPEED_SCALE;
-}
-
-static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_cmd, uint32_t now_ms)
-{
-    int16_t pitch_abs = 0;
-
     if (input == NULL) {
         return;
     }
 
-    if (input->active_input == INPUT_ACTIVE_ET08) {
-        int16_t pitch_in = input->rc_raw.right_y;
-        pitch_abs = (pitch_in >= 0) ? pitch_in : (int16_t)(-pitch_in);
-    } else {
-        float speed_ratio = fabsf(pitch_speed_cmd) / SelectPitchSpeedFullScale(input);
-        pitch_abs = (int16_t)ClampFloat(speed_ratio * RC_STICK_SCALE, 0.0f, RC_STICK_SCALE);
-    }
-
     if (pitch_cmd_active != 0U) {
-        if (pitch_abs <= 90) {
+        if (input->pitch_control_active == 0U) {
             if (pitch_exit_cnt < 255U) {
                 pitch_exit_cnt++;
             }
@@ -278,7 +229,7 @@ static void UpdatePitchControlMode(const Input_Data_t *input, float pitch_speed_
             pitch_cmd_active = 0U;
         }
     } else {
-        if (pitch_abs >= 180) {
+        if (input->pitch_control_active != 0U) {
             if (pitch_enter_cnt < 255U) {
                 pitch_enter_cnt++;
             }
@@ -332,6 +283,11 @@ bool Gimbal_Init(void)
     Motor_Init_Config_s pitch_config;
     attitude_t attitude;
 
+    if (!GimbalPitchLimit_IsConfigValid(&pitch_limit_config)) {
+        MDBG_GMB("invalid pitch limit config");
+        return false;
+    }
+
     gimbal_imu_initialized =
         (INS_InitWithTimeout(INFANTRY_IMU_INIT_TIMEOUT_MS) != NULL) ? 1U : 0U;
     motor_yaw_imu_angle_fdb = 0.0f;
@@ -339,7 +295,7 @@ bool Gimbal_Init(void)
     motor_pitch_imu_speed_fdb = 0.0f;
 
     if (gimbal_imu_initialized == 0U) {
-        MDBG_GMB("INS init failed status=%u sensor_error=0x%02x",
+        MDBG_SYS("INS init failed status=%u sensor_error=0x%02x",
                  (unsigned)INS_GetInitStatus(),
                  (unsigned)INS_GetSensorInitError());
         return false;
@@ -353,20 +309,20 @@ bool Gimbal_Init(void)
         },
         .controller_param_init_config = {
             .angle_PID = {
-                .Kp = YAW_SEPARATE_ANGLE_KP,
-                .Ki = YAW_SEPARATE_ANGLE_KI,
-                .Kd = YAW_SEPARATE_ANGLE_KD,
+                .Kp = YAW_ANGLE_KP,
+                .Ki = YAW_ANGLE_KI,
+                .Kd = YAW_ANGLE_KD,
                 .IntegralLimit = 500.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = YAW_SEPARATE_ANGLE_MAX_OUT,
+                .MaxOut = YAW_ANGLE_MAX_OUT,
             },
             .speed_PID = {
-                .Kp = YAW_SEPARATE_SPEED_KP,
-                .Ki = YAW_SEPARATE_SPEED_KI,
-                .Kd = YAW_SEPARATE_SPEED_KD,
+                .Kp = YAW_SPEED_KP,
+                .Ki = YAW_SPEED_KI,
+                .Kd = YAW_SPEED_KD,
                 .IntegralLimit = 1000.0f,
                 .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
-                .MaxOut = YAW_SEPARATE_SPEED_MAX_OUT,
+                .MaxOut = YAW_SPEED_MAX_OUT,
             },
             .other_angle_feedback_ptr = (gimbal_imu_initialized != 0U)
                                             ? &motor_yaw_imu_angle_fdb
@@ -378,6 +334,7 @@ bool Gimbal_Init(void)
         .controller_setting_init_config = {
             .angle_feedback_source = OTHER_FEED,
             .speed_feedback_source = OTHER_FEED,
+            .speed_unit = MOTOR_SPEED_DEG_PER_SEC,
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
@@ -414,6 +371,7 @@ bool Gimbal_Init(void)
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = OTHER_FEED,
+            .speed_unit = MOTOR_SPEED_DEG_PER_SEC,
             .outer_loop_type = SPEED_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
             .feedforward_flag = CURRENT_FEEDFORWARD,
@@ -423,6 +381,12 @@ bool Gimbal_Init(void)
 
     motor_yaw = DJIMotorInit(&yaw_config);
     motor_pitch = DJIMotorInit(&pitch_config);
+
+    if ((motor_yaw == NULL) || (motor_pitch == NULL)) {
+        MDBG_SYS("gimbal motor registration failed yaw=%u pitch=%u",
+                 motor_yaw != NULL ? 1U : 0U,
+                 motor_pitch != NULL ? 1U : 0U);
+    }
 
     if (motor_yaw != NULL) {
         bool imu_available = ReadAttitude(&attitude);
@@ -442,8 +406,14 @@ bool Gimbal_Init(void)
     }
 
     ResetPitchState();
-    current_mode = GIMBAL_FOLLOW_CHASSIS;
+    current_mode = INFANTRY_CONTROL_FOLLOW;
     last_mode_logged = current_mode;
+    MDBG_GMB("limits yaw_dps=%ld pitch_dps=%ld gravity_k=%ld gravity_max=%ld horizontal_x10=%ld",
+             (long)GIMBAL_YAW_MAX_SPEED_DEG_S,
+             (long)GIMBAL_PITCH_MAX_SPEED_DEG_S,
+             (long)PITCH_GRAVITY_FF_K,
+             (long)PITCH_GRAVITY_FF_MAX,
+             (long)(PITCH_GRAVITY_HORIZONTAL_DEG * 10.0f));
     return (gimbal_imu_initialized != 0U) && (motor_yaw != NULL) &&
            (motor_pitch != NULL);
 }
@@ -457,11 +427,13 @@ void Gimbal_MotorStep(void)
     }
 
     motor_yaw_imu_angle_fdb = attitude.YawTotalAngle;
-    motor_yaw_imu_speed_fdb = attitude.Gyro[2];
-    motor_pitch_imu_speed_fdb = attitude.Gyro[0];
+    motor_yaw_imu_speed_fdb =
+        InfantryGimbal_RadPerSecToDegPerSec(attitude.Gyro[2]);
+    motor_pitch_imu_speed_fdb =
+        InfantryGimbal_RadPerSecToDegPerSec(attitude.Gyro[0]);
 }
 
-void Gimbal_Update(Input_Data_t *input, float chassis_wz)
+void Gimbal_Update(Input_Data_t *input)
 {
     uint32_t now_ms;
     float dt_s = 0.02f;
@@ -469,10 +441,9 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
     float pitch_speed_cmd;
     float pitch_reference;
     Closeloop_Type_e pitch_outer_loop;
-    attitude_t attitude;
+    attitude_t attitude = {0};
     bool imu_available;
     Gimbal_Cmd_t cmd = {0};
-    (void)chassis_wz;
 
     if (input == NULL || !input->online || input->emergency_stop) {
         MDBG_GMB("stop by input offline/estop");
@@ -502,17 +473,18 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
     }
 
-    current_mode = input->gimbal_mode;
+    current_mode = input->control_mode;
     if (current_mode != last_mode_logged) {
         MDBG_GMB("mode switch %u -> %u", (unsigned)last_mode_logged, (unsigned)current_mode);
         last_mode_logged = current_mode;
     }
 
-    UpdatePitchGravityFeedforward();
+    UpdatePitchGravityFeedforward(imu_available, attitude.Pitch);
     GetPitchSpeedFeedback();
 
-    yaw_speed_cmd = float_constrain(input->yaw_speed, -GM6020_SPEED_MAX, GM6020_SPEED_MAX);
-    if (fabsf(yaw_speed_cmd) < SelectYawDeadzone(input)) {
+    yaw_speed_cmd = ClampFloat(input->gimbal_yaw_intent, -1.0f, 1.0f) *
+                    GIMBAL_YAW_MAX_SPEED_DEG_S;
+    if (input->yaw_control_active == 0U) {
         yaw_speed_cmd = 0.0f;
     }
     yaw_hold_ref += yaw_speed_cmd * dt_s;
@@ -520,22 +492,21 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
     (void)PublishYawCommand(yaw_hold_ref, MOTOR_ENALBED, imu_available,
                             DJI_MOTOR_PID_RESET_NONE);
 
-    pitch_speed_cmd = float_constrain(input->pitch_speed, -GM6020_SPEED_MAX, GM6020_SPEED_MAX);
-    if (fabsf(pitch_speed_cmd) < SelectPitchDeadzone(input)) {
+    pitch_speed_cmd = ClampFloat(input->gimbal_pitch_intent, -1.0f, 1.0f) *
+                      GIMBAL_PITCH_MAX_SPEED_DEG_S;
+    if (input->pitch_control_active == 0U) {
         pitch_speed_cmd = 0.0f;
     }
+    pitch_speed_cmd = GimbalPitchLimit_ClampSpeed(
+        pitch_speed_cmd, imu_available,
+        imu_available ? attitude.Pitch : 0.0f, &pitch_limit_config);
 
-    UpdatePitchControlMode(input, pitch_speed_cmd, now_ms);
+    UpdatePitchControlMode(input, now_ms);
 
     if (pitch_ctrl_mode == AXIS_CTRL_SPEED) {
-        int16_t pitch_abs = (input->active_input == INPUT_ACTIVE_ET08)
-                                ? ((input->rc_raw.right_y >= 0) ? input->rc_raw.right_y : -input->rc_raw.right_y)
-                                : (int16_t)ClampFloat(fabsf(pitch_speed_cmd) / SelectPitchSpeedFullScale(input) *
-                                                          RC_STICK_SCALE,
-                                                      0.0f, RC_STICK_SCALE);
         pitch_outer_loop = SPEED_LOOP;
         pitch_reference = pitch_speed_cmd;
-        if (fabsf(pitch_speed_cmd) >= 300.0f && pitch_abs >= 220) {
+        if (fabsf(pitch_speed_cmd) > 1.0f) {
             pitch_hold_ref = MotorTotalAngle(motor_pitch);
         }
     } else if (pitch_ctrl_mode == AXIS_CTRL_BRAKE) {
@@ -543,7 +514,11 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
         pitch_reference = 0.0f;
     } else {
         pitch_outer_loop = ANGLE_LOOP;
-        pitch_reference = pitch_hold_ref;
+        pitch_reference = GimbalPitchLimit_ClampAngleReference(
+            pitch_hold_ref, MotorTotalAngle(motor_pitch), imu_available,
+            imu_available ? attitude.Pitch : 0.0f, &pitch_limit_config);
+        /* 丢弃被执行层截断的外向目标，避免每周期重新请求越界。 */
+        pitch_hold_ref = pitch_reference;
     }
     (void)PublishPitchCommand(pitch_outer_loop, pitch_reference,
                               MOTOR_ENALBED, imu_available);
@@ -569,7 +544,7 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
 
     if ((now_ms - gimbal_debug_last_tick) >= GIMBAL_DEBUG_DETAIL_PERIOD_MS) {
         gimbal_debug_last_tick = now_ms;
-        MDBG_GMB("mode=%u pitch_loop=%u yaw_ref=%ld yaw_imu=%ld off=%ld pitch_ref=%ld pitch_enc=%ld pitch_imu_spd=%ld",
+        MDBG_GMB("mode=%u pitch_loop=%u yaw_ref=%ld yaw_imu=%ld off=%ld pitch_ref=%ld pitch_enc=%ld pitch_imu=%ld pitch_spd=%ld ff=%ld",
                  (unsigned)current_mode,
                  (unsigned)pitch_ctrl_mode,
                  (long)(yaw_hold_ref * 10.0f),
@@ -577,7 +552,9 @@ void Gimbal_Update(Input_Data_t *input, float chassis_wz)
                  (long)(Gimbal_GetYawOffsetLogicDeg() * 10.0f),
                  (long)(pitch_hold_ref * 10.0f),
                  (long)(Gimbal_GetPitchEncoderAngle() * 10.0f),
-                 (long)(GetPitchSpeedFeedback() * 10.0f));
+                 (long)(attitude.Pitch * 10.0f),
+                 (long)(GetPitchSpeedFeedback() * 10.0f),
+                 (long)pitch_current_ff);
     }
 }
 
@@ -592,8 +569,12 @@ void Gimbal_Stop(void)
     ResetPitchState();
     RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
 
-    g_robot.gimbal.control_mode = CTRL_ZERO_FORCE;
-    g_robot.gimbal.ref_type = REF_SPEED;
+    g_robot.gimbal = (Gimbal_Cmd_t){
+        .mode = current_mode,
+        .pitch_ctrl_mode = AXIS_CTRL_ANGLE,
+        .control_mode = CTRL_ZERO_FORCE,
+        .ref_type = REF_SPEED,
+    };
 
     if (motor_yaw != NULL) {
         (void)PublishYawCommand(yaw_hold_ref, MOTOR_STOP, INS_IsReady(),
@@ -605,7 +586,7 @@ void Gimbal_Stop(void)
     }
 }
 
-GimbalMode_e Gimbal_GetMode(void)
+InfantryControlMode_e Gimbal_GetMode(void)
 {
     return current_mode;
 }
@@ -620,7 +601,7 @@ float Gimbal_GetYawSpeedFdb(void)
     attitude_t attitude;
 
     if (ReadAttitude(&attitude)) {
-        return attitude.Gyro[2];
+        return InfantryGimbal_RadPerSecToDegPerSec(attitude.Gyro[2]);
     }
     if (motor_yaw == NULL) {
         return 0.0f;
@@ -678,6 +659,11 @@ float Gimbal_GetPitchIMUAngle(void)
     return ReadAttitude(&attitude) ? attitude.Pitch : 0.0f;
 }
 
+float Gimbal_GetPitchGravityFeedforward(void)
+{
+    return pitch_current_ff;
+}
+
 float Gimbal_GetYawOffsetRawDeg(void)
 {
     if (motor_yaw == NULL) {
@@ -692,12 +678,20 @@ float Gimbal_GetYawOffsetLogicDeg(void)
     return WrapAngleDeg180(Gimbal_GetYawOffsetRawDeg() - YAW_OFFSET_LOGIC_ZERO_DEG);
 }
 
-float Gimbal_GetYawRelativeSpeedDeg(void)
+float Gimbal_GetYawOffsetLogicRad(void)
 {
+    return Gimbal_GetYawOffsetLogicDeg() * ((float)M_PI / 180.0f);
+}
+
+float Gimbal_GetYawRelativeSpeedRadS(void)
+{
+    DJI_Motor_Measure_s measure;
+
     if (motor_yaw == NULL) {
         return 0.0f;
     }
-    return MotorSpeed(motor_yaw);
+    return DJIMotorGetMeasure(motor_yaw, &measure) ? measure.speed_rad_s
+                                                   : 0.0f;
 }
 
 float Gimbal_GetYawLogicAngle(void)
@@ -711,13 +705,53 @@ float Gimbal_GetYawLogicAngle(void)
                            IMU_YAW_LOGIC_ZERO_TOTAL_DEG);
 }
 
+bool Gimbal_AreMotorsHealthy(void)
+{
+    return DJIMotorIsOnline(motor_yaw) && DJIMotorIsOnline(motor_pitch);
+}
+
 bool Gimbal_IsHealthy(void)
 {
     return (gimbal_imu_initialized != 0U) && INS_IsReady() &&
-           DJIMotorIsOnline(motor_yaw) && DJIMotorIsOnline(motor_pitch);
+           Gimbal_AreMotorsHealthy();
 }
 
 AxisCtrlMode_e Gimbal_GetPitchCtrlMode(void)
 {
     return pitch_ctrl_mode;
+}
+
+bool Gimbal_GetYawTuningSnapshot(GimbalYawTuningSnapshot *snapshot)
+{
+    DJI_Motor_Measure_s measure = {0};
+    attitude_t attitude = {0};
+    bool motor_valid;
+    bool imu_valid;
+
+    if (snapshot == NULL) {
+        return false;
+    }
+    memset(snapshot, 0, sizeof(*snapshot));
+
+    motor_valid = motor_yaw != NULL &&
+                  DJIMotorGetMeasure(motor_yaw, &measure);
+    imu_valid = ReadAttitude(&attitude);
+
+    if (motor_valid) {
+        snapshot->encoder_ecd = measure.ecd;
+        snapshot->encoder_single_deg = measure.angle_single_round;
+        snapshot->offset_raw_deg = WrapAngleDeg180(
+            measure.angle_single_round - YAW_ALIGN_ANGLE_DEG);
+        snapshot->offset_logic_deg = WrapAngleDeg180(
+            snapshot->offset_raw_deg - YAW_OFFSET_LOGIC_ZERO_DEG);
+        snapshot->relative_speed_rad_s = measure.speed_rad_s;
+    }
+    snapshot->target_total_deg = yaw_hold_ref;
+    if (imu_valid) {
+        snapshot->imu_total_deg = attitude.YawTotalAngle;
+        snapshot->imu_single_deg = attitude.Yaw;
+        snapshot->imu_gyro_z_rad_s = attitude.Gyro[2];
+    }
+
+    return motor_valid && imu_valid;
 }

@@ -1,8 +1,6 @@
 /**
  ******************************************************************************
  * @file	bsp_dwt.h
- * @author  Wang Hongxi
- * @author  modified by NeoZng
  * @version V1.2.0
  * @date    2022/3/8
  * @brief

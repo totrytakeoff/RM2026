@@ -26,9 +26,10 @@ cd /path/to/RM2026
 
 ## 串口资源规范
 
-1. 当图传链路占用 `USART6` 时，日志默认走 RTT，不占 UART。  
-2. 全工程默认编译宏为 RTT：`BSP_LOG_USE_UART=0`。  
-3. 仅在必要时可临时回退 UART 日志（命令行覆盖）：
+1. 全工程基础日志默认走 RTT：`BSP_LOG_USE_UART=0`。
+2. 当前 ET08 正式步兵调试固件会把应用诊断同时镜像到 RTT 与 `USART6`，串口参数为 `115200 8N1`。
+3. 切换为 VT 后端前必须先迁走或关闭 `USART6` 应用诊断；配置中的编译期冲突检查会阻止两者同时占用。
+4. 其他固件仅在必要时可临时回退 UART 基础日志（命令行覆盖）：
 
 ```bash
 cmake -B build -S . -DBSP_LOG_USE_UART=1 -DBSP_LOG_UART_PORT=1

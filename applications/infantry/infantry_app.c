@@ -11,12 +11,16 @@
 #include "infantry_input.h"
 #include "infantry_referee.h"
 #include "infantry_shoot.h"
+#include "infantry_tuning_telemetry.h"
+#include "ins_task.h"
 #include "main.h"
 
 Robot_Context_t g_robot;
 
 static RmSafetyManager safety_manager;
 static atomic_bool task_health_ok;
+static uint8_t last_motor_health_mask;
+static bool motor_health_observed;
 
 void InfantryApp_ForceSafeStop(void)
 {
@@ -28,17 +32,24 @@ void InfantryApp_ForceSafeStop(void)
 
 bool InfantryApp_Init(void)
 {
+    static const RmSafetyPolicy safety_policy = {
+        .require_explicit_rearm =
+            INFANTRY_SAFETY_REQUIRE_EXPLICIT_REARM != 0U,
+    };
     bool input_ready;
     bool chassis_ready;
     bool gimbal_ready;
     bool shoot_ready;
 
     memset(&g_robot, 0, sizeof(g_robot));
-    RmSafety_Init(&safety_manager);
+    RmSafety_InitWithPolicy(&safety_manager, &safety_policy);
     atomic_init(&task_health_ok, true);
+    last_motor_health_mask = 0U;
+    motor_health_observed = false;
     DJIMotorSetGlobalOutputEnabled(false);
 
     MinimalDebug_Init();
+    (void)InfantryTuningTelemetry_Init();
 
     if (!DJIMotorSetCommandTimeout(INFANTRY_MOTOR_COMMAND_TIMEOUT_MS)) {
         MDBG_SYS("invalid motor command timeout");
@@ -66,7 +77,9 @@ bool InfantryApp_Init(void)
         return false;
     }
 
-    MDBG_SYS("infantry application initialized; outputs remain gated");
+    MDBG_SYS("infantry application initialized; safety rearm=%u motor_gate=%u",
+             (unsigned)INFANTRY_SAFETY_REQUIRE_EXPLICIT_REARM,
+             (unsigned)INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH);
     return true;
 }
 
@@ -80,6 +93,11 @@ void InfantryApp_ControlStep(uint32_t now_ms)
 {
     Input_Data_t input;
     RmSafetyInputs safety_inputs;
+    bool chassis_motors_healthy;
+    bool gimbal_motors_healthy;
+    bool shoot_motors_healthy;
+    bool all_motors_healthy;
+    uint8_t motor_health_mask;
 
     (void)now_ms;
     Input_GetData(&input);
@@ -89,11 +107,42 @@ void InfantryApp_ControlStep(uint32_t now_ms)
     safety_inputs.initialization_complete = (g_robot.initialized != 0U);
     safety_inputs.input_online = (input.online != 0U);
     safety_inputs.emergency_stop = (input.emergency_stop != 0U);
+    safety_inputs.operator_enable_request =
+        (input.operator_enable_request != 0U);
+    safety_inputs.operator_safe_position =
+        (input.operator_safe_position != 0U);
+    safety_inputs.operator_arm_event = (input.operator_arm_event != 0U);
     safety_inputs.task_health_ok =
         atomic_load_explicit(&task_health_ok, memory_order_relaxed);
-    safety_inputs.device_health_ok = Chassis_IsHealthy() &&
-                                     Gimbal_IsHealthy() &&
-                                     Shoot_IsHealthy();
+    chassis_motors_healthy = Chassis_IsHealthy();
+    gimbal_motors_healthy = Gimbal_AreMotorsHealthy();
+    shoot_motors_healthy = Shoot_IsHealthy();
+    all_motors_healthy = chassis_motors_healthy &&
+                         gimbal_motors_healthy &&
+                         shoot_motors_healthy;
+    motor_health_mask = (chassis_motors_healthy ? 1U : 0U) |
+                        (gimbal_motors_healthy ? 2U : 0U) |
+                        (shoot_motors_healthy ? 4U : 0U);
+
+    if (!motor_health_observed ||
+        motor_health_mask != last_motor_health_mask) {
+        if (all_motors_healthy) {
+            MDBG_SYS("motor health restored chassis=1 gimbal=1 shoot=1");
+        } else {
+            MDBG_SYS("ERROR motor offline chassis=%u gimbal=%u shoot=%u policy=report-only",
+                     (unsigned)chassis_motors_healthy,
+                     (unsigned)gimbal_motors_healthy,
+                     (unsigned)shoot_motors_healthy);
+        }
+        last_motor_health_mask = motor_health_mask;
+        motor_health_observed = true;
+    }
+
+    /* INS remains safety-critical; motor health is configurable per vehicle. */
+    safety_inputs.device_health_ok =
+        INS_IsReady() &&
+        ((INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH == 0U) ||
+         all_motors_healthy);
 
     if (RmSafety_Update(&safety_manager, &safety_inputs)) {
         MDBG_SYS("safety state=%u reasons=0x%08lx",
@@ -109,7 +158,7 @@ void InfantryApp_ControlStep(uint32_t now_ms)
     }
 
     /* Keep the minimal baseline's execution order unchanged. */
-    Gimbal_Update(&input, Chassis_GetWz());
+    Gimbal_Update(&input);
     Chassis_Update(&input);
     Shoot_Update(&input);
     DJIMotorSetGlobalOutputEnabled(true);
@@ -118,6 +167,11 @@ void InfantryApp_ControlStep(uint32_t now_ms)
 void InfantryApp_DiagnosticsStep(uint32_t now_ms)
 {
     MinimalDebug_UpdatePeriodic(now_ms);
+}
+
+void InfantryApp_TuningTelemetryStep(uint32_t now_ms)
+{
+    InfantryTuningTelemetry_Publish(now_ms);
 }
 
 void InfantryApp_SetTaskHealth(bool healthy)

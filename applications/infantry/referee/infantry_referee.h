@@ -8,6 +8,10 @@
 
 #include "infantry_referee_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void MinimalReferee_Init(void);
 void MinimalReferee_Update(void);
 const MinimalRefereeData_t *MinimalReferee_GetData(void);
@@ -17,5 +21,9 @@ uint8_t MinimalReferee_AllowShoot(void);
 uint8_t MinimalReferee_AllowLoader(void);
 float MinimalReferee_ChassisScale(void);
 float MinimalReferee_FrictionSpeedScale(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* INFANTRY_REFEREE_H */

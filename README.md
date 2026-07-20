@@ -47,6 +47,7 @@ FreeRTOS `app.elf`。目录所有权、静态任务、输入安全、设备健�
 详细状态见：
 
 - [仓库重组基线](docs/architecture/repository_reorganization_baseline.md)
+- [遥控适配器与步兵输入基线](docs/architecture/remote_control_adapter_baseline.md)
 - [步兵 FreeRTOS 迁移基线](docs/migration/infantry_freertos_baseline.md)
 - [安全与任务健康服务](docs/migration/safety_health_service.md)
 - [运行时加固里程碑](docs/migration/runtime_hardening_milestone.md)
@@ -55,4 +56,4 @@ FreeRTOS `app.elf`。目录所有权、静态任务、输入安全、设备健�
 
 项目早期架构和部分迁移代码参考了跃鹿战队开源 `basic_framework`。
 当前项目路径、target 和 API 使用仓库自有命名。完整归属与许可说明见
-`THIRD_PARTY_NOTICES.md`。
+[第三方来源与许可说明](THIRD_PARTY_NOTICES.md)。

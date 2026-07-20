@@ -1,6 +1,5 @@
 /**
  * @file motor_def.h
- * @author neozng
  * @brief  电机通用的数据结构定义
  * @version beta
  * @date 2022-11-01
@@ -22,22 +21,22 @@
  */
 typedef enum
 {
-    OPEN_LOOP = 0b0000,
-    CURRENT_LOOP = 0b0001,
-    SPEED_LOOP = 0b0010,
-    ANGLE_LOOP = 0b0100,
+    OPEN_LOOP = 0x00U,
+    CURRENT_LOOP = 0x01U,
+    SPEED_LOOP = 0x02U,
+    ANGLE_LOOP = 0x04U,
 
     // only for checking
-    SPEED_AND_CURRENT_LOOP = 0b0011,
-    ANGLE_AND_SPEED_LOOP = 0b0110,
-    ALL_THREE_LOOP = 0b0111,
+    SPEED_AND_CURRENT_LOOP = 0x03U,
+    ANGLE_AND_SPEED_LOOP = 0x06U,
+    ALL_THREE_LOOP = 0x07U,
 } Closeloop_Type_e;
 
 typedef enum
 {
-    FEEDFORWARD_NONE = 0b00,
-    CURRENT_FEEDFORWARD = 0b01,
-    SPEED_FEEDFORWARD = 0b10,
+    FEEDFORWARD_NONE = 0x00U,
+    CURRENT_FEEDFORWARD = 0x01U,
+    SPEED_FEEDFORWARD = 0x02U,
     CURRENT_AND_SPEED_FEEDFORWARD = CURRENT_FEEDFORWARD | SPEED_FEEDFORWARD,
 } Feedfoward_Type_e;
 
@@ -47,6 +46,18 @@ typedef enum
     MOTOR_FEED = 0,
     OTHER_FEED,
 } Feedback_Source_e;
+
+/**
+ * 速度闭环的角速度单位。
+ *
+ * 历史代码默认使用 deg/s，因此零值必须保持兼容。新代码应显式选择单位，
+ * 纯速度控制的轮式电机优先使用 SI 单位 rad/s。
+ */
+typedef enum
+{
+    MOTOR_SPEED_DEG_PER_SEC = 0,
+    MOTOR_SPEED_RAD_PER_SEC,
+} Motor_Speed_Unit_e;
 
 /* 电机正反转标志 */
 typedef enum
@@ -76,6 +87,7 @@ typedef struct
     Feedback_Reverse_Flag_e feedback_reverse_flag; // 反馈是否反向
     Feedback_Source_e angle_feedback_source;       // 角度反馈类型
     Feedback_Source_e speed_feedback_source;       // 速度反馈类型
+    Motor_Speed_Unit_e speed_unit;                  // 速度参考、反馈和速度前馈的共同单位
     Feedfoward_Type_e feedforward_flag;            // 前馈标志
 
 } Motor_Control_Setting_s;
@@ -115,7 +127,7 @@ typedef enum
 typedef struct
 {
     float *other_angle_feedback_ptr; // 角度反馈数据指针,注意电机使用total_angle
-    float *other_speed_feedback_ptr; // 速度反馈数据指针,单位为angle per sec
+    float *other_speed_feedback_ptr; // 单位必须与speed_unit一致
 
     float *speed_feedforward_ptr;   // 速度前馈数据指针
     float *current_feedforward_ptr; // 电流前馈数据指针

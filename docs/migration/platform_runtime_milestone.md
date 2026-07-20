@@ -29,12 +29,12 @@ DWT 32 到 64 位扩展在任务/中断间串行化，并按 `2^32` 周期处理
 | --- | ---: |
 | DJI/HT 电机反馈 | 20 ms |
 | LK 电机反馈 | 50 ms |
-| DT7/虚拟 DBUS | 100 ms |
+| DT7/DR16 D-BUS | 100 ms |
 | 视觉 UART/USB | 100 ms / 50 ms |
 | VT 输入 | 200 ms |
 | 裁判链路 | 300 ms |
 | ET08 兼容默认 | 4000 ms |
-| 正式步兵 ET08 | 1000 ms |
+| 正式步兵 ET08 | 100 ms |
 
 全零配置选择服务默认 1000 ms，大于等于 `2^31` ms 的值会被拒绝。
 
@@ -65,7 +65,8 @@ UART 使用 receive-to-idle DMA；HAL busy 恢复会中止旧接收后仅重启�
 - 有界诊断格式化。
 
 正式链接器不预留 C 堆，为启动和中断上下文预留 8 KiB 主栈。每次正式链接会拒绝
-堆分配和 libc 格式化符号。
+堆分配和 libc 格式化符号；引入 C++ 后还拒绝 `new/delete`、异常展开、RTTI、
+`__cxa_guard_*` 和 `__cxa_atexit` 等不允许的运行时依赖。
 
 `RmFormat_Snprintf()`/`RmFormat_Vsnprintf()` 提供固件日志所需的整数、字符串、指针和定点小数格式，
 它是有界固件 formatter，不保证完整 libc `printf` 兼容。

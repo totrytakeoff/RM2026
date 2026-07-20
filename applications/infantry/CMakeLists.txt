@@ -7,10 +7,15 @@ target_include_directories(rm_infantry_config INTERFACE
 
 add_library(rm_app_infantry STATIC
     infantry_app.c
-    command/infantry_input.c
+    command/infantry_input.cpp
+    command/infantry_et08_input_profile.cpp
     chassis/infantry_chassis.c
+    chassis/infantry_chassis_follow.c
+    chassis/infantry_chassis_kinematics.c
     diagnostics/infantry_debug.c
+    diagnostics/infantry_tuning_telemetry.c
     gimbal/infantry_gimbal.c
+    gimbal/infantry_gimbal_limits.c
     referee/infantry_referee.c
     shoot/infantry_shoot.c
 )
@@ -27,6 +32,20 @@ target_include_directories(rm_app_infantry PUBLIC
 )
 
 target_compile_options(rm_app_infantry PRIVATE ${MCU_FLAGS})
+target_compile_features(rm_app_infantry PRIVATE cxx_std_14)
+set_target_properties(rm_app_infantry PROPERTIES
+    CXX_STANDARD 14
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+target_compile_options(rm_app_infantry PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-use-cxa-atexit>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-unwind-tables>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-asynchronous-unwind-tables>
+)
 
 target_link_libraries(rm_app_infantry PUBLIC
     rm_infantry_config

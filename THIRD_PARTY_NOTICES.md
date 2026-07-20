@@ -13,6 +13,8 @@
 历史 PID、CAN 通信、DJI 电机、电机定义和遥控源文件头中还曾包含
 `Copyright (c) 2022 HNU YueLu EC all rights reserved`。相关战队标识统一在本文档
 说明，使普通项目 API 和叙事保持中性，同时不丢失上游归属。
+早期文件元数据中出现的 Wang Hongxi、Liu Wei、NeoZng 等作者信息也在此作为
+历史来源记录；普通源码头和组件使用文档不再承担项目归属叙事。
 
 ```text
 MIT License

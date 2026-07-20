@@ -1,7 +1,5 @@
 # can_comm
 
-<p align='right'>neozng1@hnu.edu.cn</p>
-
 > TODO:
 >
 > 1. 对`CANCommGet()`进行修改，使得其可以返回数据是否更新的相关信息。

@@ -1,8 +1,6 @@
-# 湖南大学RoboMaster电控组通信协议
+# 串口数据帧协议
 
-<p align='right'>Seasky LIUWei</p>
-
-<p align='right'>modified by neozng1@hnu.edu.cn</p>
+文档更新日期：2026-07-19
 
 可用于视觉，以及其他自研模块（仅限串口通信）
 

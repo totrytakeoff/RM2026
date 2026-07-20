@@ -46,7 +46,7 @@
 #include "bsp_log.h"
 #include "daemon.h"
 #include "dji_motor.h"
-#include "remote_control.h"
+#include "dt7_remote.h"
 #include "user_lib.h"
 
 /* Common --------------------------------------------------------------------*/

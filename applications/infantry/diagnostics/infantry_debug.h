@@ -9,6 +9,10 @@
 #include <stdint.h>
 #include "infantry_config.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MINIMAL_DEBUG_TEXT_STREAM_ACTIVE \
     (MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0) && \
      ((((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_VOFA) == 0) || MINIMAL_DEBUG_ALLOW_MIXED_STREAM)))
@@ -24,6 +28,10 @@ void MinimalDebug_LogEventChassis(const char *fmt, ...);
 void MinimalDebug_LogEventGimbal(const char *fmt, ...);
 void MinimalDebug_LogEventShoot(const char *fmt, ...);
 void MinimalDebug_PublishVofaFrame(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #if MINIMAL_DEBUG_TEXT_STREAM_ACTIVE && MINIMAL_DEBUG_MOD_SYSTEM
 #define MDBG_SYS(...) MinimalDebug_LogEventSystem(__VA_ARGS__)

@@ -3,6 +3,7 @@
 #include "bsp_usart.h"
 #include "daemon.h"
 #include "rm_critical.h"
+#include "rm_time.h"
 #include "memory.h"
 #include "stdlib.h"
 #include "string.h"
@@ -18,6 +19,11 @@ static DaemonInstance *et08_daemon;
 
 static uint32_t et08_frame_count = 0u;
 static uint32_t et08_bad_count = 0u;
+static uint32_t et08_last_frame_ms = 0u;
+static uint32_t et08_max_frame_gap_ms = 0u;
+static uint32_t et08_lost_count = 0u;
+static uint32_t et08_frame_lost_count = 0u;
+static uint32_t et08_failsafe_count = 0u;
 
 static void ET08_PublishCtrl(const ET08_Ctrl_t *ctrl)
 {
@@ -52,16 +58,9 @@ static void ET08_ParseSbusChannels(const uint8_t *buf, uint16_t *ch)
     ch[15] = (uint16_t)(((buf[21] >> 5) | (buf[22] << 3)) & 0x07FF);
 }
 
-static uint16_t ET08_SwitchLevelToRaw(int16_t level)
-{
-    if (level < 0)
-        return (uint16_t)(level + ET08_CHANNEL_CENTER);
-    return (uint16_t)level;
-}
-
 uint8_t ET08_MapSwitchState(uint16_t raw_value)
 {
-    const int16_t levels[ET08_SWITCH_LEVEL_COUNT] = {
+    const uint16_t levels[ET08_SWITCH_LEVEL_COUNT] = {
         ET08_SWITCH_LEVEL_0,
         ET08_SWITCH_LEVEL_1,
         ET08_SWITCH_LEVEL_2,
@@ -75,8 +74,7 @@ uint8_t ET08_MapSwitchState(uint16_t raw_value)
 
     for (uint8_t i = 0; i < ET08_SWITCH_LEVEL_COUNT; ++i)
     {
-        uint16_t level_raw = ET08_SwitchLevelToRaw(levels[i]);
-        uint16_t diff = (raw_value > level_raw) ? (raw_value - level_raw) : (level_raw - raw_value);
+        uint16_t diff = (raw_value > levels[i]) ? (raw_value - levels[i]) : (levels[i] - raw_value);
         if (diff < best_diff)
         {
             best_diff = diff;
@@ -124,6 +122,8 @@ static void ET08_FillCtrl(const uint16_t *ch, uint8_t flags, ET08_Ctrl_t *ctrl)
 
 static void ET08_RxCallback(void)
 {
+    uint32_t now_ms;
+
     if (et08_usart_instance == NULL)
         return;
 
@@ -146,28 +146,65 @@ static void ET08_RxCallback(void)
     uint8_t flags = buf[23];
     ET08_Ctrl_t next;
     ET08_FillCtrl(ch, flags, &next);
-    ET08_PublishCtrl(&next);
-
     et08_frame_count++;
+
+    /*
+     * SBUS frame_lost 表示接收机丢失了单个射频帧，不等价于链路掉线。
+     * 该帧的通道值不可采用，但也不能让安全状态在相邻好帧之间反复急停。
+     * 保留上一份有效快照，并且只用有效帧续期守护；连续没有有效帧时仍会
+     * 在 ET08_ONLINE_TIMEOUT_MS 内进入掉线保护。
+     */
+    if (next.failsafe != 0U) {
+        et08_failsafe_count++;
+        ET08_PublishCtrl(&next);
+        return;
+    }
+    if (next.frame_lost != 0U) {
+        et08_frame_lost_count++;
+        return;
+    }
+
+    now_ms = RmTime_NowMs();
+    if (et08_last_frame_ms != 0U) {
+        uint32_t gap_ms = RmTime_ElapsedMs(now_ms, et08_last_frame_ms);
+        if (gap_ms > et08_max_frame_gap_ms) {
+            et08_max_frame_gap_ms = gap_ms;
+        }
+    }
+    et08_last_frame_ms = now_ms;
+    ET08_PublishCtrl(&next);
     DaemonReload(et08_daemon);
 }
 
 static void ET08_LostCallback(void *id)
 {
     const ET08_Ctrl_t offline = {0};
+    const uint32_t now_ms = RmTime_NowMs();
+    const uint32_t age_ms = (et08_frame_count != 0U)
+                                ? RmTime_ElapsedMs(now_ms,
+                                                   et08_last_frame_ms)
+                                : 0U;
 
     (void)id;
     ET08_PublishCtrl(&offline);
-    LOGWARNING("[et08] remote control lost");
+    et08_lost_count++;
+    LOGWARNING("[et08] remote lost count=%lu age=%lums max_good_gap=%lums frames=%lu frame_lost=%lu failsafe=%lu bad=%lu",
+               (unsigned long)et08_lost_count,
+               (unsigned long)age_ms,
+               (unsigned long)et08_max_frame_gap_ms,
+               (unsigned long)et08_frame_count,
+               (unsigned long)et08_frame_lost_count,
+               (unsigned long)et08_failsafe_count,
+               (unsigned long)et08_bad_count);
 
     if (et08_usart_instance)
         USARTServiceInit(et08_usart_instance);
 }
 
-static void ET08_ReinitUartForSbus(UART_HandleTypeDef *uart_handle)
+static bool ET08_ReinitUartForSbus(UART_HandleTypeDef *uart_handle)
 {
     if (uart_handle == NULL)
-        return;
+        return false;
 
     (void)HAL_UART_DeInit(uart_handle);
     uart_handle->Init.BaudRate = 100000;
@@ -180,7 +217,9 @@ static void ET08_ReinitUartForSbus(UART_HandleTypeDef *uart_handle)
     if (HAL_UART_Init(uart_handle) != HAL_OK)
     {
         LOGWARNING("[et08] sbus uart reinit failed");
+        return false;
     }
+    return true;
 }
 
 ET08_Ctrl_t *ET08_Init(UART_HandleTypeDef *uart_handle)
@@ -196,7 +235,9 @@ ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
     ET08_PublishCtrl(&empty);
     et08_init_flag = 0U;
 
-    ET08_ReinitUartForSbus(uart_handle);
+    if (!ET08_ReinitUartForSbus(uart_handle)) {
+        return NULL;
+    }
 
     USART_Init_Config_s conf = {0};
     conf.module_callback = ET08_RxCallback;
@@ -221,6 +262,11 @@ ET08_Ctrl_t *ET08_InitWithTimeout(UART_HandleTypeDef *uart_handle,
     et08_init_flag = 1;
     et08_frame_count = 0u;
     et08_bad_count = 0u;
+    et08_last_frame_ms = 0u;
+    et08_max_frame_gap_ms = 0u;
+    et08_lost_count = 0u;
+    et08_frame_lost_count = 0u;
+    et08_failsafe_count = 0u;
 
     return &et08_ctrl;
 }

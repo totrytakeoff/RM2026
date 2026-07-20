@@ -40,7 +40,7 @@
 #include "bsp_init.h"
 #include "bsp_log.h"
 #include "daemon.h"
-#include "remote_control.h"
+#include "dt7_remote.h"
 #include "dji_motor.h"
 #include "user_lib.h"
 

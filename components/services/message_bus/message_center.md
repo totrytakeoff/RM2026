@@ -1,7 +1,5 @@
 # message_center
 
-<p align='right'>neozng1@hnu.edu.cn</p>
-
 > TODO:
 >
 > 支持自定义队列长度，使得订阅者可以自行确定需要的队列长度，适应不同的需求

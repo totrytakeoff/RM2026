@@ -34,6 +34,9 @@ endif()
 
 add_executable(app.elf main.c)
 set_property(TARGET app.elf APPEND PROPERTY LINK_DEPENDS ${LINKER_SCRIPT})
+# 正式固件包含 C++ 遥控适配层，显式使用 C++ 驱动链接，避免依赖
+# CMake 对静态库传递语言的隐式推断。
+set_property(TARGET app.elf PROPERTY LINKER_LANGUAGE CXX)
 
 target_link_libraries(app.elf PRIVATE
     rm_platform_syscalls

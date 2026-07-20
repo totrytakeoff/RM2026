@@ -7,10 +7,7 @@
 #define INFANTRY_TYPES_H
 
 #include <stdint.h>
-#include "infantry_config.h"  // 先包含配置文件,获取INPUT_SOURCE等宏定义
 #include "infantry_referee_types.h"
-
-/* INPUT_SOURCE相关宏已在infantry_config.h中定义 */
 
 /*============================================================================
  * 控制模式枚举
@@ -26,9 +23,10 @@ typedef enum {
 } ChassisMode_e;
 
 typedef enum {
-    GIMBAL_FOLLOW_CHASSIS = 0,  // 云台跟随底盘(编码器闭环)
-    GIMBAL_SEPARATE,            // 云台分离(IMU闭环,不随底盘)
-} GimbalMode_e;
+    INFANTRY_CONTROL_FOLLOW = 0,
+    INFANTRY_CONTROL_AUTO_AIM,
+    INFANTRY_CONTROL_SPIN,
+} InfantryControlMode_e;
 
 typedef enum {
     FRICTION_OFF = 0,
@@ -41,6 +39,12 @@ typedef enum {
     LOADER_DOUBLE,
     LOADER_CONTINUOUS,
 } LoaderMode_e;
+
+typedef enum {
+    INFANTRY_FIRE_DISABLED = 0,
+    INFANTRY_FIRE_SINGLE,
+    INFANTRY_FIRE_CONTINUOUS,
+} InfantryFireMode_e;
 
 typedef enum {
     CTRL_ZERO_FORCE = 0,
@@ -58,92 +62,38 @@ typedef enum {
     AXIS_CTRL_BRAKE,
 } AxisCtrlMode_e;
 
-typedef enum {
-    INPUT_ACTIVE_NONE = 0,
-    INPUT_ACTIVE_VT,
-    INPUT_ACTIVE_ET08,
-} InputActive_e;
-
 /*============================================================================
- * ET08遥控数据结构
+ * 步兵操作意图。这里只描述期望动作，不包含任何具体遥控协议字段。
  *============================================================================*/
 typedef struct {
-    int16_t left_x;
-    int16_t left_y;
-    int16_t right_x;
-    int16_t right_y;
-    uint8_t sa_pos;         // SA开关: 0=上, 1=中, 2=下
-    uint8_t sb_pos;         // SB开关
-    uint8_t sd_pos;         // SD开关
-    uint8_t sc_pos;         // SC开关
-    uint8_t online;         // 在线状态
-} RC_ET08_Data_t;
-
-/*============================================================================
- * VT图传键鼠数据结构
- *============================================================================*/
-typedef struct {
-    /* 通道数据 (centered: -660 ~ +660) */
-    int16_t ch0_c;          // 右摇杆X
-    int16_t ch1_c;          // 右摇杆Y
-    int16_t ch2_c;          // 左摇杆Y
-    int16_t ch3_c;          // 左摇杆X
-    int16_t dial_c;         // 拨轮
+    /*
+     * 无量纲操作意图，范围统一为 [-1, 1]。输入层不得在这里引入
+     * m/s、rad/s、deg/s、电机转速或机械限位。
+     */
+    float chassis_x_intent;       // 云台坐标系横移：左为正
+    float chassis_y_intent;       // 云台坐标系前进：前为正
+    float chassis_rotate_intent;  // 底盘旋转意图
+    float gimbal_yaw_intent;      // 云台 Yaw 速度意图
+    float gimbal_pitch_intent;    // 云台 Pitch 速度意图
+    uint8_t yaw_control_active;
+    uint8_t pitch_control_active;
     
-    /* 开关状态 */
-    uint8_t gear;           // 档位: 0=C, 1=N, 2=S
-    uint8_t pause;          // Pause键
-    uint8_t custom_l;       // 左自定义键
-    uint8_t custom_r;       // 右自定义键
-    uint8_t trigger;        // 触发键
-    
-    /* 鼠标数据 */
-    int16_t mouse_x;        // 鼠标X增量
-    int16_t mouse_y;        // 鼠标Y增量
-    int16_t mouse_z;        // 鼠标滚轮
-    uint8_t mouse_l;        // 左键
-    uint8_t mouse_r;        // 右键
-    uint8_t mouse_m;        // 中键
-    
-    /* 键盘数据 */
-    uint16_t keyboard;      // 16位按键状态
-    
-    /* 在线状态 */
-    uint8_t online;
-} VT_Data_t;
-
-/*============================================================================
- * 统一输入数据结构 (抽象ET08和VT)
- *============================================================================*/
-typedef struct {
-    /* 底盘控制量 */
-    float vx;               // 云台坐标系横移速度 (m/s, 左为正)
-    float vy;               // 云台坐标系前进速度 (m/s, 前为正)
-    float wz;               // 底盘旋转角速度意图 (rad/s)
-
-    /* 云台控制量 */
-    float yaw_speed;        // Yaw角速度指令
-    float pitch_speed;      // Pitch角速度指令
-    float pitch_angle;      // Pitch目标角度 (用于分离模式)
-    
-    /* 发射控制 */
-    FrictionMode_e friction;
-    LoaderMode_e loader;
-    uint8_t shoot_state;        // 发射状态 (ShootState_e)
+    /* 发射操作意图；实际电机状态由发射执行层维护。 */
+    InfantryFireMode_e fire_mode;
+    uint8_t fire_trigger_down;
+    uint8_t fire_trigger_pressed;
+    uint8_t fire_trigger_released;
     
     /* 模式控制 */
-    GimbalMode_e gimbal_mode;   // 云台模式
-    uint8_t spin_enable;        // 小陀螺使能
+    InfantryControlMode_e control_mode;
     uint8_t emergency_stop;     // 急停
-    
-    /* 状态 */
+
+    /* 遥控链路与操作者安全门请求，由安全层决定最终是否允许输出。 */
     uint8_t online;
-    uint8_t gear;              // 档位(仅VT有效)
-    InputActive_e active_input;
-    
-    RC_ET08_Data_t rc_raw;
-    VT_Data_t vt_raw;
-    /* 原始数据(调试用) */
+    uint8_t data_valid;
+    uint8_t operator_enable_request;
+    uint8_t operator_safe_position; /* 安全门以外的控制均处于安全姿态 */
+    uint8_t operator_arm_event;
 } Input_Data_t;
 
 /*============================================================================
@@ -155,7 +105,7 @@ typedef struct {
     float wz;               // 车体旋转角速度 (rad/s)
     float vx_cmd;           // 云台坐标系横移速度指令
     float vy_cmd;           // 云台坐标系前进速度指令
-    float yaw_offset_deg;   // 云台相对底盘逻辑夹角
+    float yaw_offset_rad;   // 云台相对底盘逻辑夹角(rad)
     ChassisMode_e mode;
     uint8_t spin_enable;
     ControlMode_e control_mode;
@@ -170,7 +120,7 @@ typedef struct {
     float pitch_speed;      // Pitch角速度指令
     float yaw_angle;        // Yaw目标角度(分离模式)
     float pitch_angle;      // Pitch目标角度
-    GimbalMode_e mode;      // 跟随/分离模式
+    InfantryControlMode_e mode;
     uint8_t manual_pitch;   // 手动Pitch模式
     AxisCtrlMode_e pitch_ctrl_mode;
     ControlMode_e control_mode;
@@ -202,6 +152,14 @@ typedef struct {
 } Robot_Context_t;
 
 /* 全局上下文声明 */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern Robot_Context_t g_robot;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* INFANTRY_TYPES_H */

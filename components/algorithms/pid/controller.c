@@ -1,7 +1,5 @@
 /**
  * @file controller.c
- * @author wanghongxi
- * @author modified by neozng
  * @brief  PID控制器定义
  * @version beta
  * @date 2022-11-01
@@ -36,9 +34,8 @@ static void f_Changing_Integration_Rate(PIDInstance *pid)
 
 static void f_Integral_Limit(PIDInstance *pid)
 {
-    static float temp_Output, temp_Iout;
-    temp_Iout = pid->Iout + pid->ITerm;
-    temp_Output = pid->Pout + pid->Iout + pid->Dout;
+    const float temp_Iout = pid->Iout + pid->ITerm;
+    const float temp_Output = pid->Pout + pid->Iout + pid->Dout;
     if (abs(temp_Output) > pid->MaxOut)
     {
         if (pid->Err * pid->Iout > 0) // 积分却还在累积

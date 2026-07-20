@@ -10,6 +10,29 @@
 
 #include "infantry_types.h"
 
+typedef struct {
+    float input_y_intent;
+    float yaw_error_rad;
+    float yaw_error_rate_rad_s;
+    float follow_p_rad_s;
+    float follow_i_rad_s;
+    float follow_d_rad_s;
+    float follow_raw_wz_rad_s;
+    float follow_limited_wz_rad_s;
+    float command_vx_m_s;
+    float command_vy_m_s;
+    float command_wz_rad_s;
+    float filtered_vx_m_s;
+    float filtered_vy_m_s;
+    float filtered_wz_rad_s;
+    float wheel_ref_rad_s[4];
+    float wheel_fdb_rad_s[4];
+} ChassisTuningSnapshot;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief 底盘初始化
  */
@@ -34,8 +57,16 @@ bool Chassis_IsHealthy(void);
  * @return 旋转角速度 rad/s
  */
 float Chassis_GetWz(void);
-float Chassis_GetFRSpeedRef(void);
-float Chassis_GetFRSpeedFdb(void);
+/** 前右M3508转子速度参考与反馈，单位rad/s。 */
+float Chassis_GetFRMotorSpeedRefRadS(void);
+float Chassis_GetFRMotorSpeedFdbRadS(void);
 float Chassis_GetPowerScale(void);
+
+/** Copy one coherent controller snapshot for low-priority tuning telemetry. */
+bool Chassis_GetTuningSnapshot(ChassisTuningSnapshot *snapshot);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* INFANTRY_CHASSIS_H */

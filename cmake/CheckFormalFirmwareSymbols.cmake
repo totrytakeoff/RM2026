@@ -30,6 +30,19 @@ set(forbidden_symbols
     _sbrk_r
     snprintf
     vsnprintf
+    _Znwj
+    _Znaj
+    _ZdlPv
+    _ZdaPv
+    _ZdlPvj
+    _ZdaPvj
+    __cxa_allocate_exception
+    __cxa_throw
+    __cxa_guard_acquire
+    __cxa_guard_release
+    __cxa_atexit
+    __gxx_personality_v0
+    _Unwind_Resume
 )
 
 foreach(symbol IN LISTS forbidden_symbols)
@@ -41,4 +54,4 @@ foreach(symbol IN LISTS forbidden_symbols)
     endif()
 endforeach()
 
-message(STATUS "Formal firmware heap/stdio symbol audit passed")
+message(STATUS "Formal firmware heap/stdio/C++ runtime symbol audit passed")

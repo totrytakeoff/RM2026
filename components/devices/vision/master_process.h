@@ -2,7 +2,7 @@
 #define MASTER_PROCESS_H
 
 #include "bsp_usart.h"
-#include "seasky_protocol.h"
+#include "serial_frame_protocol.h"
 
 
 #define VISION_USE_UART // 使用串口发送视觉数据

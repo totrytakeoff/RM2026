@@ -8,7 +8,7 @@
 
 ```text
 applications/infantry
-  command -> 输入仲裁
+  command -> 编译期单一遥控后端、统一状态与机器人语义映射
   chassis -> 麦轮运动与底盘跟随控制
   gimbal  -> 云台偏航/俯仰控制
   shoot   -> 摩擦轮与拨弹控制
@@ -26,4 +26,5 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --target app.elf test_infantry_minimal --parallel
 ```
 
-验收清单统一维护在 `docs/migration/infantry_freertos_baseline.md`。
+本 target 不保留旧 VT/ET08 仲裁实现，当前行为与正式应用一致。验收清单统一维护在
+`docs/migration/infantry_freertos_baseline.md`。

@@ -27,6 +27,7 @@ static float loader_start_angle = 0.0f;
 static uint8_t single_shot_active = 0;
 static uint8_t pending_shots = 0;
 static uint32_t last_shot_tick = 0;
+static uint8_t shot_interval_started = 0U;
 static float loader_speed_cmd = 0.0f;
 static uint32_t loader_speed_tick = 0U;
 static uint32_t single_shot_start_ms = 0U;
@@ -97,6 +98,7 @@ bool Shoot_Init(void)
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = MOTOR_FEED,
+            .speed_unit = MOTOR_SPEED_RAD_PER_SEC,
             .outer_loop_type = SPEED_LOOP,
             .close_loop_type = SPEED_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
@@ -145,6 +147,7 @@ bool Shoot_Init(void)
         .controller_setting_init_config = {
             .angle_feedback_source = MOTOR_FEED,
             .speed_feedback_source = MOTOR_FEED,
+            .speed_unit = MOTOR_SPEED_DEG_PER_SEC,
             .outer_loop_type = LOADER_INIT_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
             .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
@@ -164,6 +167,7 @@ void Shoot_Update(Input_Data_t *input)
 {
     uint32_t now = RmTime_NowMs();
     Shoot_Cmd_t cmd = {0};
+    uint8_t continuous_requested;
     
     if (input == NULL || !input->online || input->emergency_stop) {
         MDBG_SHT("stop by input offline/estop");
@@ -175,17 +179,57 @@ void Shoot_Update(Input_Data_t *input)
         Shoot_Stop();
         return;
     }
-    
-    cmd.friction = input->friction;
-    cmd.loader = input->loader;
+
+    /* SC 下位或应用层禁用发射时，摩擦轮与拨弹电机都必须立即停机。 */
+    if (input->fire_mode == INFANTRY_FIRE_DISABLED) {
+        Shoot_Stop();
+        return;
+    }
+
+    if (input->fire_mode == INFANTRY_FIRE_SINGLE) {
+        /* 单发只消费触发沿。SD 保持上位不会按 SHOOT_INTERVAL_MS 重复出弹。 */
+        if (input->fire_trigger_pressed != 0U &&
+            single_shot_active == 0U && pending_shots == 0U) {
+            if (shot_interval_started == 0U ||
+                (now - last_shot_tick) >= SHOOT_INTERVAL_MS) {
+                pending_shots = 1U;
+            } else {
+                MDBG_SHT("single ignored by interval");
+            }
+        }
+    } else {
+        /* 模式切换时不允许遗留的单发目标与连发速度环并存。 */
+        single_shot_active = 0U;
+        pending_shots = 0U;
+    }
+
+    continuous_requested =
+        (input->fire_mode == INFANTRY_FIRE_CONTINUOUS &&
+         input->fire_trigger_down != 0U)
+            ? 1U
+            : 0U;
+
+    if (continuous_requested != 0U) {
+        shoot_state = SHOOT_CONTINUOUS;
+    } else if (single_shot_active != 0U || pending_shots != 0U) {
+        shoot_state = SHOOT_SINGLE;
+    } else {
+        shoot_state = SHOOT_FRICTION_ON;
+    }
+
+    cmd.friction = FRICTION_ON;
+    cmd.loader = shoot_state == SHOOT_CONTINUOUS
+                     ? LOADER_CONTINUOUS
+                     : (shoot_state == SHOOT_SINGLE ? LOADER_SINGLE
+                                                    : LOADER_STOP);
     cmd.control_mode = CTRL_ENABLE;
-    cmd.ref_type = (input->loader == LOADER_CONTINUOUS) ? REF_SPEED : REF_ANGLE;
+    cmd.ref_type = (shoot_state == SHOOT_SINGLE) ? REF_ANGLE : REF_SPEED;
     g_robot.shoot = cmd;
-    shoot_state = input->shoot_state;
     
     // 摩擦轮控制
     if (shoot_state >= SHOOT_FRICTION_ON) {
-        float target_speed = FRICTION_TARGET_SPEED * MinimalReferee_FrictionSpeedScale();
+        float target_speed = FRICTION_TARGET_SPEED_RAD_S *
+                             MinimalReferee_FrictionSpeedScale();
         if (motor_friction_l) {
             (void)PublishMotorCommand(motor_friction_l,
                                       FRICTION_RUN_LOOP_ON, target_speed,
@@ -220,11 +264,14 @@ void Shoot_Update(Input_Data_t *input)
         loader_speed_tick = now;
         loader_ref_last = 0.0f;
         last_continuous_mode = 0U;
+        shoot_state = SHOOT_FRICTION_ON;
+        g_robot.shoot.loader = LOADER_STOP;
+        g_robot.shoot.ref_type = REF_SPEED;
         return;
     }
     
     if (shoot_state == SHOOT_CONTINUOUS) {
-        float speed_target = LOADER_CONTINUOUS_SPEED;
+        float speed_target = LOADER_CONTINUOUS_SPEED_DEG_S;
         float dt_ms;
         float max_delta;
 
@@ -258,21 +305,14 @@ void Shoot_Update(Input_Data_t *input)
             MDBG_SHT("exit continuous");
         }
         last_continuous_mode = 0U;
-        if ((now - last_shot_tick) >= SHOOT_INTERVAL_MS) {
-            if (input->loader == LOADER_DOUBLE) {
-                pending_shots = 2U;
-            } else {
-                pending_shots = 1U;
-            }
-            last_shot_tick = now;
-        }
-
         if (!single_shot_active && pending_shots > 0U) {
             loader_start_angle = LoaderTotalAngle();
             loader_target_angle = loader_start_angle + LOADER_ANGLE_STEP;
             pending_shots--;
             single_shot_active = 1U;
             single_shot_start_ms = now;
+            last_shot_tick = now;
+            shot_interval_started = 1U;
             MDBG_SHT("single start target=%.1f pending=%u", (double)loader_target_angle, (unsigned)pending_shots);
         }
 
@@ -291,7 +331,7 @@ void Shoot_Update(Input_Data_t *input)
             }
         } else {
             (void)PublishMotorCommand(motor_loader, LOADER_RUN_LOOP_STOP,
-                                      0.0f, MOTOR_STOP, false);
+                                      0.0f, MOTOR_STOP, true);
             loader_ref_last = 0.0f;
         }
         loader_speed_cmd = 0.0f;
@@ -321,8 +361,12 @@ void Shoot_Stop(void)
     single_shot_start_ms = 0U;
     loader_ref_last = 0.0f;
     last_continuous_mode = 0U;
-    g_robot.shoot.control_mode = CTRL_ZERO_FORCE;
-    g_robot.shoot.ref_type = REF_SPEED;
+    g_robot.shoot = (Shoot_Cmd_t){
+        .friction = FRICTION_OFF,
+        .loader = LOADER_STOP,
+        .control_mode = CTRL_ZERO_FORCE,
+        .ref_type = REF_SPEED,
+    };
     
     if (motor_friction_l) {
         (void)PublishMotorCommand(motor_friction_l,

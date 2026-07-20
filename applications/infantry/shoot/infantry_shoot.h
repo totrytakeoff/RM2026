@@ -10,6 +10,10 @@
 
 #include "infantry_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*============================================================================
  * 发射状态枚举
  *============================================================================*/
@@ -41,5 +45,9 @@ float Shoot_GetLoaderRef(void);
 float Shoot_GetLoaderFeedback(void);
 uint8_t Shoot_IsSingleActive(void);
 uint8_t Shoot_GetPendingShots(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* INFANTRY_SHOOT_H */

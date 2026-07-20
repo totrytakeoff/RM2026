@@ -1,6 +1,5 @@
 /**
  * @file master_process.c
- * @author neozng
  * @brief  module for recv&send vision data
  * @version beta
  * @date 2022-11-03
@@ -9,7 +8,7 @@
  *
  */
 #include "master_process.h"
-#include "seasky_protocol.h"
+#include "serial_frame_protocol.h"
 #include "daemon.h"
 #include "bsp_log.h"
 #include "robot_types.h"
@@ -99,7 +98,7 @@ void VisionSend()
     static uint8_t send_buff[VISION_SEND_SIZE];
     static uint16_t tx_len;
     // TODO: code to set flag_register
-    flag_register = 30 << 8 | 0b00000001;
+    flag_register = (30U << 8) | 0x01U;
     // 将数据转化为seasky协议的数据包
     get_protocol_send_data(0x02, flag_register, &send_data.yaw, 3, send_buff, &tx_len);
     USARTSend(vision_usart_instance, send_buff, tx_len, USART_TRANSFER_DMA); // 和视觉通信使用IT,防止和接收使用的DMA冲突
@@ -158,7 +157,7 @@ void VisionSend()
     static uint8_t send_buff[VISION_SEND_SIZE];
     static uint16_t tx_len;
     // TODO: code to set flag_register
-    flag_register = 30 << 8 | 0b00000001;
+    flag_register = (30U << 8) | 0x01U;
     // 将数据转化为seasky协议的数据包
     get_protocol_send_data(0x02, flag_register, &send_data.yaw, 3, send_buff, &tx_len);
     USBTransmit(send_buff, tx_len);

@@ -24,10 +24,11 @@ add_library(rm_components_runtime STATIC
     devices/motor/dji/dji_motor.c
     devices/referee/crc_ref.c
     devices/referee/rm_referee.c
+    devices/remote/dt7/dt7_remote.c
     devices/remote/et08/et08_remote.c
     devices/remote/vt/vt_remote.c
     devices/vision/master_process.c
-    devices/vision/seasky_protocol.c
+    devices/vision/serial_frame_protocol.c
     services/device_health/daemon.c
 )
 add_library(RM::components_runtime ALIAS rm_components_runtime)
@@ -44,6 +45,8 @@ target_include_directories(rm_components_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/motor
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/motor/dji
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/referee
+    ${CMAKE_CURRENT_SOURCE_DIR}/devices/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}/devices/remote/dt7
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/remote/et08
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/remote/vt
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/vision
@@ -80,7 +83,6 @@ add_library(rm_components_compat STATIC
     devices/rangefinder/tfmini_plus/tfminiplus.c
     devices/referee/referee_UI.c
     devices/referee/referee_task.c
-    devices/remote/remote_control.c
     services/command/std_cmd.c
     services/message_bus/message_center.c
     services/transport/unicomm/unicomm.c

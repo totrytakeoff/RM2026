@@ -1,7 +1,5 @@
 # dji_motor
 
-<p align='right'>neozng1@hnu.edu.cn</p>
-
 > TODO:
 >
 > 1. 给不同的电机设置不同的低通滤波器惯性系数而不是统一使用宏
@@ -30,7 +28,8 @@ dji_motor模块对DJI智能电机，包括M2006，M3508以及GM6020进行了详�
 
 1. ==位置环为**角度制**（0-360，total_angle可以为任意值）==
 
-2. ==速度环为角速度，单位为**度/每秒**（deg/sec）==
+2. 速度环单位由 `Motor_Control_Setting_s.speed_unit` 明确指定；历史配置默认
+   为 `deg/s`，纯速度控制电机优先使用 `rad/s`。速度参考、反馈和速度前馈必须使用同一单位。
 
 3. ==电流环为A==
 

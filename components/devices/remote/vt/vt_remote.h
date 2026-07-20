@@ -5,10 +5,15 @@
 #include <stdint.h>
 #include "main.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define VT_FRAME_SIZE 21u
 #define VT_CH_CENTER 1024
 #define VT_CH_MIN 364
 #define VT_CH_MAX 1684
+#define VT_DEFAULT_TIMEOUT_MS 200U
 
 typedef enum
 {
@@ -52,10 +57,16 @@ typedef struct
 } VT_Ctrl_t;
 
 VT_Ctrl_t *VT_Init(UART_HandleTypeDef *uart_handle);
+VT_Ctrl_t *VT_InitWithTimeout(UART_HandleTypeDef *uart_handle,
+                              uint32_t timeout_ms);
 uint8_t VT_IsOnline(void);
 /** Copy one coherent control snapshot and return its online state. */
 bool VT_Read(VT_Ctrl_t *snapshot);
 /** Compatibility live view; prefer VT_Read() in concurrent firmware. */
 VT_Ctrl_t *VT_GetCtrl(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

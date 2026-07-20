@@ -5,18 +5,22 @@
 #include <stdint.h>
 #include "main.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define ET08_CHANNEL_COUNT 8
 #define ET08_CHANNEL_COUNT_FULL 16
 #define ET08_CHANNEL_CENTER 1024
 #define ET08_SWITCH_LEVEL_COUNT 6
 
-// Negative levels are treated as centered values (raw - 1024) when mapping.
+/* RF206S 实测的六档 SBUS 原始值，由高到低排列。 */
 #define ET08_SWITCH_LEVEL_0 1896
 #define ET08_SWITCH_LEVEL_1 1694
 #define ET08_SWITCH_LEVEL_2 1493
-#define ET08_SWITCH_LEVEL_3 -151
-#define ET08_SWITCH_LEVEL_4 -353
-#define ET08_SWITCH_LEVEL_5 -554
+#define ET08_SWITCH_LEVEL_3 554
+#define ET08_SWITCH_LEVEL_4 353
+#define ET08_SWITCH_LEVEL_5 151
 
 #define ET08_SWITCH_TOLERANCE 200
 #define ET08_DEFAULT_TIMEOUT_MS 4000U
@@ -108,5 +112,9 @@ bool ET08_Read(ET08_Ctrl_t *snapshot);
 /** Compatibility live view; prefer ET08_Read() in concurrent firmware. */
 ET08_Ctrl_t *ET08_GetCtrl(void);
 uint8_t ET08_MapSwitchState(uint16_t raw_value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

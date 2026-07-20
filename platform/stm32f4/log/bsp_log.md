@@ -1,7 +1,5 @@
 # bsp_log
 
-<p align='right'>neozng1@hnu.edu.cn</p>
-
 ## 使用说明
 
 bsp_log是基于segger RTT实现的日志打印模块。

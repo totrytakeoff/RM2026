@@ -73,19 +73,14 @@ add_custom_target(clean-all
 # OpenOCD 下载命令。BIN 不携地址，因此必须显式指定 Flash 基地址。
 set(OPENOCD_CFG "${RM_BOARD_ROOT}/openocd/openocd_dap.cfg")
 
-# 查找OpenOCD可执行文件
-find_program(OPENOCD_EXECUTABLE 
-    NAMES openocd
-    PATHS 
-        /home/myself/.platformio/packages/tool-openocd/bin
-        /usr/bin
-        /usr/local/bin
-    NO_DEFAULT_PATH
-)
-
-# 如果找不到，尝试使用系统PATH
+# 优先使用当前 PATH 中维护的新版本；PlatformIO 副本仅作为最终回退。
+find_program(OPENOCD_EXECUTABLE NAMES openocd)
 if(NOT OPENOCD_EXECUTABLE)
-    find_program(OPENOCD_EXECUTABLE openocd)
+    find_program(OPENOCD_EXECUTABLE
+        NAMES openocd
+        PATHS /home/myself/.platformio/packages/tool-openocd/bin
+        NO_DEFAULT_PATH
+    )
 endif()
 
 # 设置OpenOCD路径变量
@@ -100,7 +95,13 @@ endif()
 
 add_custom_target(upload
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD] Starting upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG}
+            -c "init"
+            -c "reset halt"
+            -c "flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin"
+            -c "verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin"
+            -c "reset run"
+            -c "shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Uploading to STM32..."
@@ -109,7 +110,13 @@ add_custom_target(upload
 # 添加一个更详细的上传命令，显示更多调试信息
 add_custom_target(upload-verbose
     COMMAND ${CMAKE_COMMAND} -E echo "[UPLOAD-VERBOSE] Starting verbose upload to STM32..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; reset; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG}
+            -c "init"
+            -c "reset halt"
+            -c "flash write_image erase ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin"
+            -c "verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin"
+            -c "reset run"
+            -c "shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Upload completed successfully!"
     DEPENDS app.elf
     COMMENT "Verbose upload to STM32..."
@@ -118,7 +125,12 @@ add_custom_target(upload-verbose
 # 添加一个仅验证命令，不重新烧录
 add_custom_target(verify
     COMMAND ${CMAKE_COMMAND} -E echo "[VERIFY] Verifying STM32 flash..."
-    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG} -c "init; reset halt; verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin; shutdown"
+    COMMAND ${OPENOCD_PATH} -f ${OPENOCD_CFG}
+            -c "init"
+            -c "reset halt"
+            -c "verify_image ${GLOBAL_OUTPUT_DIR}/app.bin 0x08000000 bin"
+            -c "reset run"
+            -c "shutdown"
     COMMAND ${CMAKE_COMMAND} -E echo "[SUCCESS] Verification completed!"
     DEPENDS app.elf
     COMMENT "Verifying STM32 flash..."

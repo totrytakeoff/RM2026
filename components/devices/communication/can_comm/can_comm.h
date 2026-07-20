@@ -1,6 +1,5 @@
 /**
  * @file can_comm.h
- * @author Neo neozng1@hnu.edu.cn
  * @brief  用于多机CAN通信的收发模块
  * @version 0.1
  * @date 2022-11-27

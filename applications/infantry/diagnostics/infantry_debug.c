@@ -8,12 +8,15 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include "SEGGER_RTT.h"
 #include "usart.h"
+#include "infantry_app.h"
 #include "infantry_types.h"
 #include "infantry_input.h"
 #include "infantry_chassis.h"
 #include "infantry_gimbal.h"
 #include "infantry_shoot.h"
+#include "ins_task.h"
 #include "rm_time.h"
 #include "utils.h"
 
@@ -38,6 +41,12 @@ static void __attribute__((unused)) MinimalDebug_TxRaw(const uint8_t *buf, uint1
     if (buf == NULL || len == 0U) {
         return;
     }
+
+    /*
+     * 文本诊断同时镜像到 RTT 和板载调试串口：RTT 供在线调试定位，
+     * UART 供脱离调试器后的上机观察。RTT 上行采用非阻塞写，不能拖慢控制环。
+     */
+    (void)SEGGER_RTT_Write(0U, buf, (unsigned)len);
     if (HAL_UART_Transmit(&MINIMAL_DEBUG_UART_HANDLE, (uint8_t *)buf, len, MinimalDebug_GetTxTimeoutMs(len)) != HAL_OK) {
         text_tx_fail_cnt++;
     }
@@ -46,8 +55,8 @@ static void __attribute__((unused)) MinimalDebug_TxRaw(const uint8_t *buf, uint1
 static void MinimalDebug_LogEventByTag(const char *tag, const char *fmt, va_list args)
 {
 #if MINIMAL_DEBUG_TEXT_STREAM_ACTIVE
-    char msg_buf[160];
-    char line_buf[192];
+    char msg_buf[224];
+    char line_buf[256];
     int msg_n;
     int line_n;
     size_t msg_len;
@@ -90,50 +99,71 @@ static void MinimalDebug_LogEventByTag(const char *tag, const char *fmt, va_list
 static void __attribute__((unused)) MinimalDebug_TextPeriodic(void)
 {
 #if MINIMAL_DEBUG_TEXT_STREAM_ACTIVE
+#if MINIMAL_DEBUG_MOD_SYSTEM || MINIMAL_DEBUG_MOD_INPUT
+    RemoteControlState remote = {0};
+
+    (void)Input_GetRemoteState(&remote);
+#endif
+
 #if MINIMAL_DEBUG_MOD_SYSTEM
-    MinimalDebug_LogEventSystem("in=%u online=%u estop=%u init=%u",
-                                (unsigned)g_robot.input.active_input,
-                                (unsigned)g_robot.input.online,
-                                (unsigned)g_robot.input.emergency_stop,
-                                (unsigned)g_robot.initialized);
+    MinimalDebug_LogEventSystem(
+        "safety=%u reason=0x%08lx init=%u health(c/g/s/ins)=%u/%u/%u/%u remote=%u online=%u gate=%u safe=%u edge=%u",
+        (unsigned)InfantryApp_GetSafetyState(),
+        (unsigned long)InfantryApp_GetSafetyReasons(),
+        (unsigned)g_robot.initialized,
+        Chassis_IsHealthy() ? 1U : 0U,
+        Gimbal_IsHealthy() ? 1U : 0U,
+        Shoot_IsHealthy() ? 1U : 0U,
+        INS_IsReady() ? 1U : 0U,
+        (unsigned)remote.type,
+        (unsigned)g_robot.input.online,
+        (unsigned)g_robot.input.operator_enable_request,
+        (unsigned)g_robot.input.operator_safe_position,
+        (unsigned)g_robot.input.operator_arm_event);
 #endif
 
 #if MINIMAL_DEBUG_MOD_INPUT
     MinimalDebug_LogEventInput(
-        "src=%u online=%u vt_allowed=%u gear=%u estop=%u mode=%u kb=0x%04X mouse=(%d,%d,%d) ch=(%d,%d,%d,%d) cmd(vx=%ld vy=%ld wz=%ld) yaw=%ld pitch=%ld",
-        (unsigned)g_robot.input.active_input,
-        (unsigned)g_robot.input.online,
-        (unsigned)Input_IsVTAllowed(),
-        (unsigned)g_robot.input.gear,
+        "remote=%u link=%u valid=%u fs=%u seq=%lu sm=0x%02lx mode=%u fire=%u gate=%u safe=%u edge=%u estop=%u sw=(%u,%u,%u,%u) axis=(%d,%d,%d,%d) intent(x=%ld y=%ld r=%ld yaw=%ld pitch=%ld)",
+        (unsigned)remote.type,
+        (unsigned)remote.link_online,
+        (unsigned)remote.data_valid,
+        (unsigned)remote.failsafe,
+        (unsigned long)remote.sample_sequence,
+        (unsigned long)remote.switch_valid_mask,
+        (unsigned)g_robot.input.control_mode,
+        (unsigned)g_robot.input.fire_mode,
+        (unsigned)g_robot.input.operator_enable_request,
+        (unsigned)g_robot.input.operator_safe_position,
+        (unsigned)g_robot.input.operator_arm_event,
         (unsigned)g_robot.input.emergency_stop,
-        (unsigned)g_robot.input.gimbal_mode,
-        (unsigned)g_robot.input.vt_raw.keyboard,
-        (int)g_robot.input.vt_raw.mouse_x,
-        (int)g_robot.input.vt_raw.mouse_y,
-        (int)g_robot.input.vt_raw.mouse_z,
-        (int)g_robot.input.vt_raw.ch0_c,
-        (int)g_robot.input.vt_raw.ch1_c,
-        (int)g_robot.input.vt_raw.ch2_c,
-        (int)g_robot.input.vt_raw.ch3_c,
-        (long)(g_robot.input.vx * 1000.0f),
-        (long)(g_robot.input.vy * 1000.0f),
-        (long)(g_robot.input.wz * 1000.0f),
-        (long)(g_robot.input.yaw_speed * 10.0f),
-        (long)(g_robot.input.pitch_speed * 10.0f));
+        (unsigned)remote.switches[0],
+        (unsigned)remote.switches[1],
+        (unsigned)remote.switches[2],
+        (unsigned)remote.switches[3],
+        (int)remote.axis_raw[REMOTE_AXIS_LEFT_X],
+        (int)remote.axis_raw[REMOTE_AXIS_LEFT_Y],
+        (int)remote.axis_raw[REMOTE_AXIS_RIGHT_X],
+        (int)remote.axis_raw[REMOTE_AXIS_RIGHT_Y],
+        (long)(g_robot.input.chassis_x_intent * 1000.0f),
+        (long)(g_robot.input.chassis_y_intent * 1000.0f),
+        (long)(g_robot.input.chassis_rotate_intent * 1000.0f),
+        (long)(g_robot.input.gimbal_yaw_intent * 1000.0f),
+        (long)(g_robot.input.gimbal_pitch_intent * 1000.0f));
 #endif
 
 #if MINIMAL_DEBUG_MOD_CHASSIS
-    MinimalDebug_LogEventChassis("vx_mms=%ld vy_mms=%ld wz_mrads=%ld pwr_x1e3=%ld fr_ref=%ld fr_fdb=%ld",
+    MinimalDebug_LogEventChassis("vx_mms=%ld vy_mms=%ld wz_mrads=%ld pwr_x1e3=%ld fr_ref_mrad_s=%ld fr_fdb_mrad_s=%ld",
                                  (long)(g_robot.chassis.vx * 1000.0f),
                                  (long)(g_robot.chassis.vy * 1000.0f),
                                  (long)(g_robot.chassis.wz * 1000.0f),
                                  (long)(Chassis_GetPowerScale() * 1000.0f),
-                                 (long)(Chassis_GetFRSpeedRef()),
-                                 (long)(Chassis_GetFRSpeedFdb()));
+                                 (long)(Chassis_GetFRMotorSpeedRefRadS() * 1000.0f),
+                                 (long)(Chassis_GetFRMotorSpeedFdbRadS() * 1000.0f));
 #endif
 
 #if MINIMAL_DEBUG_MOD_GIMBAL
-    MinimalDebug_LogEventGimbal("mode=%u pitch_loop=%u yaw_ref=%ld yaw_fdb=%ld yaw_off=%ld pitch_ref=%ld pitch_fdb=%ld pitch_tgt=%ld enc(y=%ld p=%ld) imu(y=%ld p=%ld)",
+    MinimalDebug_LogEventGimbal("mode=%u pitch_loop=%u yaw_ref=%ld yaw_fdb=%ld yaw_off=%ld pitch_ref=%ld pitch_fdb=%ld pitch_tgt=%ld enc(y=%ld p=%ld) imu(y=%ld p=%ld) ff=%ld",
                                 (unsigned)Gimbal_GetMode(),
                                 (unsigned)Gimbal_GetPitchCtrlMode(),
                                 (long)(Gimbal_GetYawSpeedRef()),
@@ -145,7 +175,8 @@ static void __attribute__((unused)) MinimalDebug_TextPeriodic(void)
                                 (long)(Gimbal_GetYawEncoderAngle()),
                                 (long)(Gimbal_GetPitchEncoderAngle()),
                                 (long)(Gimbal_GetYawIMUAngle()),
-                                (long)(Gimbal_GetPitchIMUAngle()));
+                                (long)(Gimbal_GetPitchIMUAngle()),
+                                (long)(Gimbal_GetPitchGravityFeedforward()));
 #endif
 
 #if MINIMAL_DEBUG_MOD_SHOOT
@@ -252,13 +283,13 @@ void MinimalDebug_PublishVofaFrame(void)
     HAL_StatusTypeDef ret;
 
     ch[0] = (float)RmTime_NowMs();
-    ch[1] = (float)g_robot.input.active_input;
+    ch[1] = (float)Input_GetRemoteType();
     ch[2] = (float)g_robot.input.online;
     ch[3] = g_robot.chassis.vx;
     ch[4] = g_robot.chassis.vy;
     ch[5] = g_robot.chassis.wz;
-    ch[6] = Chassis_GetFRSpeedRef();
-    ch[7] = Chassis_GetFRSpeedFdb();
+    ch[6] = Chassis_GetFRMotorSpeedRefRadS();
+    ch[7] = Chassis_GetFRMotorSpeedFdbRadS();
     ch[8] = Gimbal_GetYawSpeedRef();
     ch[9] = Gimbal_GetYawSpeedFdb();
     ch[10] = Gimbal_GetPitchSpeedRef();

@@ -45,7 +45,7 @@
 #include "bsp_log.h"
 #include "bsp_usart.h"
 #include "daemon.h"
-#include "remote_control.h"
+#include "dt7_remote.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -197,7 +197,7 @@ static void AppendKeyCounts(const char *label, const uint8_t counts[16], char *b
 }
 
 /**
- * @brief 将 remote_control.c 中解析出的所有字段通过 USART6 打印出来
+ * @brief 将 dt7_remote.c 中解析出的所有字段通过 USART6 打印出来
  */
 static void DumpRemoteState(void)
 {

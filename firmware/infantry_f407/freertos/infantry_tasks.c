@@ -22,6 +22,7 @@ enum {
     CONTROL_TASK_STACK_WORDS = 768,
     HEALTH_TASK_STACK_WORDS = 256,
     DIAGNOSTICS_TASK_STACK_WORDS = 384,
+    TUNING_TELEMETRY_TASK_STACK_WORDS = 256,
 };
 
 static StaticTask_t ins_task_tcb;
@@ -29,12 +30,14 @@ static StaticTask_t motor_task_tcb;
 static StaticTask_t control_task_tcb;
 static StaticTask_t health_task_tcb;
 static StaticTask_t diagnostics_task_tcb;
+static StaticTask_t tuning_telemetry_task_tcb;
 
 static StackType_t ins_task_stack[INS_TASK_STACK_WORDS];
 static StackType_t motor_task_stack[MOTOR_TASK_STACK_WORDS];
 static StackType_t control_task_stack[CONTROL_TASK_STACK_WORDS];
 static StackType_t health_task_stack[HEALTH_TASK_STACK_WORDS];
 static StackType_t diagnostics_task_stack[DIAGNOSTICS_TASK_STACK_WORDS];
+static StackType_t tuning_telemetry_task_stack[TUNING_TELEMETRY_TASK_STACK_WORDS];
 
 static TaskHandle_t task_handles[INFANTRY_TASK_COUNT];
 static volatile InfantryTaskRuntime task_runtime[INFANTRY_TASK_COUNT];
@@ -49,6 +52,8 @@ static const uint32_t task_period_us[INFANTRY_TASK_COUNT] = {
     [INFANTRY_TASK_CONTROL] = MAIN_LOOP_PERIOD_MS * 1000U,
     [INFANTRY_TASK_HEALTH] = INFANTRY_HEALTH_TASK_PERIOD_MS * 1000U,
     [INFANTRY_TASK_DIAGNOSTICS] = INFANTRY_DIAGNOSTICS_TASK_PERIOD_MS * 1000U,
+    [INFANTRY_TASK_TUNING_TELEMETRY] =
+        INFANTRY_TUNING_TASK_PERIOD_MS * 1000U,
 };
 
 static const uint32_t task_stack_words[INFANTRY_TASK_COUNT] = {
@@ -57,6 +62,7 @@ static const uint32_t task_stack_words[INFANTRY_TASK_COUNT] = {
     [INFANTRY_TASK_CONTROL] = CONTROL_TASK_STACK_WORDS,
     [INFANTRY_TASK_HEALTH] = HEALTH_TASK_STACK_WORDS,
     [INFANTRY_TASK_DIAGNOSTICS] = DIAGNOSTICS_TASK_STACK_WORDS,
+    [INFANTRY_TASK_TUNING_TELEMETRY] = TUNING_TELEMETRY_TASK_STACK_WORDS,
 };
 
 static uint32_t TaskRuntime_CyclesToUs(uint32_t cycles)
@@ -125,7 +131,8 @@ static void TaskRuntime_Record(InfantryTaskId id, uint32_t start_cycles)
 
 static bool TaskRuntime_IsCritical(InfantryTaskId id)
 {
-    return id != INFANTRY_TASK_DIAGNOSTICS;
+    return id != INFANTRY_TASK_DIAGNOSTICS &&
+           id != INFANTRY_TASK_TUNING_TELEMETRY;
 }
 
 static bool TaskRuntime_AreCriticalTasksHealthy(TickType_t now)
@@ -253,6 +260,21 @@ static void InfantryDiagnosticsTask(void *argument)
     }
 }
 
+static void InfantryTuningTelemetryTask(void *argument)
+{
+    TickType_t last_wake = xTaskGetTickCount();
+    (void)argument;
+
+    for (;;) {
+        uint32_t start_cycles =
+            TaskRuntime_Begin(INFANTRY_TASK_TUNING_TELEMETRY);
+        InfantryApp_TuningTelemetryStep(RmTime_NowMs());
+        TaskRuntime_Record(INFANTRY_TASK_TUNING_TELEMETRY, start_cycles);
+        vTaskDelayUntil(&last_wake,
+                        pdMS_TO_TICKS(INFANTRY_TUNING_TASK_PERIOD_MS));
+    }
+}
+
 bool InfantryTasks_Create(void)
 {
     TaskRuntime_Init();
@@ -309,7 +331,19 @@ bool InfantryTasks_Create(void)
                           tskIDLE_PRIORITY + 1U,
                           diagnostics_task_stack,
                           &diagnostics_task_tcb);
-    return task_handles[INFANTRY_TASK_DIAGNOSTICS] != NULL;
+    if (task_handles[INFANTRY_TASK_DIAGNOSTICS] == NULL) {
+        return false;
+    }
+
+    task_handles[INFANTRY_TASK_TUNING_TELEMETRY] =
+        xTaskCreateStatic(InfantryTuningTelemetryTask,
+                          "tuning_uart",
+                          TUNING_TELEMETRY_TASK_STACK_WORDS,
+                          NULL,
+                          tskIDLE_PRIORITY + 1U,
+                          tuning_telemetry_task_stack,
+                          &tuning_telemetry_task_tcb);
+    return task_handles[INFANTRY_TASK_TUNING_TELEMETRY] != NULL;
 }
 
 bool InfantryTasks_GetHealthSnapshot(InfantryTaskHealthSnapshot *snapshot)

@@ -1,8 +1,11 @@
-#ifndef __SEASKY_PROTOCOL_H
-#define __SEASKY_PROTOCOL_H
+#ifndef SERIAL_FRAME_PROTOCOL_H
+#define SERIAL_FRAME_PROTOCOL_H
 
-#include <stdio.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define PROTOCOL_CMD_ID 0XA5
 #define OFFSET_BYTE 8 // 出数据段外，其他部分所占字节数
@@ -33,4 +36,8 @@ uint16_t get_protocol_info(uint8_t *rx_buf,			 // 接收到的原始数据
 						   uint16_t *flags_register, // 接收数据的16位寄存器地址
 						   uint8_t *rx_data);			 // 接收的float数据存储地址
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* SERIAL_FRAME_PROTOCOL_H */

@@ -12,7 +12,9 @@
 /*============================================================================
  * 步兵应用调试系统配置
  *============================================================================*/
-#define MINIMAL_DEBUG_ENABLE                        1U //控制日志开关,注意VT冲突
+#ifndef MINIMAL_DEBUG_ENABLE
+#define MINIMAL_DEBUG_ENABLE                        0U /* 通用文本/RTT日志总开关 */
+#endif
 
 #define MINIMAL_DEBUG_MODE_TEXT                     (1U << 0)
 #define MINIMAL_DEBUG_MODE_VOFA                     (1U << 1)
@@ -20,26 +22,45 @@
 #define MINIMAL_DEBUG_MODE                          (MINIMAL_DEBUG_MODE_TEXT )
 // #define MINIMAL_DEBUG_MODE                          (MINIMAL_DEBUG_MODE_VOFA )
 
-#define MINIMAL_DEBUG_UART_PORT                     1U   /* 1/3/6 */
-#define MINIMAL_DEBUG_UART_TIMEOUT_MS               20U
+#define MINIMAL_DEBUG_UART_PORT                     6U   /* ET08调试固件: USART6, 115200 8N1 */
+#define MINIMAL_DEBUG_UART_TIMEOUT_MS               100U
 #define MINIMAL_DEBUG_UART_BAUDRATE                 115200U
 #define MINIMAL_DEBUG_ALLOW_MIXED_STREAM            0U   /* 0: 单串口禁止Text+VOFA混发 */
 
-#define MINIMAL_DEBUG_MOD_SYSTEM                    0U
+#define MINIMAL_DEBUG_MOD_SYSTEM                    1U
 #define MINIMAL_DEBUG_MOD_INPUT                     1U
-#define MINIMAL_DEBUG_MOD_CHASSIS                   0U
-#define MINIMAL_DEBUG_MOD_GIMBAL                    0U
+#define MINIMAL_DEBUG_MOD_CHASSIS                   1U
+#define MINIMAL_DEBUG_MOD_GIMBAL                    1U
 #define MINIMAL_DEBUG_MOD_SHOOT                     0U
 
-#define MINIMAL_DEBUG_TEXT_PERIOD_MS                50U  /* 20Hz */
+#define MINIMAL_DEBUG_TEXT_PERIOD_MS                200U /* 5Hz，给底盘/云台调参留出串口带宽 */
 #define MINIMAL_DEBUG_VOFA_PERIOD_MS                20U  /* 50Hz */
-#define GIMBAL_DEBUG_DETAIL_PERIOD_MS               50U  /* 20Hz */
+#define GIMBAL_DEBUG_DETAIL_PERIOD_MS               100U /* 10Hz */
 
-#define MINIMAL_DEBUG_DISABLE_VT_ON_UART_CONFLICT   1U
+/*
+ * 独立调参遥测：不复用通用日志任务，不执行字符串格式化。
+ * 当前使用 UART6 向 VOFA+ 发送 JustFloat 自定义通道。
+ */
+#ifndef INFANTRY_TUNING_TELEMETRY_ENABLE
+#define INFANTRY_TUNING_TELEMETRY_ENABLE            1U
+#endif
+#define INFANTRY_TUNING_UART_PORT                    6U
+#define INFANTRY_TUNING_UART_BAUDRATE                115200U
+#define INFANTRY_TUNING_TASK_PERIOD_MS               20U
+
+#if INFANTRY_TUNING_UART_PORT == 1U
+#define INFANTRY_TUNING_UART_HANDLE huart1
+#elif INFANTRY_TUNING_UART_PORT == 3U
+#define INFANTRY_TUNING_UART_HANDLE huart3
+#elif INFANTRY_TUNING_UART_PORT == 6U
+#define INFANTRY_TUNING_UART_HANDLE huart6
+#else
+#error "Unsupported INFANTRY_TUNING_UART_PORT, use 1/3/6."
+#endif
 
 /* 桥接到bsp_log */
 #ifndef BSP_LOG_USE_UART
-#define BSP_LOG_USE_UART                            1
+#define BSP_LOG_USE_UART                            0 /* 通用日志不得占用调参串口 */
 #endif
 #ifndef BSP_LOG_UART_PORT
 #define BSP_LOG_UART_PORT                           MINIMAL_DEBUG_UART_PORT
@@ -62,18 +83,44 @@
 #endif
 
 /*============================================================================
- * 控制源选择 (二选一)
+ * 遥控后端：编译期只允许选择一个，不进行运行时仲裁或自动回退。
  *============================================================================*/
-#define INPUT_SOURCE_ET08       0U      // ET08遥控器
-#define INPUT_SOURCE_VT         1U      // VT图传键鼠
+#define INFANTRY_REMOTE_BACKEND_ET08 1U
+#define INFANTRY_REMOTE_BACKEND_DT7  2U
+#define INFANTRY_REMOTE_BACKEND_VT   3U
 
-/* 兼容旧逻辑: INPUT_SOURCE仅用于回放/调试,实际运行采用双输入仲裁 */
-#define INPUT_SOURCE            INPUT_SOURCE_VT
+#ifndef INFANTRY_REMOTE_BACKEND
+#define INFANTRY_REMOTE_BACKEND INFANTRY_REMOTE_BACKEND_ET08
+#endif
 
-/* 双输入仲裁配置 */
-#define INPUT_VT_PRIMARY                1U
-#define INPUT_ET08_TAKEOVER_SD_UP       1U
-#define INPUT_FAILSAFE_HOLD_MS          1000U
+#if (INFANTRY_REMOTE_BACKEND != INFANTRY_REMOTE_BACKEND_ET08) && \
+    (INFANTRY_REMOTE_BACKEND != INFANTRY_REMOTE_BACKEND_DT7) &&  \
+    (INFANTRY_REMOTE_BACKEND != INFANTRY_REMOTE_BACKEND_VT)
+#error "INFANTRY_REMOTE_BACKEND must select exactly one supported backend"
+#endif
+
+#if MINIMAL_DEBUG_ENABLE &&                                            \
+    ((((INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_ET08) ||    \
+       (INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_DT7)) &&    \
+      (MINIMAL_DEBUG_UART_PORT == 3U)) ||                              \
+     ((INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_VT) &&       \
+      (MINIMAL_DEBUG_UART_PORT == 6U)))
+#error "Debug UART conflicts with the selected remote-control backend"
+#endif
+
+#if INFANTRY_TUNING_TELEMETRY_ENABLE &&                               \
+    ((((INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_ET08) ||   \
+       (INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_DT7)) &&   \
+      (INFANTRY_TUNING_UART_PORT == 3U)) ||                           \
+     ((INFANTRY_REMOTE_BACKEND == INFANTRY_REMOTE_BACKEND_VT) &&      \
+      (INFANTRY_TUNING_UART_PORT == 6U)))
+#error "Tuning UART conflicts with the selected remote-control backend"
+#endif
+
+#if MINIMAL_DEBUG_ENABLE && INFANTRY_TUNING_TELEMETRY_ENABLE &&       \
+    (MINIMAL_DEBUG_UART_PORT == INFANTRY_TUNING_UART_PORT)
+#error "Generic debug and tuning telemetry cannot share one UART"
+#endif
 
 /*============================================================================
  * 系统配置
@@ -110,6 +157,18 @@
 /* Only the health task refreshes IWDG; a stalled scheduler or critical task resets. */
 #define INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS   1000U
 
+/*
+ * 调试阶段安全策略：SA 使用直接电平门；单个电机掉线只隔离该电机并报警，
+ * 不连带关闭其余在线执行器。遥控失联、初始化失败、INS/任务故障仍会停机。
+ */
+#define INFANTRY_SAFETY_REQUIRE_EXPLICIT_REARM  0U
+#define INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH    0U
+
+#if (INFANTRY_SAFETY_REQUIRE_EXPLICIT_REARM > 1U) || \
+    (INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH > 1U)
+#error "INFANTRY_SAFETY_* options must be 0 or 1"
+#endif
+
 #if INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS <= INFANTRY_HEALTH_TASK_PERIOD_MS
 #error "INFANTRY_HARDWARE_WATCHDOG_TIMEOUT_MS must exceed one health period"
 #endif
@@ -141,13 +200,14 @@
  * 遥控配置 - ET08 SBUS (UART3)
  *============================================================================*/
 #define RC_UART                 huart3
-#define RC_ONLINE_TIMEOUT_MS    1000U
-#define RC_DEADZONE             50
-#define RC_STICK_SCALE          660.0f
-
-/* 摇杆映射模式: 0=左CH3/CH4, 1=左CH1/CH2 */
-#define RC_MAPPING_MODE         0U
-#define ET08_GIMBAL_YAW_SPEED_SCALE 0.23f
+#define ET08_ONLINE_TIMEOUT_MS  100U
+#define DT7_ONLINE_TIMEOUT_MS   100U
+#define ET08_STICK_DEADZONE_RAW 100     /* 当前ET08中位实测最大偏移约74 */
+#define ET08_STICK_FULL_SCALE_RAW 660.0f
+#define DT7_STICK_DEADZONE_RAW  10
+#define DT7_STICK_FULL_SCALE_RAW 660.0f
+#define VT_STICK_DEADZONE_RAW   10
+#define VT_STICK_FULL_SCALE_RAW 660.0f
 
 /*============================================================================
  * 图传链路配置 - VT03/VT13 (USART6, 921600bps)
@@ -177,19 +237,13 @@
 #define VT_KEY_B                (1U << 15)
 
 /* 底盘速度参数 */
-#define VT_CHASSIS_BASE_SPEED   8.0f    // 基础速度 (m/s)
-#define VT_CHASSIS_FAST_MULT    1.5f    // Shift加速倍数
-#define VT_CHASSIS_SLOW_MULT    0.4f    // Ctrl减速倍数
-#define VT_CHASSIS_ROTATE_SPEED 6.0f    // Q/E旋转速度 (rad/s)
+#define VT_CHASSIS_BASE_INTENT  0.60f   // 无量纲键盘基础意图
+#define VT_CHASSIS_FAST_MULT    (1.0f / VT_CHASSIS_BASE_INTENT)
+#define VT_CHASSIS_SLOW_MULT    0.50f
 
 /* VT云台灵敏度 */
-#define VT_MOUSE_YAW_SENSITIVITY      0.30f   // Yaw鼠标灵敏度(deg/s per count)
-#define VT_MOUSE_PITCH_SENSITIVITY    0.24f   // Pitch鼠标灵敏度(deg/s per count)
-#define VT_MOUSE_PITCH_MODE_FULL_SCALE 400.0f // 鼠标Pitch进入速度环判定满量程
-#define VT_STICK_YAW_SPEED_SCALE      36.0f   // VT摇杆Yaw速度增益(deg/s)
-#define VT_STICK_PITCH_SPEED_SCALE    (GM6020_SPEED_MAX * 0.15f / 660.0f)
-#define VT_PITCH_MAX_ANGLE      35.0f   // Pitch最大角度限制
-#define VT_PITCH_MIN_ANGLE      -25.0f  // Pitch最小角度限制
+#define VT_MOUSE_YAW_INTENT_PER_COUNT   0.010f
+#define VT_MOUSE_PITCH_INTENT_PER_COUNT 0.010f
 
 /*============================================================================
  * 裁判系统(只读联锁)配置
@@ -201,26 +255,42 @@
 #define REFEREE_HEAT_STOP_RATIO          0.95f
 #define REFEREE_FRICTION_SLOW_RATIO      0.80f
 
+#if REFEREE_ENABLE && MINIMAL_DEBUG_ENABLE && (MINIMAL_DEBUG_UART_PORT == 1U)
+#error "Debug UART conflicts with the enabled referee link"
+#endif
+
 /*============================================================================
  * 底盘参数
  *============================================================================*/
+/* 正式应用的电机速度单位契约。 */
+#define M3508_ROTOR_SPEED_LIMIT_RAD_S 523.5987756f /* 5000 rpm */
+#define GM6020_SPEED_LIMIT_DEG_S      3600.0f      /* 位置串级仍使用 deg/deg/s */
+
 #define CHASSIS_WHEEL_RADIUS    0.075f  // 轮子半径(m)
 #define CHASSIS_WHEEL_BASE      0.34f   // 轮距(m)
 
-#define CHASSIS_MAX_VX          20.0f   // 最大纵向速度(m/s)
-#define CHASSIS_MAX_VY          20.0f   // 最大横向速度(m/s)
-#define CHASSIS_MAX_WZ          47.0f   // 最大旋转角速度(rad/s)
+/* 标准 M3508 行星减速箱；轮端速度换算必须使用真实减速比。 */
+#define CHASSIS_MOTOR_REDUCTION_RATIO 19.20320856f
 
-#define CHASSIS_SPEED_SCALE     3.0f    // 速度缩放系数
-#define CHASSIS_SPEED_DEADZONE  120.0f  // 速度死区
+/*
+ * 满意图直接映射到 M3508 配置转速上限，不再设置一层保守“遥控速度”。
+ * 平移+旋转叠加超限时，最终四轮在执行层统一等比例缩放。
+ */
+#define CHASSIS_MAX_TRANSLATION_SPEED \
+    (M3508_ROTOR_SPEED_LIMIT_RAD_S * CHASSIS_WHEEL_RADIUS / \
+     CHASSIS_MOTOR_REDUCTION_RATIO)
+#define CHASSIS_MAX_ROTATION_SPEED_RAD_S \
+    (CHASSIS_MAX_TRANSLATION_SPEED / (CHASSIS_WHEEL_BASE * 0.5f))
+
+#define CHASSIS_MOTOR_SPEED_DEADZONE_RAD_S 2.09439510f
 #define CHASSIS_DEADZONE_VX     0.08f   // 底盘输入死区(vx)
 #define CHASSIS_DEADZONE_VY     0.08f   // 底盘输入死区(vy)
 #define CHASSIS_DEADZONE_WZ     0.10f   // 底盘输入死区(wz)
-#define CHASSIS_SPEED_FILTER_COEF 0.50f // 一阶低通滤波系数
+#define CHASSIS_SPEED_FILTER_COEF 0.15f // 一阶低通，0为不滤波，越大响应越慢
 
-/* 底盘电机PID */
-#define CHASSIS_SPEED_KP        4.0f
-#define CHASSIS_SPEED_KI        0.04f
+/* 底盘M3508转子速度环，参考、反馈和误差统一使用rad/s。 */
+#define CHASSIS_SPEED_KP        229.18312f
+#define CHASSIS_SPEED_KI        2.291831f
 #define CHASSIS_SPEED_KD        0.0f
 #define CHASSIS_SPEED_MAX_OUT   15000.0f
 
@@ -230,31 +300,34 @@
 #define CHASSIS_RUN_LOOP_NORMAL        SPEED_LOOP
 
 /* 底盘-云台相对姿态标定 */
-#define YAW_CHASSIS_ALIGN_ECD          2711U
+#define YAW_CHASSIS_ALIGN_ECD          7821U
 #define YAW_ALIGN_ANGLE_DEG            (YAW_CHASSIS_ALIGN_ECD * ECD_ANGLE_COEF_DJI)
 #define IMU_YAW_LOGIC_ZERO_TOTAL_DEG   364.30f
-#define YAW_OFFSET_LOGIC_ZERO_DEG      (-118.915f)
+#define YAW_OFFSET_LOGIC_ZERO_DEG      0.0f
 
 /* FOLLOW模式: 相对夹角闭环生成底盘角速度 */
-#define CHASSIS_FOLLOW_WZ_KP           (-25.0f)
-#define CHASSIS_FOLLOW_WZ_KI           3.0f
-#define CHASSIS_FOLLOW_WZ_KD           0.15f
-#define CHASSIS_FOLLOW_WZ_MAX          50.0f
-#define CHASSIS_FOLLOW_WZ_I_MAX        15.0f
-#define CHASSIS_FOLLOW_SPEED_DEADZONE  20.0f
+#define CHASSIS_FOLLOW_WZ_KP           5.0f
+#define CHASSIS_FOLLOW_WZ_KI           0.0f
+#define CHASSIS_FOLLOW_WZ_KD           0.10f
+#define CHASSIS_FOLLOW_WZ_MAX          2.5f
+#define CHASSIS_FOLLOW_WZ_I_MAX_RAD_S  0.26179939f
+#define CHASSIS_FOLLOW_MOTOR_SPEED_DEADZONE_RAD_S 0.34906585f
 
 /* 小陀螺 */
-#define SPIN_ROTATE_SPEED_RAD_S        40.0f
+#define CHASSIS_SPIN_SPEED_RAD_S       CHASSIS_MAX_ROTATION_SPEED_RAD_S
 
 /*============================================================================
  * 云台参数
  *============================================================================*/
-#define GIMBAL_SPEED_DEADZONE_ET08   30.0f
-#define GIMBAL_SPEED_DEADZONE_VT_MOUSE 1.0f
-#define GIMBAL_SPEED_DEADZONE_VT_STICK 30.0f
-#define GIMBAL_RC_DEADZONE      50
-#define ET08_PITCH_SPEED_SCALE  0.15f
-#define GIMBAL_NO_FOLLOW_SCALE  4.5f
+/* 满意图对应的执行层速度；沿用已上机 demo 的 0.23/0.15 速度比例。 */
+#define GIMBAL_YAW_MAX_SPEED_DEG_S      (GM6020_SPEED_LIMIT_DEG_S * 0.23f)
+#define GIMBAL_PITCH_MAX_SPEED_DEG_S    (GM6020_SPEED_LIMIT_DEG_S * 0.15f)
+
+/* 执行层机械软限位，对遥控、视觉和自动控制请求统一生效。 */
+#define GIMBAL_PITCH_MIN_DEG             -25.0f
+#define GIMBAL_PITCH_MAX_DEG              35.0f
+#define GIMBAL_PITCH_SOFT_MARGIN_DEG       3.0f
+#define GIMBAL_PITCH_IMU_DIRECTION_SIGN   1.0f
 
 #define YAW_BRAKE_SPEED_EPS     10.0f
 #define YAW_BRAKE_STABLE_COUNT  10U
@@ -266,25 +339,15 @@
 #define PITCH_RELEASE_SPEED_PREDICT_GAIN 0.02f
 
 /* 云台电机PID */
-#define YAW_FOLLOW_ANGLE_KP     10.0f
-#define YAW_FOLLOW_ANGLE_KI     0.0f
-#define YAW_FOLLOW_ANGLE_KD     0.35f
-#define YAW_FOLLOW_ANGLE_MAX_OUT 2000.0f
+#define YAW_ANGLE_KP            15.0f
+#define YAW_ANGLE_KI            0.00f
+#define YAW_ANGLE_KD            0.45f
+#define YAW_ANGLE_MAX_OUT       5000.0f
 
-#define YAW_FOLLOW_SPEED_KP     10.0f
-#define YAW_FOLLOW_SPEED_KI     3.0f
-#define YAW_FOLLOW_SPEED_KD     0.0f
-#define YAW_FOLLOW_SPEED_MAX_OUT 10000.0f
-
-#define YAW_SEPARATE_ANGLE_KP   15.0f
-#define YAW_SEPARATE_ANGLE_KI   0.00f
-#define YAW_SEPARATE_ANGLE_KD   0.45f
-#define YAW_SEPARATE_ANGLE_MAX_OUT 5000.0f
-
-#define YAW_SEPARATE_SPEED_KP   18.0f
-#define YAW_SEPARATE_SPEED_KI   2.0f
-#define YAW_SEPARATE_SPEED_KD   0.0f
-#define YAW_SEPARATE_SPEED_MAX_OUT 15000.0f
+#define YAW_SPEED_KP            18.0f
+#define YAW_SPEED_KI            2.0f
+#define YAW_SPEED_KD            0.0f
+#define YAW_SPEED_MAX_OUT       15000.0f
 
 #define PITCH_ANGLE_KP          24.0f
 #define PITCH_ANGLE_KI          0.05f
@@ -303,14 +366,10 @@
  * - Pitch角度正方向为正
  * 调参时优先改 K 的大小; 若整体方向反了, 再改符号。
  */
-#define PITCH_GRAVITY_FF_K      (+15000.0f)
-#define PITCH_GRAVITY_FF_MAX    120000.0f
-#define PITCH_GRAVITY_FF_OFFSET_DEG 15.0f
-#define PITCH_FF_LPF            0.9f
-#define PITCH_HOLD_KP           12.0f
-#define PITCH_HOLD_KI           0.8f
-#define PITCH_HOLD_KD           0.35f
-#define PITCH_HOLD_I_LIMIT      800.0f
+#define PITCH_GRAVITY_FF_K             (+2500.0f)
+#define PITCH_GRAVITY_FF_MAX           4000.0f
+#define PITCH_GRAVITY_HORIZONTAL_DEG   0.0f
+#define PITCH_FF_LPF                   0.8f
 
 /* 云台环路策略 */
 #define GIMBAL_YAW_INIT_LOOP          SPEED_LOOP
@@ -322,15 +381,12 @@
 
 /* 云台模式切换/目标更新 */
 #define GIMBAL_SEPARATE_YAW_MAX_ANGLE    1080.0f
-#define GIMBAL_SEPARATE_PITCH_MAX_ANGLE  VT_PITCH_MAX_ANGLE
-#define GIMBAL_SEPARATE_PITCH_MIN_ANGLE  VT_PITCH_MIN_ANGLE
 
 /*============================================================================
  * 发射参数
  *============================================================================*/
-#define FRICTION_SPEED_TARGET   (-30000.0f)  // 摩擦轮目标转速
-#define LOADER_SPEED_CONTINUOUS 20000.0f     // 连发拨盘速度
-#define LOADER_SPEED_SINGLE     7000.0f      // 单发拨盘速度
+#define FRICTION_TARGET_SPEED_RAD_S (-M3508_ROTOR_SPEED_LIMIT_RAD_S)
+#define LOADER_CONTINUOUS_SPEED_DEG_S 20000.0f      // M2006位置串级速度
 #define LOADER_ANGLE_STEP       585.0f       // 单发角度步进 (45° * 13减速比)
 #define LOADER_SINGLE_SETTLE_EPS 10.0f
 #define LOADER_SINGLE_TIMEOUT_MS 350U
@@ -339,7 +395,7 @@
 #define SHOOT_INTERVAL_MS       2000U        // 发射间隔
 
 /* 发射电机PID */
-#define FRICTION_SPEED_KP       10.0f
+#define FRICTION_SPEED_KP       572.95780f /* M3508速度误差单位rad/s */
 #define FRICTION_SPEED_KI       0.0f
 #define FRICTION_SPEED_KD       0.0f
 #define FRICTION_SPEED_MAX_OUT  12000.0f
@@ -362,17 +418,5 @@
 #define LOADER_RUN_LOOP_STOP             SPEED_LOOP
 #define LOADER_RUN_LOOP_SINGLE           ANGLE_LOOP
 #define LOADER_RUN_LOOP_CONTINUOUS       SPEED_LOOP
-
-/*============================================================================
- * 电机通用参数
- *============================================================================*/
-#define M3508_SPEED_MAX         30000.0f
-#define GM6020_SPEED_MAX        3600.0f
-
-/* 发射参数补充 */
-#define FRICTION_TARGET_SPEED   (-30000.0f)
-#define LOADER_CONTINUOUS_SPEED 20000.0f
-#define LOADER_SINGLE_SPEED     7000.0f
-
 
 #endif /* INFANTRY_CONFIG_H */

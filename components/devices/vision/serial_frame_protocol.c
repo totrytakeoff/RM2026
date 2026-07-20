@@ -1,8 +1,6 @@
 /**
- * @file seasky_protocol.c
- * @author Liu Wei
- * @author modified by Neozng
- * @brief 湖南大学RoBoMatster串口通信协议
+ * @file serial_frame_protocol.c
+ * @brief 通用变长串口数据帧协议
  * @version 0.1
  * @date 2022-11-03
  *
@@ -10,7 +8,7 @@
  *
  */
 
-#include "seasky_protocol.h"
+#include "serial_frame_protocol.h"
 #include "crc8.h"
 #include "crc16.h"
 #include "memory.h"

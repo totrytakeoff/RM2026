@@ -38,10 +38,11 @@ function(create_embedded_test test_name)
         set(GLOBAL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/output)
     endif()
     
-    # 创建测试可执行文件
+    # 创建测试可执行文件。板级demo只在显式指定目标时构建，不能污染正式固件的
+    # 默认构建；部分历史demo保留独立参数契约，后续按需逐个迁移。
     # 启动文件由板级 target 统一提供。
     # 只需要添加测试本身的源文件即可。
-    add_executable(${test_target_name}
+    add_executable(${test_target_name} EXCLUDE_FROM_ALL
         ${ARG_SOURCES}
         ${ARG_EXTRA_SOURCES}
         ${CMAKE_SOURCE_DIR}/tests/firmware/error_handler_stub.c

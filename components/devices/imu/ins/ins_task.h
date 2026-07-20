@@ -28,7 +28,7 @@
 
 typedef struct
 {
-    float Gyro[3];  // 角速度
+    float Gyro[3];  // 角速度 (rad/s)
     float Accel[3]; // 加速度
     // 还需要增加角速度数据
     float Roll;
@@ -56,7 +56,7 @@ typedef struct
     // float atanyz;
 
     // IMU量测值
-    float Gyro[3];  // 角速度
+    float Gyro[3];  // 角速度 (rad/s)
     float Accel[3]; // 加速度
     // 位姿
     float Roll;

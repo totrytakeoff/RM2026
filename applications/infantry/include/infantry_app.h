@@ -7,6 +7,10 @@
 #include "infantry_types.h"
 #include "safety_manager.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** Initialize the infantry modules. Call before the scheduler starts. */
 bool InfantryApp_Init(void);
 
@@ -18,6 +22,9 @@ void InfantryApp_ControlStep(uint32_t now_ms);
 
 /** Execute non-critical, rate-limited diagnostics. */
 void InfantryApp_DiagnosticsStep(uint32_t now_ms);
+
+/** Send one dedicated, non-blocking tuning telemetry frame. */
+void InfantryApp_TuningTelemetryStep(uint32_t now_ms);
 
 /** Immediately place every actuator module in its stopped state. */
 void InfantryApp_ForceSafeStop(void);
@@ -33,5 +40,9 @@ uint32_t InfantryApp_GetSafetyReasons(void);
 
 /** Read-only access for transitional diagnostics. */
 const Robot_Context_t *InfantryApp_GetContext(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* INFANTRY_APP_H */

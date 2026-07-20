@@ -103,13 +103,15 @@
 #define CHASSIS_MOTOR_ID_BR 4U
 
 #define GIMBAL_YAW_SPEED_SCALE_DEMO 0.23f
+#define DEMO_GIMBAL_SPEED_DEADZONE 30.0f
+#define DEMO_ET08_PITCH_SPEED_SCALE 0.15f
 
 /*
  * 小陀螺模式: 在SEPARATE模式下叠加自旋速度
  * SA上: 开启小陀螺
  * SA下: 关闭小陀螺
  */
-#define SPIN_ROTATE_SPEED_RAD_S 40.0f       /* 小陀螺自旋角速度 rad/s */
+#define DEMO_SPIN_ROTATE_SPEED_RAD_S 40.0f  /* 小陀螺自旋角速度 rad/s */
 
 /* Private typedef -----------------------------------------------------------*/
 typedef enum {
@@ -580,7 +582,7 @@ static bool GimbalUpdateFromET08(float dt_s)
     {
         float yaw_ratio = ClampFloat((float)yaw_in / RC_STICK_SCALE, -1.0f, 1.0f);
         yaw_speed_ref = yaw_ratio * GM6020_SPEED_MAX * GIMBAL_YAW_SPEED_SCALE_DEMO;
-        if (fabsf(yaw_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
+        if (fabsf(yaw_speed_ref) < DEMO_GIMBAL_SPEED_DEADZONE) {
             yaw_speed_ref = 0.0f;
         }
         yaw_hold_ref += yaw_speed_ref * dt_s;
@@ -593,8 +595,8 @@ static bool GimbalUpdateFromET08(float dt_s)
 
     {
         float pitch_ratio = ClampFloat((float)pitch_in / RC_STICK_SCALE, -1.0f, 1.0f);
-        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * ET08_PITCH_SPEED_SCALE;
-        if (fabsf(pitch_speed_ref) < GIMBAL_SPEED_DEADZONE_ET08) {
+        pitch_speed_ref = pitch_ratio * GM6020_SPEED_MAX * DEMO_ET08_PITCH_SPEED_SCALE;
+        if (fabsf(pitch_speed_ref) < DEMO_GIMBAL_SPEED_DEADZONE) {
             pitch_speed_ref = 0.0f;
         }
     }
@@ -786,7 +788,7 @@ static bool BuildChassisCommandFromEt08(ChassisCmd_t *cmd)
         
         /* 小陀螺模式: 叠加固定自旋速度 */
         if (spin_mode_enabled) {
-            cmd->wz_cmd = SPIN_ROTATE_SPEED_RAD_S;
+            cmd->wz_cmd = DEMO_SPIN_ROTATE_SPEED_RAD_S;
         } else {
             cmd->wz_cmd = 0.0f;
         }
