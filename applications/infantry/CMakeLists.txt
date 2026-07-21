@@ -15,6 +15,7 @@ add_library(rm_app_infantry STATIC
     diagnostics/infantry_debug.c
     diagnostics/infantry_tuning_telemetry.c
     gimbal/infantry_gimbal.c
+    gimbal/infantry_gimbal_axis_state.c
     gimbal/infantry_gimbal_limits.c
     referee/infantry_referee.c
     shoot/infantry_shoot.c

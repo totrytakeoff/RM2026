@@ -111,6 +111,39 @@ target_compile_options(test_infantry_gimbal_limits PRIVATE
 )
 add_test(NAME infantry_gimbal_limits COMMAND test_infantry_gimbal_limits)
 
+add_library(rm_infantry_gimbal_axis_state_host STATIC
+    ../../applications/infantry/gimbal/infantry_gimbal_axis_state.c
+)
+target_include_directories(rm_infantry_gimbal_axis_state_host PUBLIC
+    ../../applications/infantry/gimbal
+    ../../applications/infantry/include
+    ../../applications/infantry/referee
+)
+target_compile_features(rm_infantry_gimbal_axis_state_host PUBLIC c_std_11)
+target_compile_options(rm_infantry_gimbal_axis_state_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_infantry_gimbal_axis_state
+    infantry_gimbal_axis_state_test.c
+)
+target_link_libraries(test_infantry_gimbal_axis_state PRIVATE
+    rm_infantry_gimbal_axis_state_host
+    m
+)
+target_compile_features(test_infantry_gimbal_axis_state PRIVATE c_std_11)
+target_compile_options(test_infantry_gimbal_axis_state PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+add_test(NAME infantry_gimbal_axis_state
+         COMMAND test_infantry_gimbal_axis_state)
+
 add_executable(test_infantry_gimbal_units
     infantry_gimbal_units_test.c
 )

@@ -177,9 +177,10 @@ bool MapEt08Input(const RemoteControlState &remote,
     output.chassis_y_intent = -left_y;
     output.chassis_rotate_intent = 0.0F;
     output.gimbal_yaw_intent = right_x;
-    output.gimbal_pitch_intent = right_y;
+    /* ET08 右摇杆上下方向与 IMU Pitch 语义相反，在适配层统一。 */
+    output.gimbal_pitch_intent = -right_y;
     output.yaw_control_active = right_x != 0.0F ? 1U : 0U;
-    output.pitch_control_active = right_y != 0.0F ? 1U : 0U;
+    output.pitch_control_active = output.gimbal_pitch_intent != 0.0F ? 1U : 0U;
     return true;
 }
 

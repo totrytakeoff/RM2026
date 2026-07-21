@@ -222,6 +222,61 @@ bool DJIMotorGetCommand(const DJIMotorInstance *motor,
     return true;
 }
 
+static void DJIMotorCopyPidSnapshot(const PIDInstance *pid,
+                                    DJIMotorPidSnapshot *snapshot)
+{
+    snapshot->reference = pid->Ref;
+    snapshot->measure = pid->Measure;
+    snapshot->error = pid->Err;
+    snapshot->p_output = pid->Pout;
+    snapshot->i_output = pid->Iout;
+    snapshot->d_output = pid->Dout;
+    snapshot->output = pid->Output;
+    snapshot->max_output = pid->MaxOut;
+}
+
+static void DJIMotorPublishControlSnapshot(DJIMotorInstance *motor)
+{
+    DJIMotorControlSnapshot next = {0};
+    RmCriticalState state;
+
+    if (motor == NULL) {
+        return;
+    }
+
+    next.settings = motor->motor_settings;
+    next.command_reference = motor->motor_controller.pid_ref;
+    DJIMotorCopyPidSnapshot(&motor->motor_controller.angle_PID,
+                            &next.angle);
+    DJIMotorCopyPidSnapshot(&motor->motor_controller.speed_PID,
+                            &next.speed);
+    DJIMotorCopyPidSnapshot(&motor->motor_controller.current_PID,
+                            &next.current);
+    next.output_active = motor->output_active;
+
+    state = RmCritical_Enter();
+    memcpy(&motor->control_snapshot, &next, sizeof(next));
+    motor->control_snapshot_valid = 1U;
+    RmCritical_Exit(state);
+}
+
+bool DJIMotorGetControlSnapshot(const DJIMotorInstance *motor,
+                                DJIMotorControlSnapshot *snapshot)
+{
+    RmCriticalState state;
+    bool valid;
+
+    if ((motor == NULL) || (snapshot == NULL)) {
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    memcpy(snapshot, &motor->control_snapshot, sizeof(*snapshot));
+    valid = motor->control_snapshot_valid != 0U;
+    RmCritical_Exit(state);
+    return valid;
+}
+
 bool DJIMotorPublishCommand(DJIMotorInstance *motor,
                             const DJIMotorCommand *command)
 {
@@ -393,6 +448,7 @@ DJIMotorInstance *DJIMotorInit(Motor_Init_Config_s *config)
     instance->motor_controller.current_feedforward_ptr = config->controller_param_init_config.current_feedforward_ptr;
     instance->motor_controller.speed_feedforward_ptr = config->controller_param_init_config.speed_feedforward_ptr;
     // 前馈源由应用配置，控制任务只读取对应指针。
+    DJIMotorPublishControlSnapshot(instance);
 
     // 电机分组,因为至多4个电机可以共用一帧CAN控制报文
     if (!MotorSenderGrouping(instance, &config->can_init_config)) {
@@ -545,6 +601,7 @@ void DJIMotorControl()
         num = motor->message_num;
         if (!DJIMotorGetMeasure(motor, &measure_snapshot)) {
             memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
+            DJIMotorPublishControlSnapshot(motor);
             continue;
         }
         measure = &measure_snapshot;
@@ -558,6 +615,7 @@ void DJIMotorControl()
             motor->output_active = 0U;
             memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
             motor->last_total_angle = measure->total_angle;
+            DJIMotorPublishControlSnapshot(motor);
             continue;
         }
         if (motor->output_active == 0U) {
@@ -647,6 +705,7 @@ void DJIMotorControl()
         sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff);
 
         motor->last_total_angle = measure->total_angle;
+        DJIMotorPublishControlSnapshot(motor);
     }
 
     // 仅发送包含已注册电机的命令组。

@@ -25,7 +25,11 @@ void InfantryChassis_RotateToBody(float gimbal_vx,
         return;
     }
 
-    theta = -yaw_offset_rad;
+    /*
+     * yaw_offset = yaw_gimbal - yaw_chassis。输入向量位于云台坐标系，
+     * 因此旋转到车体坐标系时应直接使用该相对角，而不是取反。
+     */
+    theta = yaw_offset_rad;
     cosine = cosf(theta);
     sine = sinf(theta);
     rotated_vx = gimbal_vx * cosine + gimbal_vy * sine;
@@ -141,4 +145,77 @@ void InfantryChassis_NormalizeWheelSpeeds(float speeds[4],
     for (index = 0U; index < 4U; ++index) {
         speeds[index] *= scale;
     }
+}
+
+bool InfantryChassis_CombineWheelSpeedsPreserveRotation(
+    const float translation[4],
+    const float rotation[4],
+    float max_abs_speed,
+    float output[4],
+    float *translation_scale)
+{
+    float scale = 1.0f;
+    unsigned index;
+
+    if (translation_scale != NULL) {
+        *translation_scale = 0.0f;
+    }
+    if (translation == NULL || rotation == NULL || output == NULL ||
+        !isfinite(max_abs_speed) || max_abs_speed <= 0.0f) {
+        if (output != NULL) {
+            for (index = 0U; index < 4U; ++index) {
+                output[index] = 0.0f;
+            }
+        }
+        return false;
+    }
+
+    for (index = 0U; index < 4U; ++index) {
+        float candidate;
+
+        if (!isfinite(translation[index]) || !isfinite(rotation[index])) {
+            for (index = 0U; index < 4U; ++index) {
+                output[index] = 0.0f;
+            }
+            return false;
+        }
+        if (fabsf(rotation[index]) > max_abs_speed) {
+            for (index = 0U; index < 4U; ++index) {
+                output[index] = rotation[index];
+            }
+            InfantryChassis_NormalizeWheelSpeeds(output, max_abs_speed);
+            return true;
+        }
+        if (translation[index] > 0.0f) {
+            candidate = (max_abs_speed - rotation[index]) /
+                        translation[index];
+            if (candidate < scale) {
+                scale = candidate;
+            }
+        } else if (translation[index] < 0.0f) {
+            candidate = (-max_abs_speed - rotation[index]) /
+                        translation[index];
+            if (candidate < scale) {
+                scale = candidate;
+            }
+        }
+    }
+
+    if (scale < 0.0f) {
+        scale = 0.0f;
+    } else if (scale > 1.0f) {
+        scale = 1.0f;
+    }
+    for (index = 0U; index < 4U; ++index) {
+        output[index] = rotation[index] + scale * translation[index];
+        if (output[index] > max_abs_speed) {
+            output[index] = max_abs_speed;
+        } else if (output[index] < -max_abs_speed) {
+            output[index] = -max_abs_speed;
+        }
+    }
+    if (translation_scale != NULL) {
+        *translation_scale = scale;
+    }
+    return true;
 }

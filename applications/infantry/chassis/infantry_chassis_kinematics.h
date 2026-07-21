@@ -1,6 +1,8 @@
 #ifndef INFANTRY_CHASSIS_KINEMATICS_H
 #define INFANTRY_CHASSIS_KINEMATICS_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +34,17 @@ float InfantryChassis_WheelToMotorSpeedRadS(float wheel_speed_rad_s,
 /** 四轮共同等比例缩放，保持合成运动方向不被逐轮削顶破坏。 */
 void InfantryChassis_NormalizeWheelSpeeds(float speeds[4],
                                           float max_abs_speed);
+
+/**
+ * 保留旋转轮速，并按四轮剩余余量统一缩放平移轮速。
+ * translation_scale 返回实际保留的平移比例，范围 0~1。
+ */
+bool InfantryChassis_CombineWheelSpeedsPreserveRotation(
+    const float translation[4],
+    const float rotation[4],
+    float max_abs_speed,
+    float output[4],
+    float *translation_scale);
 
 #ifdef __cplusplus
 }

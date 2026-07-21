@@ -26,6 +26,12 @@ int main(void)
     CHECK(Near(InfantryGimbal_RadPerSecToDegPerSec(1.0f), 57.2957795f));
     CHECK(Near(InfantryGimbal_RadPerSecToDegPerSec(-3.14159265358979323846f),
                -180.0f));
+    CHECK(Near(InfantryGimbal_EstimateBaseRateRadS(1.0f, -7.0f),
+               8.0f));
+    CHECK(Near(InfantryGimbal_EstimateBaseRateRadS(-1.0f, 7.0f),
+               -8.0f));
+    CHECK(Near(InfantryGimbal_EstimateBaseRateRadS(NAN, 0.0f),
+               0.0f));
     CHECK(Near(InfantryGimbal_GravityFeedforward(0.0f, 0.0f,
                                                  2500.0f, 4000.0f),
                2500.0f));
@@ -37,6 +43,21 @@ int main(void)
                4000.0f));
     CHECK(Near(InfantryGimbal_GravityFeedforward(NAN, 0.0f,
                                                  2500.0f, 4000.0f),
+               0.0f));
+    CHECK(Near(InfantryGimbal_BaseRateCurrentFeedforward(
+                   8.0f, 800.0f, 0.2f, 10000.0f),
+               -6400.0f));
+    CHECK(Near(InfantryGimbal_BaseRateCurrentFeedforward(
+                   -8.0f, 800.0f, 0.2f, 10000.0f),
+               6400.0f));
+    CHECK(Near(InfantryGimbal_BaseRateCurrentFeedforward(
+                   -0.1f, 800.0f, 0.2f, 10000.0f),
+               0.0f));
+    CHECK(Near(InfantryGimbal_BaseRateCurrentFeedforward(
+                   20.0f, 800.0f, 0.2f, 10000.0f),
+               -10000.0f));
+    CHECK(Near(InfantryGimbal_BaseRateCurrentFeedforward(
+                   NAN, 800.0f, 0.2f, 10000.0f),
                0.0f));
 
     if (failures != 0U) {

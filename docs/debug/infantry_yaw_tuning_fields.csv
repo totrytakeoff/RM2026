@@ -1,2 +1,0 @@
-time_ms,yaw_encoder_ecd,yaw_encoder_single_deg,yaw_target_total_deg,yaw_imu_total_deg,yaw_imu_single_deg,yaw_imu_gyro_z_rad_s,yaw_offset_raw_deg,yaw_offset_logic_deg,yaw_relative_speed_rad_s,follow_p_rad_s,follow_d_rad_s,follow_wz_raw_rad_s,follow_wz_limited_rad_s,chassis_wz_cmd_rad_s
-0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

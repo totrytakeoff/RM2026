@@ -48,6 +48,18 @@
 #define INFANTRY_TUNING_UART_BAUDRATE                115200U
 #define INFANTRY_TUNING_TASK_PERIOD_MS               20U
 
+/* VOFA+ 主调试轴：两轴共用同一套字段，切换时无需修改组帧代码。 */
+#define INFANTRY_TUNING_GIMBAL_AXIS_YAW               0U
+#define INFANTRY_TUNING_GIMBAL_AXIS_PITCH             1U
+#ifndef INFANTRY_TUNING_GIMBAL_AXIS
+#define INFANTRY_TUNING_GIMBAL_AXIS INFANTRY_TUNING_GIMBAL_AXIS_PITCH
+#endif
+
+#if (INFANTRY_TUNING_GIMBAL_AXIS != INFANTRY_TUNING_GIMBAL_AXIS_YAW) && \
+    (INFANTRY_TUNING_GIMBAL_AXIS != INFANTRY_TUNING_GIMBAL_AXIS_PITCH)
+#error "INFANTRY_TUNING_GIMBAL_AXIS must select YAW or PITCH"
+#endif
+
 #if INFANTRY_TUNING_UART_PORT == 1U
 #define INFANTRY_TUNING_UART_HANDLE huart1
 #elif INFANTRY_TUNING_UART_PORT == 3U
@@ -265,6 +277,7 @@
 /* 正式应用的电机速度单位契约。 */
 #define M3508_ROTOR_SPEED_LIMIT_RAD_S 523.5987756f /* 5000 rpm */
 #define GM6020_SPEED_LIMIT_DEG_S      3600.0f      /* 位置串级仍使用 deg/deg/s */
+#define GM6020_COMMAND_LIMIT          30000.0f      /* CAN 电压/电流命令绝对上限 */
 
 #define CHASSIS_WHEEL_RADIUS    0.075f  // 轮子半径(m)
 #define CHASSIS_WHEEL_BASE      0.34f   // 轮距(m)
@@ -306,15 +319,17 @@
 #define YAW_OFFSET_LOGIC_ZERO_DEG      0.0f
 
 /* FOLLOW模式: 相对夹角闭环生成底盘角速度 */
-#define CHASSIS_FOLLOW_WZ_KP           5.0f
+#define CHASSIS_FOLLOW_WZ_KP           30.0f
 #define CHASSIS_FOLLOW_WZ_KI           0.0f
-#define CHASSIS_FOLLOW_WZ_KD           0.10f
-#define CHASSIS_FOLLOW_WZ_MAX          2.5f
+#define CHASSIS_FOLLOW_WZ_KD           0.80f
+#define CHASSIS_FOLLOW_WZ_MAX          10.0f
 #define CHASSIS_FOLLOW_WZ_I_MAX_RAD_S  0.26179939f
 #define CHASSIS_FOLLOW_MOTOR_SPEED_DEADZONE_RAD_S 0.34906585f
 
 /* 小陀螺 */
-#define CHASSIS_SPIN_SPEED_RAD_S       CHASSIS_MAX_ROTATION_SPEED_RAD_S
+#define CHASSIS_SPIN_SPEED_RATIO       0.60f
+#define CHASSIS_SPIN_SPEED_RAD_S       \
+    (CHASSIS_MAX_ROTATION_SPEED_RAD_S * CHASSIS_SPIN_SPEED_RATIO)
 
 /*============================================================================
  * 云台参数
@@ -323,61 +338,62 @@
 #define GIMBAL_YAW_MAX_SPEED_DEG_S      (GM6020_SPEED_LIMIT_DEG_S * 0.23f)
 #define GIMBAL_PITCH_MAX_SPEED_DEG_S    (GM6020_SPEED_LIMIT_DEG_S * 0.15f)
 
-/* 执行层机械软限位，对遥控、视觉和自动控制请求统一生效。 */
-#define GIMBAL_PITCH_MIN_DEG             -25.0f
-#define GIMBAL_PITCH_MAX_DEG              35.0f
-#define GIMBAL_PITCH_SOFT_MARGIN_DEG       3.0f
-#define GIMBAL_PITCH_IMU_DIRECTION_SIGN   1.0f
+/* 执行层机械角度限位，对遥控、视觉和自动控制目标统一生效。 */
+#define GIMBAL_PITCH_MIN_DEG             -30.0f  /* 抬头限位 */
+#define GIMBAL_PITCH_MAX_DEG              20.0f  /* 低头限位 */
+
+/* 本车正控制轴输出需经驱动反向后才产生正 IMU Pitch。 */
+#define PITCH_MOTOR_OUTPUT_REVERSED         1U
+
+/* 安全门重新放行后的 Pitch 目标；采用 IMU 物理角，不依赖编码器零点。 */
+#define PITCH_STARTUP_CENTER_DEG             0.0f
 
 #define YAW_BRAKE_SPEED_EPS     10.0f
 #define YAW_BRAKE_STABLE_COUNT  10U
 #define YAW_BRAKE_TIMEOUT_MS    220U
 
-#define PITCH_BRAKE_SPEED_EPS   20.0f
-#define PITCH_BRAKE_STABLE_COUNT 3U
-#define PITCH_BRAKE_TIMEOUT_MS  120U
-#define PITCH_RELEASE_SPEED_PREDICT_GAIN 0.02f
+/* 防止控制任务异常延迟后一次性推进过大的 Pitch 角度目标。 */
+#define PITCH_TARGET_INTEGRATION_MAX_DT_MS 40U
 
 /* 云台电机PID */
 #define YAW_ANGLE_KP            15.0f
 #define YAW_ANGLE_KI            0.00f
-#define YAW_ANGLE_KD            0.45f
+#define YAW_ANGLE_KD            2.00f
 #define YAW_ANGLE_MAX_OUT       5000.0f
 
 #define YAW_SPEED_KP            18.0f
-#define YAW_SPEED_KI            2.0f
+#define YAW_SPEED_KI            10.0f
 #define YAW_SPEED_KD            0.0f
 #define YAW_SPEED_MAX_OUT       15000.0f
+#define YAW_SPEED_I_MAX         4000.0f
 
-#define PITCH_ANGLE_KP          24.0f
-#define PITCH_ANGLE_KI          0.05f
+/* 小陀螺下底盘基座角速度对 Yaw 的电流扰动补偿。 */
+#define YAW_BASE_RATE_CURRENT_FF_K          900.0f // 前馈
+#define YAW_BASE_RATE_CURRENT_FF_MAX        10000.0f
+#define YAW_BASE_RATE_FF_LPF                0.85f
+#define YAW_BASE_RATE_FF_DEADBAND_RAD_S     0.20f
+
+#define PITCH_ANGLE_KP          100.0f
+#define PITCH_ANGLE_KI          0.0f
 #define PITCH_ANGLE_KD          0.50f
 #define PITCH_ANGLE_MAX_OUT     5000.0f
 
-#define PITCH_SPEED_KP          9.0f
-// #define PITCH_SPEED_KI          20.0f
-#define PITCH_SPEED_KI          2.0f
+#define PITCH_SPEED_KP          10.0f
+#define PITCH_SPEED_KI          15.0f
 #define PITCH_SPEED_KD          0.0f
 #define PITCH_SPEED_MAX_OUT     15000.0f
+#define PITCH_SPEED_I_MAX       5000.0f
 
 /* Pitch重力补偿
  * 约定:
- * - 电机逆时针输出为正
- * - Pitch角度正方向为正
- * 调参时优先改 K 的大小; 若整体方向反了, 再改符号。
+ * - 控制坐标统一为 IMU Pitch 正方向；
+ * - 本车最终电机执行输出反向，因此保持本车水平姿态需要负的控制轴前馈；
+ * - 当前 K=0 是去掉重力补偿后的临时采样配置，不代表最终标定值。
  */
-#define PITCH_GRAVITY_FF_K             (+2500.0f)
+#define PITCH_GRAVITY_FF_K             (-0.0f)
 #define PITCH_GRAVITY_FF_MAX           4000.0f
 #define PITCH_GRAVITY_HORIZONTAL_DEG   0.0f
 #define PITCH_FF_LPF                   0.8f
-
-/* 云台环路策略 */
-#define GIMBAL_YAW_INIT_LOOP          SPEED_LOOP
-#define GIMBAL_YAW_RUN_LOOP_FOLLOW    ANGLE_LOOP
-#define GIMBAL_YAW_RUN_LOOP_SEPARATE  ANGLE_LOOP
-#define GIMBAL_PITCH_INIT_LOOP        SPEED_LOOP
-#define GIMBAL_PITCH_RUN_LOOP_MANUAL  SPEED_LOOP
-#define GIMBAL_PITCH_RUN_LOOP_HOLD    ANGLE_LOOP
 
 /* 云台模式切换/目标更新 */
 #define GIMBAL_SEPARATE_YAW_MAX_ANGLE    1080.0f

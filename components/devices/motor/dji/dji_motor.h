@@ -85,6 +85,30 @@ typedef struct
     uint8_t pid_reset_mask;
 } DJIMotorCommand;
 
+/** Narrow, task-safe view of one PID runtime for diagnostics and tuning. */
+typedef struct
+{
+    float reference;
+    float measure;
+    float error;
+    float p_output;
+    float i_output;
+    float d_output;
+    float output;
+    float max_output;
+} DJIMotorPidSnapshot;
+
+/** Coherent view of the control chain most recently executed by the motor task. */
+typedef struct
+{
+    Motor_Control_Setting_s settings;
+    float command_reference;
+    DJIMotorPidSnapshot angle;
+    DJIMotorPidSnapshot speed;
+    DJIMotorPidSnapshot current;
+    uint8_t output_active;
+} DJIMotorControlSnapshot;
+
 /**
  * @brief DJI intelligent motor typedef
  *
@@ -118,6 +142,10 @@ typedef struct
     uint32_t command_generation;
     uint8_t pending_pid_reset_mask;
     uint8_t command_published;
+
+    /* Published only after one complete motor-control calculation. */
+    DJIMotorControlSnapshot control_snapshot;
+    uint8_t control_snapshot_valid;
 } DJIMotorInstance;
 
 /**
@@ -145,6 +173,10 @@ bool DJIMotorGetMeasure(const DJIMotorInstance *motor,
 /** Copy the latest persistent command (one-shot reset bits are returned clear). */
 bool DJIMotorGetCommand(const DJIMotorInstance *motor,
                         DJIMotorCommand *command);
+
+/** Copy the last PID runtime values without exposing a torn task-level read. */
+bool DJIMotorGetControlSnapshot(const DJIMotorInstance *motor,
+                                DJIMotorControlSnapshot *snapshot);
 
 /** Atomically publish one complete command for the motor task. */
 bool DJIMotorPublishCommand(DJIMotorInstance *motor,

@@ -29,13 +29,27 @@ static void TestCoordinateRotation(void)
 {
     float vx;
     float vy;
+    const float half_pi = 1.57079632679489661923f;
 
     InfantryChassis_RotateToBody(1.0f, 2.0f, 0.0f, &vx, &vy);
     CHECK(Near(vx, 1.0f));
     CHECK(Near(vy, 2.0f));
 
-    InfantryChassis_RotateToBody(1.0f, 0.0f,
-                                 1.57079632679489661923f, &vx, &vy);
+    /* 云台相对底盘左转 90°：云台前方就是底盘左方。 */
+    InfantryChassis_RotateToBody(0.0f, 1.0f, half_pi, &vx, &vy);
+    CHECK(Near(vx, 1.0f));
+    CHECK(Near(vy, 0.0f));
+
+    /* 此时云台左方就是底盘后方。 */
+    InfantryChassis_RotateToBody(1.0f, 0.0f, half_pi, &vx, &vy);
+    CHECK(Near(vx, 0.0f));
+    CHECK(Near(vy, -1.0f));
+
+    /* 云台相对底盘右转 90° 时方向应严格反对称。 */
+    InfantryChassis_RotateToBody(0.0f, 1.0f, -half_pi, &vx, &vy);
+    CHECK(Near(vx, -1.0f));
+    CHECK(Near(vy, 0.0f));
+    InfantryChassis_RotateToBody(1.0f, 0.0f, -half_pi, &vx, &vy);
     CHECK(Near(vx, 0.0f));
     CHECK(Near(vy, 1.0f));
 }
@@ -138,6 +152,57 @@ static void TestFullTranslationUsesConfiguredMotorRange(void)
     CHECK(Near(InfantryChassis_WheelToMotorSpeedRadS(1.0f, 0.0f), 0.0f));
 }
 
+static void TestSpinPreservesRotationAndScalesTranslation(void)
+{
+    const float translation[4] = {400.0f, -400.0f, 400.0f, -400.0f};
+    const float rotation[4] = {300.0f, 300.0f, 300.0f, 300.0f};
+    float output[4];
+    float scale;
+
+    CHECK(InfantryChassis_CombineWheelSpeedsPreserveRotation(
+        translation, rotation, 500.0f, output, &scale));
+    CHECK(Near(scale, 0.5f));
+    CHECK(Near(output[0], 500.0f));
+    CHECK(Near(output[1], 100.0f));
+    CHECK(Near(output[2], 500.0f));
+    CHECK(Near(output[3], 100.0f));
+
+    {
+        const float full_rotation[4] = {
+            500.0f, 500.0f, 500.0f, 500.0f,
+        };
+        CHECK(InfantryChassis_CombineWheelSpeedsPreserveRotation(
+            translation, full_rotation, 500.0f, output, &scale));
+        CHECK(Near(scale, 0.0f));
+        for (unsigned index = 0U; index < 4U; ++index) {
+            CHECK(Near(output[index], 500.0f));
+        }
+    }
+
+    {
+        const float reverse_rotation[4] = {
+            -300.0f, -300.0f, -300.0f, -300.0f,
+        };
+        CHECK(InfantryChassis_CombineWheelSpeedsPreserveRotation(
+            translation, reverse_rotation, 500.0f, output, &scale));
+        CHECK(Near(scale, 0.5f));
+        CHECK(Near(output[0], -100.0f));
+        CHECK(Near(output[1], -500.0f));
+    }
+
+    {
+        const float invalid_translation[4] = {
+            NAN, 0.0f, 0.0f, 0.0f,
+        };
+        CHECK(!InfantryChassis_CombineWheelSpeedsPreserveRotation(
+            invalid_translation, rotation, 500.0f, output, &scale));
+        CHECK(Near(scale, 0.0f));
+        for (unsigned index = 0U; index < 4U; ++index) {
+            CHECK(Near(output[index], 0.0f));
+        }
+    }
+}
+
 static void TestInvalidNumbersFailClosed(void)
 {
     float vx = NAN;
@@ -165,6 +230,7 @@ int main(void)
     TestTranslationVectorLimit();
     TestOmniInverseAndNormalization();
     TestFullTranslationUsesConfiguredMotorRange();
+    TestSpinPreservesRotationAndScalesTranslation();
     TestInvalidNumbersFailClosed();
     TestFollowControllerSignAndDamping();
 

@@ -204,7 +204,7 @@ static void TestModeAndMotionMapping(void)
     SetAxis(state, REMOTE_AXIS_LEFT_X, 660);
     SetAxis(state, REMOTE_AXIS_LEFT_Y, -660);
     SetAxis(state, REMOTE_AXIS_RIGHT_X, 355);
-    SetAxis(state, REMOTE_AXIS_RIGHT_Y, 50);
+    SetAxis(state, REMOTE_AXIS_RIGHT_Y, 355);
 
     CHECK(rm::infantry::MapEt08Input(state, kConfig, output));
     CHECK(output.control_mode == INFANTRY_CONTROL_FOLLOW);
@@ -213,9 +213,9 @@ static void TestModeAndMotionMapping(void)
     CHECK(Near(output.chassis_y_intent, 1.0F));
     CHECK(Near(output.chassis_rotate_intent, 0.0F));
     CHECK(Near(output.gimbal_yaw_intent, 0.5F));
-    CHECK(Near(output.gimbal_pitch_intent, 0.0F));
+    CHECK(Near(output.gimbal_pitch_intent, -0.5F));
     CHECK(output.yaw_control_active == 1U);
-    CHECK(output.pitch_control_active == 0U);
+    CHECK(output.pitch_control_active == 1U);
 
     state.switches[ET08_CONTROL_SWITCH_SB] = REMOTE_SWITCH_MIDDLE;
     CHECK(rm::infantry::MapEt08Input(state, kConfig, output));

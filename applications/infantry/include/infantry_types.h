@@ -117,11 +117,12 @@ typedef struct {
  *============================================================================*/
 typedef struct {
     float yaw_speed;        // Yaw角速度指令
-    float pitch_speed;      // Pitch角速度指令
+    float pitch_speed;      // Pitch角度目标推进速率
     float yaw_angle;        // Yaw目标角度(分离模式)
     float pitch_angle;      // Pitch目标角度
     InfantryControlMode_e mode;
-    uint8_t manual_pitch;   // 手动Pitch模式
+    AxisCtrlMode_e yaw_ctrl_mode;
+    uint8_t manual_pitch;   // Pitch操作者输入是否活动
     AxisCtrlMode_e pitch_ctrl_mode;
     ControlMode_e control_mode;
     RefType_e ref_type;

@@ -8,7 +8,7 @@
 #include "usart.h"
 
 enum {
-    TUNING_CHANNEL_COUNT = 15U,
+    TUNING_CHANNEL_COUNT = 31U,
     TUNING_TAIL_SIZE = 4U,
     TUNING_FRAME_SIZE =
         (TUNING_CHANNEL_COUNT * (uint32_t)sizeof(float)) + TUNING_TAIL_SIZE,
@@ -29,26 +29,49 @@ static void InfantryTuningTelemetry_FillChannels(
     float channels[TUNING_CHANNEL_COUNT])
 {
     ChassisTuningSnapshot chassis = {0};
-    GimbalYawTuningSnapshot yaw = {0};
+    GimbalTuningSnapshot gimbal = {0};
+    const GimbalAxisTuningSnapshot *axis;
 
     (void)Chassis_GetTuningSnapshot(&chassis);
-    (void)Gimbal_GetYawTuningSnapshot(&yaw);
+    (void)Gimbal_GetTuningSnapshot(&gimbal);
+
+#if INFANTRY_TUNING_GIMBAL_AXIS == INFANTRY_TUNING_GIMBAL_AXIS_PITCH
+    axis = &gimbal.pitch;
+#else
+    axis = &gimbal.yaw;
+#endif
 
     channels[0] = (float)now_ms;
-    channels[1] = (float)yaw.encoder_ecd;
-    channels[2] = yaw.encoder_single_deg;
-    channels[3] = yaw.target_total_deg;
-    channels[4] = yaw.imu_total_deg;
-    channels[5] = yaw.imu_single_deg;
-    channels[6] = yaw.imu_gyro_z_rad_s;
-    channels[7] = yaw.offset_raw_deg;
-    channels[8] = yaw.offset_logic_deg;
-    channels[9] = yaw.relative_speed_rad_s;
-    channels[10] = chassis.follow_p_rad_s;
-    channels[11] = chassis.follow_d_rad_s;
-    channels[12] = chassis.follow_raw_wz_rad_s;
-    channels[13] = chassis.follow_limited_wz_rad_s;
-    channels[14] = chassis.command_wz_rad_s;
+    channels[1] = (float)axis->control_mode;
+    channels[2] = axis->operator_speed_command_deg_s;
+    channels[3] = axis->hold_target_deg;
+    channels[4] = axis->imu_angle_deg;
+    channels[5] = axis->angle_error_deg;
+    channels[6] = axis->imu_gyro_deg_s;
+    channels[7] = axis->angle_p_deg_s;
+    channels[8] = axis->angle_i_deg_s;
+    channels[9] = axis->angle_d_deg_s;
+    channels[10] = axis->angle_output_deg_s;
+    channels[11] = axis->angle_output_limit_ratio;
+    channels[12] = axis->speed_reference_deg_s;
+    channels[13] = axis->speed_feedback_deg_s;
+    channels[14] = axis->speed_error_deg_s;
+    channels[15] = axis->speed_p_current;
+    channels[16] = axis->speed_i_current;
+    channels[17] = axis->speed_d_current;
+    channels[18] = axis->speed_output_current;
+    channels[19] = axis->speed_output_limit_ratio;
+    channels[20] = (float)axis->motor_current_feedback;
+    channels[21] = (float)axis->encoder_ecd;
+    channels[22] = axis->current_feedforward;
+    channels[23] = gimbal.yaw_offset_logic_deg;
+    channels[24] = chassis.command_wz_rad_s;
+    channels[25] = gimbal.yaw_base_rate_estimate_rad_s;
+    channels[26] = chassis.input_x_intent;
+    channels[27] = chassis.input_y_intent;
+    channels[28] = chassis.command_vx_m_s;
+    channels[29] = chassis.command_vy_m_s;
+    channels[30] = chassis.spin_translation_scale;
 }
 
 bool InfantryTuningTelemetry_Init(void)

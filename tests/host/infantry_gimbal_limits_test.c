@@ -25,10 +25,8 @@ static bool Near(float lhs, float rhs)
 }
 
 static const GimbalPitchLimitConfig limits = {
-    .min_angle_deg = -25.0f,
-    .max_angle_deg = 35.0f,
-    .soft_margin_deg = 3.0f,
-    .command_to_imu_sign = 1.0f,
+    .min_angle_deg = -30.0f,
+    .max_angle_deg = 20.0f,
 };
 
 static void TestConfigurationAndInvalidFeedback(void)
@@ -37,76 +35,59 @@ static void TestConfigurationAndInvalidFeedback(void)
 
     CHECK(GimbalPitchLimit_IsConfigValid(&limits));
     CHECK(!GimbalPitchLimit_IsConfigValid(NULL));
-    invalid.command_to_imu_sign = 0.0f;
+    invalid.max_angle_deg = invalid.min_angle_deg;
     CHECK(!GimbalPitchLimit_IsConfigValid(&invalid));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(10.0f, false, 0.0f, &limits),
-               0.0f));
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   20.0f, 10.0f, false, 0.0f, &limits),
+                   20.0f, false, 10.0f, &limits),
                10.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(NAN, true, 0.0f, &limits),
-               0.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(10.0f, true, NAN, &limits),
-               0.0f));
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   NAN, 10.0f, true, 0.0f, &limits),
+                   NAN, true, 10.0f, &limits),
                10.0f));
-}
-
-static void TestSpeedHardAndSoftLimits(void)
-{
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(30.0f, true, 0.0f, &limits),
-               30.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(30.0f, true, 33.5f, &limits),
-               15.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(30.0f, true, 35.0f, &limits),
-               0.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(-30.0f, true, 35.0f, &limits),
-               -30.0f));
-
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(-30.0f, true, -23.5f, &limits),
-               -15.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(-30.0f, true, -25.0f, &limits),
-               0.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(30.0f, true, -25.0f, &limits),
-               30.0f));
 }
 
 static void TestAngleReferenceUsesSameBoundary(void)
 {
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   120.0f, 100.0f, true, 33.5f, &limits),
-               101.5f));
+                   120.0f, true, 18.5f, &limits),
+               20.0f));
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   120.0f, 100.0f, true, 35.0f, &limits),
-               100.0f));
+                   120.0f, true, 20.0f, &limits),
+               20.0f));
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   80.0f, 100.0f, true, 35.0f, &limits),
-               80.0f));
+                   -80.0f, true, 20.0f, &limits),
+               -30.0f));
     CHECK(Near(GimbalPitchLimit_ClampAngleReference(
-                   200.0f, 100.0f, true, 0.0f, &limits),
-               135.0f));
+                   20.0f, true, 0.0f, &limits),
+               20.0f));
 }
 
-static void TestDirectionSignCanBeCalibrated(void)
+static void TestAngleReferenceTimeIntegration(void)
 {
-    GimbalPitchLimitConfig reversed = limits;
-    reversed.command_to_imu_sign = -1.0f;
-
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(-20.0f, true, 35.0f,
-                                           &reversed),
-               0.0f));
-    CHECK(Near(GimbalPitchLimit_ClampSpeed(20.0f, true, 35.0f,
-                                           &reversed),
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   0.0f, 0.5f, 100.0f, 0.02f, &limits),
+               1.0f));
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   0.0f, -0.5f, 100.0f, 0.02f, &limits),
+               -1.0f));
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   19.0f, 2.0f, 100.0f, 0.02f, &limits),
                20.0f));
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   -29.0f, -2.0f, 100.0f, 0.02f, &limits),
+               -30.0f));
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   3.0f, NAN, 100.0f, 0.02f, &limits),
+               3.0f));
+    CHECK(Near(GimbalPitchLimit_AdvanceAngleReference(
+                   3.0f, 1.0f, 100.0f, -0.02f, &limits),
+               3.0f));
 }
 
 int main(void)
 {
     TestConfigurationAndInvalidFeedback();
-    TestSpeedHardAndSoftLimits();
     TestAngleReferenceUsesSameBoundary();
-    TestDirectionSignCanBeCalibrated();
+    TestAngleReferenceTimeIntegration();
 
     if (failures != 0U) {
         fprintf(stderr, "%u gimbal-limit checks failed\n", failures);

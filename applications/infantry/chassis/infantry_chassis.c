@@ -6,6 +6,7 @@
  * - 输入平移指令始终定义在云台坐标系
  * - 底盘使用 yaw 编码器相对角完成坐标变换
  * - FOLLOW 模式通过相对夹角闭环追随云台
+ * - SPIN 模式保留旋转轮速，平移按四轮剩余余量缩放
  */
 
 #include "infantry_chassis.h"
@@ -124,6 +125,13 @@ bool Chassis_Init(void)
         },
     };
 
+    if (!isfinite(CHASSIS_SPIN_SPEED_RATIO) ||
+        CHASSIS_SPIN_SPEED_RATIO <= 0.0f ||
+        CHASSIS_SPIN_SPEED_RATIO >= 1.0f) {
+        MDBG_CHS("invalid spin speed ratio");
+        return false;
+    }
+
     motor_fr = DJIMotorInit(&config);
     if (motor_fr != NULL) {
         (void)PublishMotorCommand(motor_fr, CHASSIS_INIT_LOOP, 0.0f,
@@ -151,9 +159,10 @@ bool Chassis_Init(void)
                                   MOTOR_STOP);
     }
 
-    MDBG_CHS("limits vmax_mm_s=%ld wmax_mrad_s=%ld motor_max_mrad_s=%ld ratio_x1000=%ld",
+    MDBG_CHS("limits vmax_mm_s=%ld wmax_mrad_s=%ld spin_mrad_s=%ld motor_max_mrad_s=%ld ratio_x1000=%ld",
              (long)(CHASSIS_MAX_TRANSLATION_SPEED * 1000.0f),
              (long)(CHASSIS_MAX_ROTATION_SPEED_RAD_S * 1000.0f),
+             (long)(CHASSIS_SPIN_SPEED_RAD_S * 1000.0f),
              (long)(M3508_ROTOR_SPEED_LIMIT_RAD_S * 1000.0f),
              (long)(CHASSIS_MOTOR_REDUCTION_RATIO * 1000.0f));
 
@@ -169,7 +178,11 @@ void Chassis_Update(Input_Data_t *input)
     float yaw_offset_rate_rad_s;
     float manual_wz;
     float follow_wz = 0.0f;
-    float wheel_speed_rad_s[4] = {0.0f};
+    float translation_wheel_speed_rad_s[4] = {0.0f};
+    float rotation_wheel_speed_rad_s[4] = {0.0f};
+    float translation_motor_speed_rad_s[4] = {0.0f};
+    float rotation_motor_speed_rad_s[4] = {0.0f};
+    float spin_translation_scale = 1.0f;
     float power_scale;
     uint8_t follow_mode;
     uint8_t follow_recovery_entry;
@@ -302,25 +315,50 @@ void Chassis_Update(Input_Data_t *input)
         follow_recovery_pending = 0U;
     }
 
-    InfantryChassis_OmniInverse(filtered_vx, filtered_vy, filtered_wz,
+    InfantryChassis_OmniInverse(filtered_vx, filtered_vy, 0.0f,
                                 CHASSIS_WHEEL_BASE, CHASSIS_WHEEL_RADIUS,
-                                wheel_speed_rad_s);
+                                translation_wheel_speed_rad_s);
+    InfantryChassis_OmniInverse(0.0f, 0.0f, filtered_wz,
+                                CHASSIS_WHEEL_BASE, CHASSIS_WHEEL_RADIUS,
+                                rotation_wheel_speed_rad_s);
 
     for (uint8_t i = 0; i < 4U; i++) {
-        float motor_speed_rad_s = InfantryChassis_WheelToMotorSpeedRadS(
-            wheel_speed_rad_s[i], CHASSIS_MOTOR_REDUCTION_RATIO);
+        translation_motor_speed_rad_s[i] =
+            InfantryChassis_WheelToMotorSpeedRadS(
+                translation_wheel_speed_rad_s[i],
+                CHASSIS_MOTOR_REDUCTION_RATIO) * power_scale;
+        rotation_motor_speed_rad_s[i] =
+            InfantryChassis_WheelToMotorSpeedRadS(
+                rotation_wheel_speed_rad_s[i],
+                CHASSIS_MOTOR_REDUCTION_RATIO) * power_scale;
+    }
+
+    if (cmd.spin_enable != 0U) {
+        (void)InfantryChassis_CombineWheelSpeedsPreserveRotation(
+            translation_motor_speed_rad_s,
+            rotation_motor_speed_rad_s,
+            M3508_ROTOR_SPEED_LIMIT_RAD_S,
+            last_wheel_ref,
+            &spin_translation_scale);
+    } else {
+        for (uint8_t i = 0U; i < 4U; ++i) {
+            last_wheel_ref[i] = translation_motor_speed_rad_s[i] +
+                                rotation_motor_speed_rad_s[i];
+        }
+        InfantryChassis_NormalizeWheelSpeeds(
+            last_wheel_ref, M3508_ROTOR_SPEED_LIMIT_RAD_S);
+    }
+
+    for (uint8_t i = 0U; i < 4U; ++i) {
         float speed_deadzone =
             follow_mode ? CHASSIS_FOLLOW_MOTOR_SPEED_DEADZONE_RAD_S
                         : CHASSIS_MOTOR_SPEED_DEADZONE_RAD_S;
-        motor_speed_rad_s *= power_scale;
-        if (fabsf(motor_speed_rad_s) < speed_deadzone) {
-            motor_speed_rad_s = 0.0f;
+        if (fabsf(last_wheel_ref[i]) < speed_deadzone) {
+            last_wheel_ref[i] = 0.0f;
         }
-        last_wheel_ref[i] = motor_speed_rad_s;
     }
-    InfantryChassis_NormalizeWheelSpeeds(
-        last_wheel_ref, M3508_ROTOR_SPEED_LIMIT_RAD_S);
 
+    tuning_snapshot.input_x_intent = input->chassis_x_intent;
     tuning_snapshot.input_y_intent = input->chassis_y_intent;
     tuning_snapshot.yaw_error_rad = yaw_offset_rad;
     tuning_snapshot.yaw_error_rate_rad_s = yaw_offset_rate_rad_s;
@@ -336,6 +374,7 @@ void Chassis_Update(Input_Data_t *input)
     tuning_snapshot.filtered_vx_m_s = filtered_vx;
     tuning_snapshot.filtered_vy_m_s = filtered_vy;
     tuning_snapshot.filtered_wz_rad_s = filtered_wz;
+    tuning_snapshot.spin_translation_scale = spin_translation_scale;
     memcpy(tuning_snapshot.wheel_ref_rad_s,
            last_wheel_ref,
            sizeof(last_wheel_ref));

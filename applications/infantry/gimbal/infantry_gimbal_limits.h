@@ -10,26 +10,23 @@ extern "C" {
 typedef struct {
     float min_angle_deg;
     float max_angle_deg;
-    float soft_margin_deg;
-    /** 执行指令正方向到 IMU Pitch 正方向的符号，只允许 +1 或 -1。 */
-    float command_to_imu_sign;
 } GimbalPitchLimitConfig;
 
 bool GimbalPitchLimit_IsConfigValid(const GimbalPitchLimitConfig *config);
 
-/** 对所有来源的 Pitch 速度请求实施机械软限位。 */
-float GimbalPitchLimit_ClampSpeed(
-    float requested_speed,
+/** 将 IMU Pitch 角度保持/自动控制目标限制在机械边界内。 */
+float GimbalPitchLimit_ClampAngleReference(
+    float requested_imu_angle_deg,
     bool imu_angle_valid,
-    float imu_pitch_deg,
+    float current_imu_pitch_deg,
     const GimbalPitchLimitConfig *config);
 
-/** 对角度保持/自动控制目标实施同一套机械软限位。 */
-float GimbalPitchLimit_ClampAngleReference(
-    float requested_motor_angle_deg,
-    float current_motor_angle_deg,
-    bool imu_angle_valid,
-    float imu_pitch_deg,
+/** 按无量纲速度意图和实际时间推进 Pitch 角度目标，并限制在机械边界内。 */
+float GimbalPitchLimit_AdvanceAngleReference(
+    float current_reference_deg,
+    float normalized_rate_intent,
+    float max_rate_deg_s,
+    float elapsed_s,
     const GimbalPitchLimitConfig *config);
 
 #ifdef __cplusplus

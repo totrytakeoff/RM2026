@@ -11,6 +11,7 @@
 #include "infantry_types.h"
 
 typedef struct {
+    float input_x_intent;
     float input_y_intent;
     float yaw_error_rad;
     float yaw_error_rate_rad_s;
@@ -25,6 +26,7 @@ typedef struct {
     float filtered_vx_m_s;
     float filtered_vy_m_s;
     float filtered_wz_rad_s;
+    float spin_translation_scale;
     float wheel_ref_rad_s[4];
     float wheel_fdb_rad_s[4];
 } ChassisTuningSnapshot;
