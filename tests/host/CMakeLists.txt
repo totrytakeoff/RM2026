@@ -160,6 +160,52 @@ target_compile_options(test_infantry_gimbal_units PRIVATE
 target_link_libraries(test_infantry_gimbal_units PRIVATE m)
 add_test(NAME infantry_gimbal_units COMMAND test_infantry_gimbal_units)
 
+add_executable(test_infantry_shoot_config
+    infantry_shoot_config_test.c
+)
+target_include_directories(test_infantry_shoot_config PRIVATE
+    stubs
+    ../../applications/infantry/config
+)
+target_compile_features(test_infantry_shoot_config PRIVATE c_std_11)
+target_compile_options(test_infantry_shoot_config PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+target_link_libraries(test_infantry_shoot_config PRIVATE m)
+add_test(NAME infantry_shoot_config COMMAND test_infantry_shoot_config)
+
+add_library(rm_infantry_shoot_trigger_host STATIC
+    ../../applications/infantry/shoot/infantry_shoot_trigger.c
+)
+target_include_directories(rm_infantry_shoot_trigger_host PUBLIC
+    ../../applications/infantry/shoot
+)
+target_compile_features(rm_infantry_shoot_trigger_host PUBLIC c_std_11)
+target_compile_options(rm_infantry_shoot_trigger_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_infantry_shoot_trigger
+    infantry_shoot_trigger_test.c
+)
+target_link_libraries(test_infantry_shoot_trigger PRIVATE
+    rm_infantry_shoot_trigger_host
+)
+target_compile_features(test_infantry_shoot_trigger PRIVATE c_std_11)
+target_compile_options(test_infantry_shoot_trigger PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+add_test(NAME infantry_shoot_trigger COMMAND test_infantry_shoot_trigger)
+
 add_library(rm_infantry_chassis_kinematics_host STATIC
     ../../applications/infantry/chassis/infantry_chassis_follow.c
     ../../applications/infantry/chassis/infantry_chassis_kinematics.c

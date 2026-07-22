@@ -120,21 +120,10 @@ float MinimalReferee_ChassisScale(void)
 
 float MinimalReferee_FrictionSpeedScale(void)
 {
-    float heat_ratio;
-
     if (!MinimalReferee_AllowShoot()) {
         return 0.0f;
     }
-    if (!g_ref_data.online || g_ref_data.shooter_heat_limit == 0U) {
-        return 1.0f;
-    }
 
-    heat_ratio = (float)g_ref_data.shooter_heat / (float)g_ref_data.shooter_heat_limit;
-    if (heat_ratio >= REFEREE_HEAT_STOP_RATIO) {
-        return 0.0f;
-    }
-    if (heat_ratio >= REFEREE_FRICTION_SLOW_RATIO) {
-        return 0.7f;
-    }
+    /* 热量限制发射频率，不改变已经按弹速标定的摩擦轮目标。 */
     return 1.0f;
 }

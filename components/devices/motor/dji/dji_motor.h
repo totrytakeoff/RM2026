@@ -106,8 +106,16 @@ typedef struct
     DJIMotorPidSnapshot angle;
     DJIMotorPidSnapshot speed;
     DJIMotorPidSnapshot current;
+    float final_output;
     uint8_t output_active;
 } DJIMotorControlSnapshot;
+
+/** Generic diagnostic view shared by every DJI motor application. */
+typedef struct
+{
+    DJI_Motor_Measure_s measure;
+    DJIMotorControlSnapshot control;
+} DJIMotorTuningSnapshot;
 
 /**
  * @brief DJI intelligent motor typedef
@@ -135,6 +143,7 @@ typedef struct
     uint8_t angle_feedback_locked;
     uint8_t feedback_initialized;
     uint8_t output_active;
+    float final_output;
 
     /* Published by application tasks and consumed only by DJIMotorControl(). */
     DJIMotorCommand command_mailbox;
@@ -177,6 +186,10 @@ bool DJIMotorGetCommand(const DJIMotorInstance *motor,
 /** Copy the last PID runtime values without exposing a torn task-level read. */
 bool DJIMotorGetControlSnapshot(const DJIMotorInstance *motor,
                                 DJIMotorControlSnapshot *snapshot);
+
+/** Copy feedback and the latest executed control chain as one diagnostic view. */
+bool DJIMotorGetTuningSnapshot(const DJIMotorInstance *motor,
+                               DJIMotorTuningSnapshot *snapshot);
 
 /** Atomically publish one complete command for the motor task. */
 bool DJIMotorPublishCommand(DJIMotorInstance *motor,

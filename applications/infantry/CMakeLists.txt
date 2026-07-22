@@ -19,6 +19,7 @@ add_library(rm_app_infantry STATIC
     gimbal/infantry_gimbal_limits.c
     referee/infantry_referee.c
     shoot/infantry_shoot.c
+    shoot/infantry_shoot_trigger.c
 )
 add_library(RM::app_infantry ALIAS rm_app_infantry)
 

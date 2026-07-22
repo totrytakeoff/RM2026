@@ -1,6 +1,6 @@
 # RM2026 机器人控制源码
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-22
 
 本仓库是面向 RoboMaster 2026 赛季、基于 STM32F407IGT6 的机器人电控固件。
 当前主目标为单板步兵固件：机器人行为位于 `applications/infantry`，
@@ -51,6 +51,8 @@ FreeRTOS `app.elf`。目录所有权、静态任务、输入安全、设备健�
 - [步兵 FreeRTOS 迁移基线](docs/migration/infantry_freertos_baseline.md)
 - [安全与任务健康服务](docs/migration/safety_health_service.md)
 - [运行时加固里程碑](docs/migration/runtime_hardening_milestone.md)
+- [步兵核心控制参数索引](docs/motor/infantry_control_parameter_reference.md)
+- [步兵 UART6/VOFA+ 调参遥测](docs/debug/infantry_tuning_telemetry.md)
 
 ## 来源说明
 

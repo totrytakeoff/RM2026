@@ -38,6 +38,38 @@ static atomic_bool global_output_enabled = ATOMIC_VAR_INIT(true);
 /* Disabled by default so existing single-loop demos retain their behavior. */
 static _Atomic uint32_t command_timeout_ms = ATOMIC_VAR_INIT(0U);
 
+static float DJIMotorClampOutput(Motor_Type_e motor_type, float output)
+{
+    float limit;
+
+    if (!isfinite(output)) {
+        return 0.0f;
+    }
+
+    switch (motor_type) {
+    case M2006:
+        limit = 10000.0f; /* C610: -10 A..10 A maps to -10000..10000. */
+        break;
+    case M3508:
+        limit = 16384.0f; /* C620 command range. */
+        break;
+    case GM6020:
+        limit = 30000.0f;
+        break;
+    default:
+        limit = 32767.0f;
+        break;
+    }
+
+    if (output > limit) {
+        return limit;
+    }
+    if (output < -limit) {
+        return -limit;
+    }
+    return output;
+}
+
 static void DJIMotorRecordCommandPublication(DJIMotorInstance *motor,
                                              uint32_t now_ms)
 {
@@ -252,6 +284,7 @@ static void DJIMotorPublishControlSnapshot(DJIMotorInstance *motor)
                             &next.speed);
     DJIMotorCopyPidSnapshot(&motor->motor_controller.current_PID,
                             &next.current);
+    next.final_output = motor->final_output;
     next.output_active = motor->output_active;
 
     state = RmCritical_Enter();
@@ -273,6 +306,26 @@ bool DJIMotorGetControlSnapshot(const DJIMotorInstance *motor,
     state = RmCritical_Enter();
     memcpy(snapshot, &motor->control_snapshot, sizeof(*snapshot));
     valid = motor->control_snapshot_valid != 0U;
+    RmCritical_Exit(state);
+    return valid;
+}
+
+bool DJIMotorGetTuningSnapshot(const DJIMotorInstance *motor,
+                               DJIMotorTuningSnapshot *snapshot)
+{
+    RmCriticalState state;
+    bool valid;
+
+    if ((motor == NULL) || (snapshot == NULL)) {
+        return false;
+    }
+
+    state = RmCritical_Enter();
+    memcpy(&snapshot->measure, &motor->measure, sizeof(snapshot->measure));
+    memcpy(&snapshot->control, &motor->control_snapshot,
+           sizeof(snapshot->control));
+    valid = motor->feedback_initialized != 0U &&
+            motor->control_snapshot_valid != 0U;
     RmCritical_Exit(state);
     return valid;
 }
@@ -601,6 +654,7 @@ void DJIMotorControl()
         num = motor->message_num;
         if (!DJIMotorGetMeasure(motor, &measure_snapshot)) {
             memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
+            motor->final_output = 0.0f;
             DJIMotorPublishControlSnapshot(motor);
             continue;
         }
@@ -613,6 +667,7 @@ void DJIMotorControl()
                 DJIMotorResetPidRuntime(motor, DJI_MOTOR_PID_RESET_ALL);
             }
             motor->output_active = 0U;
+            motor->final_output = 0.0f;
             memset(sender_assignment[group].tx_buff + 2U * num, 0, 2U);
             motor->last_total_angle = measure->total_angle;
             DJIMotorPublishControlSnapshot(motor);
@@ -697,8 +752,9 @@ void DJIMotorControl()
         if (motor_setting->feedback_reverse_flag == FEEDBACK_DIRECTION_REVERSE)
             pid_ref *= -1;
 
-        // 获取最终输出。
-        set = (int16_t)pid_ref;
+        // 电机型号决定电调命令的物理范围，应用层参数不得绕过最终保护。
+        motor->final_output = DJIMotorClampOutput(motor->motor_type, pid_ref);
+        set = (int16_t)motor->final_output;
 
         // 按电机组填入发送数据。
         sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);

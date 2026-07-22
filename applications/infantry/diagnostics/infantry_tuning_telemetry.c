@@ -5,73 +5,206 @@
 #include "infantry_chassis.h"
 #include "infantry_config.h"
 #include "infantry_gimbal.h"
+#include "infantry_shoot.h"
+#include "rm_time.h"
 #include "usart.h"
 
 enum {
-    TUNING_CHANNEL_COUNT = 31U,
+    TUNING_MAX_CHANNEL_COUNT = 64U,
     TUNING_TAIL_SIZE = 4U,
-    TUNING_FRAME_SIZE =
-        (TUNING_CHANNEL_COUNT * (uint32_t)sizeof(float)) + TUNING_TAIL_SIZE,
+    TUNING_MAX_FRAME_SIZE =
+        (TUNING_MAX_CHANNEL_COUNT * (uint32_t)sizeof(float)) +
+        TUNING_TAIL_SIZE,
 };
 
-static uint8_t tuning_tx_frame[TUNING_FRAME_SIZE]
+static uint8_t tuning_tx_frame[TUNING_MAX_FRAME_SIZE]
     __attribute__((aligned(4)));
 static bool tuning_initialized;
 static uint32_t tuning_sent_count;
 static uint32_t tuning_dropped_count;
 
-/*
- * 这是正式固件自定义调参通道的唯一组帧入口。通道顺序同步记录在
- * docs/debug/infantry_tuning_telemetry.md，修改时必须同时更新文档。
- */
-static void InfantryTuningTelemetry_FillChannels(
-    uint32_t now_ms,
-    float channels[TUNING_CHANNEL_COUNT])
+static uint16_t GetGimbalAxisChannels(bool pitch_axis, float channels[])
 {
     ChassisTuningSnapshot chassis = {0};
     GimbalTuningSnapshot gimbal = {0};
     const GimbalAxisTuningSnapshot *axis;
+    uint16_t index = 0U;
 
+    if (channels == NULL) {
+        return 0U;
+    }
     (void)Chassis_GetTuningSnapshot(&chassis);
     (void)Gimbal_GetTuningSnapshot(&gimbal);
+    axis = pitch_axis ? &gimbal.pitch : &gimbal.yaw;
 
-#if INFANTRY_TUNING_GIMBAL_AXIS == INFANTRY_TUNING_GIMBAL_AXIS_PITCH
-    axis = &gimbal.pitch;
-#else
-    axis = &gimbal.yaw;
-#endif
+    channels[index++] = (float)RmTime_NowMs();
+    channels[index++] = (float)axis->control_mode;
+    channels[index++] = axis->operator_speed_command_deg_s;
+    channels[index++] = axis->hold_target_deg;
+    channels[index++] = axis->imu_angle_deg;
+    channels[index++] = axis->angle_error_deg;
+    channels[index++] = axis->imu_gyro_deg_s;
+    channels[index++] = axis->angle_p_deg_s;
+    channels[index++] = axis->angle_i_deg_s;
+    channels[index++] = axis->angle_d_deg_s;
+    channels[index++] = axis->angle_output_deg_s;
+    channels[index++] = axis->angle_output_limit_ratio;
+    channels[index++] = axis->speed_reference_deg_s;
+    channels[index++] = axis->speed_feedback_deg_s;
+    channels[index++] = axis->speed_error_deg_s;
+    channels[index++] = axis->speed_p_current;
+    channels[index++] = axis->speed_i_current;
+    channels[index++] = axis->speed_d_current;
+    channels[index++] = axis->speed_output_current;
+    channels[index++] = axis->speed_output_limit_ratio;
+    channels[index++] = (float)axis->motor_current_feedback;
+    channels[index++] = (float)axis->encoder_ecd;
+    channels[index++] = axis->current_feedforward;
+    channels[index++] = gimbal.yaw_offset_logic_deg;
+    channels[index++] = chassis.command_wz_rad_s;
+    channels[index++] = gimbal.yaw_base_rate_estimate_rad_s;
+    channels[index++] = chassis.input_x_intent;
+    channels[index++] = chassis.input_y_intent;
+    channels[index++] = chassis.command_vx_m_s;
+    channels[index++] = chassis.command_vy_m_s;
+    channels[index++] = chassis.spin_translation_scale;
+    return index;
+}
 
-    channels[0] = (float)now_ms;
-    channels[1] = (float)axis->control_mode;
-    channels[2] = axis->operator_speed_command_deg_s;
-    channels[3] = axis->hold_target_deg;
-    channels[4] = axis->imu_angle_deg;
-    channels[5] = axis->angle_error_deg;
-    channels[6] = axis->imu_gyro_deg_s;
-    channels[7] = axis->angle_p_deg_s;
-    channels[8] = axis->angle_i_deg_s;
-    channels[9] = axis->angle_d_deg_s;
-    channels[10] = axis->angle_output_deg_s;
-    channels[11] = axis->angle_output_limit_ratio;
-    channels[12] = axis->speed_reference_deg_s;
-    channels[13] = axis->speed_feedback_deg_s;
-    channels[14] = axis->speed_error_deg_s;
-    channels[15] = axis->speed_p_current;
-    channels[16] = axis->speed_i_current;
-    channels[17] = axis->speed_d_current;
-    channels[18] = axis->speed_output_current;
-    channels[19] = axis->speed_output_limit_ratio;
-    channels[20] = (float)axis->motor_current_feedback;
-    channels[21] = (float)axis->encoder_ecd;
-    channels[22] = axis->current_feedforward;
-    channels[23] = gimbal.yaw_offset_logic_deg;
-    channels[24] = chassis.command_wz_rad_s;
-    channels[25] = gimbal.yaw_base_rate_estimate_rad_s;
-    channels[26] = chassis.input_x_intent;
-    channels[27] = chassis.input_y_intent;
-    channels[28] = chassis.command_vx_m_s;
-    channels[29] = chassis.command_vy_m_s;
-    channels[30] = chassis.spin_translation_scale;
+static uint16_t GetDjiSpeedMotorChannels(
+    const DJIMotorTuningSnapshot *motor,
+    Motor_Speed_Unit_e expected_unit,
+    float channels[])
+{
+    uint16_t index = 0U;
+
+    if (motor == NULL || channels == NULL ||
+        motor->control.settings.speed_unit != expected_unit) {
+        return 0U;
+    }
+
+    channels[index++] = (float)RmTime_NowMs();
+    channels[index++] = (float)motor->control.output_active;
+    channels[index++] = motor->control.speed.reference;
+    channels[index++] = motor->control.speed.measure;
+    channels[index++] = motor->control.speed.error;
+    channels[index++] = motor->control.speed.p_output;
+    channels[index++] = motor->control.speed.i_output;
+    channels[index++] = motor->control.speed.d_output;
+    channels[index++] = motor->control.speed.output;
+    channels[index++] = motor->control.final_output;
+    channels[index++] = (float)motor->measure.real_current;
+    return index;
+}
+
+static uint16_t GetDjiCascadeMotorChannels(
+    const DJIMotorTuningSnapshot *motor,
+    Motor_Speed_Unit_e expected_unit,
+    float channels[])
+{
+    bool angle_active;
+    uint16_t index = 0U;
+
+    if (motor == NULL || channels == NULL ||
+        motor->control.settings.speed_unit != expected_unit) {
+        return 0U;
+    }
+    angle_active = motor->control.settings.outer_loop_type == ANGLE_LOOP;
+
+    channels[index++] = (float)RmTime_NowMs();
+    channels[index++] = (float)motor->control.output_active;
+    channels[index++] = (float)motor->control.settings.outer_loop_type;
+    channels[index++] = angle_active ? motor->control.angle.reference : 0.0f;
+    channels[index++] = angle_active ? motor->control.angle.measure
+                                     : motor->measure.total_angle;
+    channels[index++] = angle_active ? motor->control.angle.error : 0.0f;
+    channels[index++] = angle_active ? motor->control.angle.p_output : 0.0f;
+    channels[index++] = angle_active ? motor->control.angle.i_output : 0.0f;
+    channels[index++] = angle_active ? motor->control.angle.d_output : 0.0f;
+    channels[index++] = angle_active ? motor->control.angle.output : 0.0f;
+    channels[index++] = motor->control.speed.reference;
+    channels[index++] = motor->control.speed.measure;
+    channels[index++] = motor->control.speed.error;
+    channels[index++] = motor->control.speed.p_output;
+    channels[index++] = motor->control.speed.i_output;
+    channels[index++] = motor->control.speed.d_output;
+    channels[index++] = motor->control.speed.output;
+    channels[index++] = motor->control.final_output;
+    channels[index++] = (float)motor->measure.real_current;
+    return index;
+}
+
+uint16_t InfantryTuningTelemetry_GetYawChannels(float channels[])
+{
+    return GetGimbalAxisChannels(false, channels);
+}
+
+uint16_t InfantryTuningTelemetry_GetPitchChannels(float channels[])
+{
+    return GetGimbalAxisChannels(true, channels);
+}
+
+uint16_t InfantryTuningTelemetry_GetLoaderChannels(float channels[])
+{
+    DJIMotorTuningSnapshot motor;
+
+    if (!Shoot_GetMotorTuningSnapshot(SHOOT_MOTOR_LOADER, &motor)) {
+        return 0U;
+    }
+    return GetDjiCascadeMotorChannels(&motor, MOTOR_SPEED_DEG_PER_SEC,
+                                      channels);
+}
+
+uint16_t InfantryTuningTelemetry_GetFrictionLeftChannels(float channels[])
+{
+    DJIMotorTuningSnapshot motor;
+
+    if (!Shoot_GetMotorTuningSnapshot(SHOOT_MOTOR_FRICTION_LEFT, &motor)) {
+        return 0U;
+    }
+    return GetDjiSpeedMotorChannels(&motor, MOTOR_SPEED_RAD_PER_SEC, channels);
+}
+
+uint16_t InfantryTuningTelemetry_GetFrictionRightChannels(float channels[])
+{
+    DJIMotorTuningSnapshot motor;
+
+    if (!Shoot_GetMotorTuningSnapshot(SHOOT_MOTOR_FRICTION_RIGHT, &motor)) {
+        return 0U;
+    }
+    return GetDjiSpeedMotorChannels(&motor, MOTOR_SPEED_RAD_PER_SEC, channels);
+}
+
+uint16_t InfantryTuningTelemetry_GetShootStateChannels(float channels[])
+{
+    ShootTuningSnapshot shoot;
+    uint16_t index = 0U;
+
+    if (channels == NULL || !Shoot_GetTuningSnapshot(&shoot)) {
+        return 0U;
+    }
+
+    channels[index++] = (float)RmTime_NowMs();
+    channels[index++] = (float)shoot.input_fire_mode;
+    channels[index++] = (float)shoot.fire_trigger_down;
+    channels[index++] = (float)shoot.fire_trigger_pressed;
+    channels[index++] = (float)shoot.single_trigger_consumed;
+    channels[index++] = (float)shoot.single_trigger_activation_count;
+    channels[index++] = (float)shoot.shoot_state;
+    channels[index++] = (float)shoot.friction_ready;
+    channels[index++] = (float)shoot.single_active;
+    channels[index++] = (float)shoot.pending_shots;
+    channels[index++] = (float)shoot.single_start_count;
+    channels[index++] = (float)shoot.single_timeout_count;
+    channels[index++] = (float)shoot.loader_jam_state;
+    channels[index++] = (float)shoot.loader_jam_retry_count;
+    channels[index++] = (float)shoot.loader_jam_fault_count;
+    return index;
+}
+
+static uint16_t InfantryTuningTelemetry_FillChannels(float channels[])
+{
+    return InfantryTuningTelemetry_GetShootStateChannels(channels);
 }
 
 bool InfantryTuningTelemetry_Init(void)
@@ -114,7 +247,12 @@ void InfantryTuningTelemetry_Publish(uint32_t now_ms)
         0x00U, 0x00U, 0x80U, 0x7FU,
     };
     UART_HandleTypeDef *const uart = &INFANTRY_TUNING_UART_HANDLE;
-    float channels[TUNING_CHANNEL_COUNT];
+    float channels[TUNING_MAX_CHANNEL_COUNT];
+    uint16_t channel_count;
+    uint16_t payload_size;
+    uint16_t frame_size;
+
+    (void)now_ms;
 
     if (!tuning_initialized) {
         return;
@@ -124,15 +262,21 @@ void InfantryTuningTelemetry_Publish(uint32_t now_ms)
         return;
     }
 
-    InfantryTuningTelemetry_FillChannels(now_ms, channels);
-    memcpy(tuning_tx_frame, channels, sizeof(channels));
-    memcpy(tuning_tx_frame + sizeof(channels),
+    channel_count = InfantryTuningTelemetry_FillChannels(channels);
+    if (channel_count == 0U || channel_count > TUNING_MAX_CHANNEL_COUNT) {
+        tuning_dropped_count++;
+        return;
+    }
+    payload_size = (uint16_t)(channel_count * sizeof(float));
+    frame_size = (uint16_t)(payload_size + TUNING_TAIL_SIZE);
+    memcpy(tuning_tx_frame, channels, payload_size);
+    memcpy(tuning_tx_frame + payload_size,
            just_float_tail,
            sizeof(just_float_tail));
 
     if (HAL_UART_Transmit_DMA(uart,
                               tuning_tx_frame,
-                              (uint16_t)sizeof(tuning_tx_frame)) == HAL_OK) {
+                              frame_size) == HAL_OK) {
         tuning_sent_count++;
     } else {
         tuning_dropped_count++;
