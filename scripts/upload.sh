@@ -17,7 +17,7 @@ OUTPUT_DIR="${BUILD_DIR}/output"
 DEFAULT_FILE="app"
 DEFAULT_FORMAT="bin"
 DEFAULT_ADDR="0x08000000"
-DEFAULT_CFG="${ROOT_DIR}/platform/boards/infantry_f407/openocd/openocd_dap.cfg"
+DEFAULT_CFG="${ROOT_DIR}/platform/boards/rm_f407/openocd/openocd_dap.cfg"
 
 usage() {
     cat <<EOF

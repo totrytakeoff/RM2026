@@ -69,8 +69,8 @@ function(create_embedded_test test_name)
         rm_platform_syscalls
         -Wl,--start-group
         ${ARG_LINK_LIBRARIES}
-        rm_board_infantry_f407
-        $<TARGET_OBJECTS:rm_board_infantry_f407_irq>
+        rm_board_rm_f407
+        $<TARGET_OBJECTS:rm_board_rm_f407_irq>
         -Wl,--end-group
         rm_vendor_cmsis_dsp
         m

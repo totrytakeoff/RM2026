@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RTT_SCRIPT="${ROOT_DIR}/scripts/openocd_rtt_log.sh"
 
-OPENOCD_CFG="${ROOT_DIR}/platform/boards/infantry_f407/openocd/openocd_dap.cfg"
+OPENOCD_CFG="${ROOT_DIR}/platform/boards/rm_f407/openocd/openocd_dap.cfg"
 OPENOCD_RESET_RUN=1
 RTT_SERVER_PORT=19021
 RTT_CHANNEL=0
@@ -20,7 +20,7 @@ usage() {
   - Ctrl+C 后仅清理由本次脚本拉起的 OpenOCD
 
 选项:
-  --cfg <path>         OpenOCD 配置文件 (默认: platform/boards/infantry_f407/openocd/openocd_dap.cfg)
+  --cfg <path>         OpenOCD 配置文件 (默认: platform/boards/rm_f407/openocd/openocd_dap.cfg)
   --reset-run <0|1>    连接前是否 reset run (默认: 1)
   --rtt-port <port>    RTT server 端口 (默认: 19021)
   --channel <id>       RTT 通道号 (默认: 0)

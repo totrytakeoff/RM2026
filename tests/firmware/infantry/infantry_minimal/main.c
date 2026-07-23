@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Infantry最小框架主入口
+ * @brief Robot最小框架主入口
  * @note 单一主循环, 支持ET08遥控和VT图传键鼠
  */
 
@@ -20,8 +20,8 @@
 #include "usart.h"
 #include "usb_device.h"
 
-#include "infantry_app.h"
-#include "infantry_config.h"
+#include "robot_app.h"
+#include "robot_config.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
 #include "daemon.h"
@@ -77,7 +77,7 @@ int main(void)
 #if MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0)
     BSPLogInit();
 #endif
-    if (!InfantryApp_Init()) {
+    if (!RobotApp_Init()) {
         Error_Handler();
     }
     
@@ -86,7 +86,7 @@ int main(void)
     while (1) {
         INS_Task();
         DaemonTask();
-        InfantryApp_MotorStep();
+        RobotApp_MotorStep();
 
         uint32_t now = DWT_GetTimeline_ms();
         uint32_t dt = now - last_tick;
@@ -95,9 +95,9 @@ int main(void)
         if (dt >= MAIN_LOOP_PERIOD_MS) {
             last_tick = now;
             
-            InfantryApp_ControlStep(now);
+            RobotApp_ControlStep(now);
         }
-        InfantryApp_DiagnosticsStep(now);
+        RobotApp_DiagnosticsStep(now);
 
         /* 与omni_demo对齐: 限制电机控制发送频率，避免CAN邮箱打满 */
         HAL_Delay(5);

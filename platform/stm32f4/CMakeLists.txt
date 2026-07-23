@@ -52,7 +52,7 @@ target_include_directories(rm_platform_stm32f4 PUBLIC
 )
 
 target_link_libraries(rm_platform_stm32f4 PUBLIC
-    rm_board_infantry_f407_headers
+    rm_board_rm_f407_headers
     rm_platform_core
     rm_vendor_runtime
     rm_vendor_stm32_hal

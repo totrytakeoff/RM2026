@@ -47,196 +47,196 @@ target_compile_options(test_remote_control_adapter PRIVATE
 )
 add_test(NAME remote_control_adapter COMMAND test_remote_control_adapter)
 
-add_library(rm_infantry_et08_profile_host STATIC
-    ../../applications/infantry/command/infantry_et08_input_profile.cpp
+add_library(rm_et08_profile_host STATIC
+    ../../applications/robot/command/et08_input_profile.cpp
 )
-target_include_directories(rm_infantry_et08_profile_host PUBLIC
-    ../../applications/infantry/command
-    ../../applications/infantry/include
-    ../../applications/infantry/referee
+target_include_directories(rm_et08_profile_host PUBLIC
+    ../../applications/robot/command
+    ../../applications/robot/include
+    ../../applications/robot/referee
     ../../components/devices/remote
     ../../components/devices/remote/et08
 )
-target_compile_features(rm_infantry_et08_profile_host PUBLIC cxx_std_14)
-target_compile_options(rm_infantry_et08_profile_host PRIVATE
+target_compile_features(rm_et08_profile_host PUBLIC cxx_std_14)
+target_compile_options(rm_et08_profile_host PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
 
-add_executable(test_infantry_et08_input_profile
-    infantry_et08_input_profile_test.cpp
+add_executable(test_et08_input_profile
+    et08_input_profile_test.cpp
 )
-target_link_libraries(test_infantry_et08_input_profile PRIVATE
-    rm_infantry_et08_profile_host
+target_link_libraries(test_et08_input_profile PRIVATE
+    rm_et08_profile_host
     rm_safety_host
 )
-target_compile_features(test_infantry_et08_input_profile PRIVATE cxx_std_14)
-target_compile_options(test_infantry_et08_input_profile PRIVATE
+target_compile_features(test_et08_input_profile PRIVATE cxx_std_14)
+target_compile_options(test_et08_input_profile PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
-add_test(NAME infantry_et08_input_profile
-         COMMAND test_infantry_et08_input_profile)
+add_test(NAME et08_input_profile
+         COMMAND test_et08_input_profile)
 
-add_library(rm_infantry_gimbal_limits_host STATIC
-    ../../applications/infantry/gimbal/infantry_gimbal_limits.c
+add_library(rm_gimbal_limits_host STATIC
+    ../../applications/robot/gimbal/gimbal_limits.c
 )
-target_include_directories(rm_infantry_gimbal_limits_host PUBLIC
-    ../../applications/infantry/gimbal
+target_include_directories(rm_gimbal_limits_host PUBLIC
+    ../../applications/robot/gimbal
 )
-target_compile_features(rm_infantry_gimbal_limits_host PUBLIC c_std_11)
-target_compile_options(rm_infantry_gimbal_limits_host PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Werror
-)
-
-add_executable(test_infantry_gimbal_limits
-    infantry_gimbal_limits_test.c
-)
-target_link_libraries(test_infantry_gimbal_limits PRIVATE
-    rm_infantry_gimbal_limits_host
-)
-target_compile_features(test_infantry_gimbal_limits PRIVATE c_std_11)
-target_compile_options(test_infantry_gimbal_limits PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Werror
-)
-add_test(NAME infantry_gimbal_limits COMMAND test_infantry_gimbal_limits)
-
-add_library(rm_infantry_gimbal_axis_state_host STATIC
-    ../../applications/infantry/gimbal/infantry_gimbal_axis_state.c
-)
-target_include_directories(rm_infantry_gimbal_axis_state_host PUBLIC
-    ../../applications/infantry/gimbal
-    ../../applications/infantry/include
-    ../../applications/infantry/referee
-)
-target_compile_features(rm_infantry_gimbal_axis_state_host PUBLIC c_std_11)
-target_compile_options(rm_infantry_gimbal_axis_state_host PRIVATE
+target_compile_features(rm_gimbal_limits_host PUBLIC c_std_11)
+target_compile_options(rm_gimbal_limits_host PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
 
-add_executable(test_infantry_gimbal_axis_state
-    infantry_gimbal_axis_state_test.c
+add_executable(test_gimbal_limits
+    gimbal_limits_test.c
 )
-target_link_libraries(test_infantry_gimbal_axis_state PRIVATE
-    rm_infantry_gimbal_axis_state_host
+target_link_libraries(test_gimbal_limits PRIVATE
+    rm_gimbal_limits_host
+)
+target_compile_features(test_gimbal_limits PRIVATE c_std_11)
+target_compile_options(test_gimbal_limits PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+add_test(NAME gimbal_limits COMMAND test_gimbal_limits)
+
+add_library(rm_gimbal_axis_state_host STATIC
+    ../../applications/robot/gimbal/gimbal_axis_state.c
+)
+target_include_directories(rm_gimbal_axis_state_host PUBLIC
+    ../../applications/robot/gimbal
+    ../../applications/robot/include
+    ../../applications/robot/referee
+)
+target_compile_features(rm_gimbal_axis_state_host PUBLIC c_std_11)
+target_compile_options(rm_gimbal_axis_state_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_gimbal_axis_state
+    gimbal_axis_state_test.c
+)
+target_link_libraries(test_gimbal_axis_state PRIVATE
+    rm_gimbal_axis_state_host
     m
 )
-target_compile_features(test_infantry_gimbal_axis_state PRIVATE c_std_11)
-target_compile_options(test_infantry_gimbal_axis_state PRIVATE
+target_compile_features(test_gimbal_axis_state PRIVATE c_std_11)
+target_compile_options(test_gimbal_axis_state PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
-add_test(NAME infantry_gimbal_axis_state
-         COMMAND test_infantry_gimbal_axis_state)
+add_test(NAME gimbal_axis_state
+         COMMAND test_gimbal_axis_state)
 
-add_executable(test_infantry_gimbal_units
-    infantry_gimbal_units_test.c
+add_executable(test_gimbal_units
+    gimbal_units_test.c
 )
-target_include_directories(test_infantry_gimbal_units PRIVATE
-    ../../applications/infantry/gimbal
+target_include_directories(test_gimbal_units PRIVATE
+    ../../applications/robot/gimbal
 )
-target_compile_features(test_infantry_gimbal_units PRIVATE c_std_11)
-target_compile_options(test_infantry_gimbal_units PRIVATE
+target_compile_features(test_gimbal_units PRIVATE c_std_11)
+target_compile_options(test_gimbal_units PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
-target_link_libraries(test_infantry_gimbal_units PRIVATE m)
-add_test(NAME infantry_gimbal_units COMMAND test_infantry_gimbal_units)
+target_link_libraries(test_gimbal_units PRIVATE m)
+add_test(NAME gimbal_units COMMAND test_gimbal_units)
 
-add_executable(test_infantry_shoot_config
-    infantry_shoot_config_test.c
+add_executable(test_shoot_config
+    shoot_config_test.c
 )
-target_include_directories(test_infantry_shoot_config PRIVATE
+target_include_directories(test_shoot_config PRIVATE
     stubs
-    ../../applications/infantry/config
+    ../../applications/robot/config
 )
-target_compile_features(test_infantry_shoot_config PRIVATE c_std_11)
-target_compile_options(test_infantry_shoot_config PRIVATE
+target_compile_features(test_shoot_config PRIVATE c_std_11)
+target_compile_options(test_shoot_config PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
-target_link_libraries(test_infantry_shoot_config PRIVATE m)
-add_test(NAME infantry_shoot_config COMMAND test_infantry_shoot_config)
+target_link_libraries(test_shoot_config PRIVATE m)
+add_test(NAME shoot_config COMMAND test_shoot_config)
 
-add_library(rm_infantry_shoot_trigger_host STATIC
-    ../../applications/infantry/shoot/infantry_shoot_trigger.c
+add_library(rm_shoot_trigger_host STATIC
+    ../../applications/robot/shoot/shoot_trigger.c
 )
-target_include_directories(rm_infantry_shoot_trigger_host PUBLIC
-    ../../applications/infantry/shoot
+target_include_directories(rm_shoot_trigger_host PUBLIC
+    ../../applications/robot/shoot
 )
-target_compile_features(rm_infantry_shoot_trigger_host PUBLIC c_std_11)
-target_compile_options(rm_infantry_shoot_trigger_host PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Werror
-)
-
-add_executable(test_infantry_shoot_trigger
-    infantry_shoot_trigger_test.c
-)
-target_link_libraries(test_infantry_shoot_trigger PRIVATE
-    rm_infantry_shoot_trigger_host
-)
-target_compile_features(test_infantry_shoot_trigger PRIVATE c_std_11)
-target_compile_options(test_infantry_shoot_trigger PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Werror
-)
-add_test(NAME infantry_shoot_trigger COMMAND test_infantry_shoot_trigger)
-
-add_library(rm_infantry_chassis_kinematics_host STATIC
-    ../../applications/infantry/chassis/infantry_chassis_follow.c
-    ../../applications/infantry/chassis/infantry_chassis_kinematics.c
-)
-target_include_directories(rm_infantry_chassis_kinematics_host PUBLIC
-    ../../applications/infantry/chassis
-)
-target_compile_features(rm_infantry_chassis_kinematics_host PUBLIC c_std_11)
-target_compile_options(rm_infantry_chassis_kinematics_host PRIVATE
+target_compile_features(rm_shoot_trigger_host PUBLIC c_std_11)
+target_compile_options(rm_shoot_trigger_host PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
 
-add_executable(test_infantry_chassis_kinematics
-    infantry_chassis_kinematics_test.c
+add_executable(test_shoot_trigger
+    shoot_trigger_test.c
 )
-target_link_libraries(test_infantry_chassis_kinematics PRIVATE
-    rm_infantry_chassis_kinematics_host
+target_link_libraries(test_shoot_trigger PRIVATE
+    rm_shoot_trigger_host
+)
+target_compile_features(test_shoot_trigger PRIVATE c_std_11)
+target_compile_options(test_shoot_trigger PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+add_test(NAME shoot_trigger COMMAND test_shoot_trigger)
+
+add_library(rm_chassis_kinematics_host STATIC
+    ../../applications/robot/chassis/chassis_follow.c
+    ../../applications/robot/chassis/chassis_kinematics.c
+)
+target_include_directories(rm_chassis_kinematics_host PUBLIC
+    ../../applications/robot/chassis
+)
+target_compile_features(rm_chassis_kinematics_host PUBLIC c_std_11)
+target_compile_options(rm_chassis_kinematics_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_chassis_kinematics
+    chassis_kinematics_test.c
+)
+target_link_libraries(test_chassis_kinematics PRIVATE
+    rm_chassis_kinematics_host
     m
 )
-target_compile_features(test_infantry_chassis_kinematics PRIVATE c_std_11)
-target_compile_options(test_infantry_chassis_kinematics PRIVATE
+target_compile_features(test_chassis_kinematics PRIVATE c_std_11)
+target_compile_options(test_chassis_kinematics PRIVATE
     -Wall
     -Wextra
     -Wpedantic
     -Werror
 )
-add_test(NAME infantry_chassis_kinematics
-         COMMAND test_infantry_chassis_kinematics)
+add_test(NAME chassis_kinematics
+         COMMAND test_chassis_kinematics)
 
 add_library(rm_device_health_host STATIC
     ../../components/services/device_health/daemon.c

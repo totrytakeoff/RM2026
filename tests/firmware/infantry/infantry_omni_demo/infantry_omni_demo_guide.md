@@ -1,6 +1,6 @@
 # infantry_omni_demo 详解与排障指南
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 本文面向 `tests/firmware/infantry/infantry_omni_demo/main.c` 的整车 Demo，说明功能、CAN/遥控映射、关键参数与排障思路。
 
@@ -12,7 +12,7 @@
 
 ## 2. 关键文件
 - 入口：`tests/firmware/infantry/infantry_omni_demo/main.c`
-- CAN 配置：`platform/boards/infantry_f407/generated/can.c`
+- CAN 配置：`platform/boards/rm_f407/generated/can.c`
 - DJI 电机驱动：`components/devices/motor/dji/dji_motor.c`
 - CAN BSP：`platform/stm32f4/can/bsp_can.c`
 
@@ -65,7 +65,7 @@ DJI 电机以 4 个为一组打包发送。
 - 过滤器/注册冲突导致 CAN1 接收停止
 
 对应处理：
-- 已在 `platform/boards/infantry_f407/generated/can.c` 打开 AutoBusOff（CAN1/CAN2），使其自动从 bus-off 恢复
+- 已在 `platform/boards/rm_f407/generated/can.c` 打开 AutoBusOff（CAN1/CAN2），使其自动从 bus-off 恢复
 - 如仍出现：建议在主循环中增加 CAN1 错误检测并重启 CAN（可按需添加）
 
 ### 6.2 CAN2 正常，CAN1 完全无响应
@@ -89,6 +89,6 @@ DJI 电机以 4 个为一组打包发送。
 - 若只调试底盘：可将 `DEMO_CHASSIS_ONLY` 置为 1 屏蔽云台与发射
 
 ## 8. 版本变更记录
-- 打开 AutoBusOff：`platform/boards/infantry_f407/generated/can.c`，CAN1/CAN2 均设置为 `ENABLE`
+- 打开 AutoBusOff：`platform/boards/rm_f407/generated/can.c`，CAN1/CAN2 均设置为 `ENABLE`
 - ET08 SBUS 解析：使用 UART3 100k 9E2，回调注册一次
 - Pitch 速度缩放：`PITCH_SPEED_SCALE = 0.15`

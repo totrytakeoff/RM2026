@@ -1,10 +1,10 @@
-# 遥控适配器与步兵输入基线
+# 遥控适配器与机器人输入基线
 
-更新日期：2026-07-20
+更新日期：2026-07-23
 
 ## 1. 设计结论
 
-正式步兵固件在编译期只选择一个遥控后端，ET08、DT7 和 VT 不同时初始化，
+正式机器人固件在编译期只选择一个遥控后端，ET08、DT7 和 VT 不同时初始化，
 不进行运行时仲裁、热备接管或自动回退。当前默认选择 ET08。
 
 数据依赖固定为：
@@ -14,7 +14,7 @@ ET08 / DT7 / VT 协议驱动
         -> 对应 Backend（只做设备字段适配）
         -> RemoteControlState（统一当前电平）
         -> RemoteControlAdapter（统一边沿与重连基线）
-        -> 步兵输入 Profile（机器人语义映射）
+        -> 机器人输入 Profile（机器人语义映射）
         -> SafetyManager（最终输出许可）
         -> 底盘 / 云台 / 发射执行层（物理限幅与电机命令）
 ```
@@ -23,8 +23,8 @@ ET08 / DT7 / VT 协议驱动
 
 - 协议驱动只负责收帧、校验、超时和一致快照。
 - Backend 只把物理摇杆、拨杆、旋钮、键盘、鼠标和按钮转换成统一状态。
-- `RemoteControlAdapter` 只生成按下、释放和开关变化边沿，不包含步兵模式。
-- 步兵 Profile 决定某个开关代表跟随、陀螺或发射模式。
+- `RemoteControlAdapter` 只生成按下、释放和开关变化边沿，不包含具体机器人模式。
+- 机器人 Profile 决定某个开关代表跟随、陀螺或发射模式。
 - Pitch 机械范围、底盘总速度和轮速饱和只在执行层拦截，对遥控、视觉和后续自动控制一视同仁。
 
 ## 2. 目录和接口
@@ -44,10 +44,10 @@ components/devices/remote/
     |-- vt_remote.c/.h
     `-- vt_backend.hpp
 
-applications/infantry/command/
-|-- infantry_input.cpp
-|-- infantry_input.h
-`-- infantry_et08_input_profile.cpp/.hpp
+applications/robot/command/
+|-- input.cpp
+|-- input.h
+`-- et08_input_profile.cpp/.hpp
 ```
 
 `RemoteControlState` 统一提供：
@@ -63,26 +63,26 @@ DBUS 或 VT 21 字节帧的具体布局。
 
 ## 3. 编译期唯一选择
 
-选择项位于 `applications/infantry/config/infantry_config.h`：
+选择项位于 `applications/robot/config/robot_config.h`：
 
 ```c
-#define INFANTRY_REMOTE_BACKEND INFANTRY_REMOTE_BACKEND_ET08
+#define ROBOT_REMOTE_BACKEND ROBOT_REMOTE_BACKEND_ET08
 ```
 
 可选值只有：
 
 | 配置 | 后端 | 默认超时 |
 | --- | --- | ---: |
-| `INFANTRY_REMOTE_BACKEND_ET08` | ET08 + RF206S，SBUS，USART3 | 100 ms |
-| `INFANTRY_REMOTE_BACKEND_DT7` | DT7 + DR16，DBUS，USART3 | 100 ms |
-| `INFANTRY_REMOTE_BACKEND_VT` | VT03/VT13，USART6 | 200 ms |
+| `ROBOT_REMOTE_BACKEND_ET08` | ET08 + RF206S，SBUS，USART3 | 100 ms |
+| `ROBOT_REMOTE_BACKEND_DT7` | DT7 + DR16，DBUS，USART3 | 100 ms |
+| `ROBOT_REMOTE_BACKEND_VT` | VT03/VT13，USART6 | 200 ms |
 
 无效值直接编译失败；调试串口与所选遥控串口冲突也直接编译失败。正式 ET08
 镜像的符号表只包含 ET08 驱动，不包含 DT7/VT 遥控初始化函数。
 
-## 4. ET08 步兵映射
+## 4. ET08 当前机器人映射
 
-| 控件 | 位置 | 步兵语义 |
+| 控件 | 位置 | 机器人语义 |
 | --- | --- | --- |
 | SA | 下 | 操作者安全门关闭，全局电机输出禁止 |
 | SA | 上 | 打开电平安全门；硬故障均清除后允许输出 |
@@ -104,7 +104,7 @@ SC 上位且 SD 持续上位。
 
 ## 5. 安全门与掉线策略
 
-当前正式步兵调试配置把 SA 作为直接电平门：遥控数据有效、初始化完成、INS 和关键任务
+当前正式机器人调试配置把 SA 作为直接电平门：遥控数据有效、初始化完成、INS 和关键任务
 正常时，SA 上位直接进入 `ACTIVE`；SA 下位立即关闭全局输出。SB/SC/SD 和摇杆状态不参与
 解锁资格，因此操作手可先选择模式或带着非零摇杆打开 SA。
 
@@ -134,7 +134,7 @@ SA 下位不是普通零速度命令：控制任务先关闭 DJI 全局输出门
 - 底盘运动学和 Pitch 限位对 NaN/无穷值按失效关闭处理，不向电机层传播非法参考。
 - 实板必须先悬空确认正 Pitch 意图产生正 GyroX；遥控适配层不得补偿电机安装方向。
 
-关键调参位置见[步兵底盘与云台调参说明](../motor/infantry_chassis_gimbal_tuning.md)。
+关键调参位置见[机器人底盘与云台调参说明](../motor/chassis_gimbal_tuning.md)。
 
 ## 7. C/C++ ABI 与链接约束
 

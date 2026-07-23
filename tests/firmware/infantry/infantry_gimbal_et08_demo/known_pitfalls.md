@@ -1,6 +1,6 @@
 # infantry_gimbal_et08_demo 已确认坑点记录
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 本文记录当前最小/独立 demo 调试中已经明确定位过的两个高频坑：
 
@@ -77,7 +77,7 @@
 参考：
 
 - `tests/firmware/infantry/infantry_omni_demo/main.c`
-- `firmware/infantry_f407/freertos/infantry_tasks.c`
+- `firmware/rm_f407/freertos/robot_tasks.c`
 
 基线中：
 
@@ -157,7 +157,7 @@
 
 ### 本次确认的基线
 
-`firmware/infantry_f407/freertos/infantry_tasks.c` 中明确写了：
+`firmware/rm_f407/freertos/robot_tasks.c` 中明确写了：
 
 - `MotorControlTask()` 采用 `osDelay(2)`
 - 即约 `500Hz`

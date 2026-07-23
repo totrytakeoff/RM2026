@@ -15,7 +15,7 @@ create_embedded_test(infantry_gimbal_et08_demo
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/tests/firmware/infantry/infantry_minimal
     LINK_LIBRARIES
-        rm_infantry_config
+        rm_robot_config
         rm_components
         rm_platform_stm32f4
         rm_common

@@ -24,7 +24,7 @@ $OutputDir = Join-Path $BuildDir "output"
 $DefaultFile = "app"
 $DefaultFormat = "bin"
 $DefaultAddr = "0x08000000"
-$DefaultCfg = Join-Path $RootDir "platform/boards/infantry_f407/openocd/openocd_dap.cfg"
+$DefaultCfg = Join-Path $RootDir "platform/boards/rm_f407/openocd/openocd_dap.cfg"
 
 # 帮助信息
 function Show-Usage {

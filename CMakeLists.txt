@@ -11,7 +11,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(RM_BOARD_ROOT
-    "${CMAKE_CURRENT_SOURCE_DIR}/platform/boards/infantry_f407"
+    "${CMAKE_CURRENT_SOURCE_DIR}/platform/boards/rm_f407"
     CACHE INTERNAL "Active board ownership root")
 set(RM_BOARD_INCLUDE_DIR
     "${RM_BOARD_ROOT}/include"

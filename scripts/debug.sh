@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_CFG="${ROOT_DIR}/platform/boards/infantry_f407/openocd/openocd_dap.cfg"
+DEFAULT_CFG="${ROOT_DIR}/platform/boards/rm_f407/openocd/openocd_dap.cfg"
 DEFAULT_PORT="3333"
 
 usage() {
@@ -20,7 +20,7 @@ usage() {
 用法: $(basename "$0") [--cfg <openocd.cfg>] [--port <port>] [--openocd <path>]
 示例:
   $(basename "$0")                      # 使用默认配置启动OpenOCD服务器
-  $(basename "$0") --cfg platform/boards/infantry_f407/openocd/openocd_jlink.cfg --port 4444
+  $(basename "$0") --cfg platform/boards/rm_f407/openocd/openocd_jlink.cfg --port 4444
 EOF
 }
 

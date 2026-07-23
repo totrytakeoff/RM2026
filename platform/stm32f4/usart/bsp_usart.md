@@ -33,7 +33,7 @@ USARTInstance *endpoint = USARTRegister(&config);
 - `USART_DISPATCH_DEFERRED`：中断只复制 DMA 事件，任务调用
   `USARTDispatchPending()` 后执行协议回调。
 
-必须在第一个端点注册前调用 `USARTConfigureDispatch()`。正式步兵固件使用延迟
+必须在第一个端点注册前调用 `USARTConfigureDispatch()`。正式机器人固件使用延迟
 模式，独立 demo 默认保持中断模式。
 
 延迟模式把 DMA 缓冲与回调可见的 `recv_buff` 分离：DMA 可以立即重新启动，

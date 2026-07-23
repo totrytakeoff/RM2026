@@ -1,6 +1,6 @@
 # RM2026 CMake target 维护说明
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 本文说明新增或调整源码时应修改哪个 `CMakeLists.txt`。构建命令和 target
 总表见 [CMake 构建指南](README_CMake.md)。
@@ -26,11 +26,11 @@ tests
 每个外部依赖使用独立 target、独立公开头文件路径和显式源码列表。
 FreeRTOS 的 `heap_4.c` 被明确排除，因为正式配置禁止动态分配。
 
-### `platform/boards/infantry_f407/CMakeLists.txt`
+### `platform/boards/rm_f407/CMakeLists.txt`
 
-`rm_board_infantry_f407_headers` 公开板级生成头；
-`rm_board_infantry_f407` 编译 CubeMX 生成源与启动文件；
-`rm_board_infantry_f407_irq` 作为 OBJECT library 保证中断和 fault capture 直接进入镜像。
+`rm_board_rm_f407_headers` 公开板级生成头；
+`rm_board_rm_f407` 编译 CubeMX 生成源与启动文件；
+`rm_board_rm_f407_irq` 作为 OBJECT library 保证中断和 fault capture 直接进入镜像。
 链接脚本、OpenOCD 和板级说明也只属于该目录。
 
 ### `platform/stm32f4/CMakeLists.txt`
@@ -40,14 +40,14 @@ FreeRTOS 的 `heap_4.c` 被明确排除，因为正式配置禁止动态分配�
 
 ### `components/CMakeLists.txt`
 
-`rm_components_runtime` 是正式步兵固件支持的组件集；`rm_components_compat` 只服务
+`rm_components_runtime` 是正式机器人固件支持的组件集；`rm_components_compat` 只服务
 历史 demo；`rm_components` 是 demo 兼容伞。新正式功能应建立窄 target，不应扩大兼容伞。
 
-### `applications/infantry` 与 `firmware/infantry_f407`
+### `applications/robot` 与 `firmware/rm_f407`
 
-- `applications/infantry` 只描述机器人行为、状态和控制参数。
-- `firmware/infantry_f407/freertos` 管理任务入口、周期、栈、优先级和 hooks。
-- `firmware/infantry_f407` 组合应用、运行时、板级绑定，并生成 `app.elf`。
+- `applications/robot` 只描述机器人行为、状态和控制参数。
+- `firmware/rm_f407/freertos` 管理任务入口、周期、栈、优先级和 hooks。
+- `firmware/rm_f407` 组合应用、运行时、板级绑定，并生成 `app.elf`。
 
 ## 新增代码
 

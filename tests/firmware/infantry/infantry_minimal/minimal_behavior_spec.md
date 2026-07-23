@@ -1,19 +1,19 @@
 # infantry_minimal 裸机对照行为规范
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 本 target 只保留裸机轮询调度外壳，实际机器人行为直接复用
-`applications/infantry`，不得再建立一套独立行为事实源。
+`applications/robot`，不得再建立一套独立行为事实源。
 
 ## 1. 输入选择与映射
 
-- ET08、DT7/DR16、VT 由 `INFANTRY_REMOTE_BACKEND` 编译期三选一，不做运行时仲裁、接管或回退。
+- ET08、DT7/DR16、VT 由 `ROBOT_REMOTE_BACKEND` 编译期三选一，不做运行时仲裁、接管或回退。
 - 当前默认 ET08：SA 为全局安全门，SB 为跟随/自瞄预留/小陀螺，SC 为禁射/单发/连发，SD 为扳机。
 - 设备层统一发布摇杆、开关、旋钮、键盘、鼠标和按钮状态，步兵应用层才赋予机器人语义。
 - 任一输入离线、failsafe 或数据无效都进入统一安全停止路径。
 
 ## 2. 安全与失效处理
-- 统一安全停止函数 `InfantryApp_ForceSafeStop()` 负责停止底盘、云台、发射。
+- 统一安全停止函数 `RobotApp_ForceSafeStop()` 负责停止底盘、云台、发射。
 - 输入离线、急停触发、关键联锁拒绝时，都进入统一安全停止路径。
 - 主循环保持 `DaemonTask()` 与 `DJIMotorControl()` 常驻调用。
 - 启动或故障恢复后禁止自动恢复。必须先观测到“SA/SB/SC/SD 全下且四轴回中”，
@@ -28,7 +28,7 @@
   - 摩擦轮速度环；
   - 拨盘单发采用角度环目标；
   - 拨盘连发采用速度环。
-- 所有执行器在 `applications/infantry/config/infantry_config.h` 用统一宏指定 init/run loop，避免硬编码分散。
+- 所有执行器在 `applications/robot/config/robot_config.h` 用统一宏指定 init/run loop，避免硬编码分散。
 
 ## 4. 裁判系统只读联锁
 - 仅接入关键字段：`robot_id`、`chassis_power_limit`、`shooter_heat_limit`、`shooter_heat`、`allowance_17mm`、功率输出使能位。

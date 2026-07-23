@@ -1,6 +1,6 @@
 # 框架问题修复记录（2026-02-27）
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 > 标题日期为首批问题修复日期；本文在仓库结构收口时同步更新了现行路径。
 
@@ -94,4 +94,4 @@ error: 'now' undeclared (first use in this function)
 
 ## 修改文件
 
-1. `applications/infantry/shoot/infantry_shoot.c`
+1. `applications/robot/shoot/shoot.c`

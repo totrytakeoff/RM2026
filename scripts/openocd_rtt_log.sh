@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-OPENOCD_CFG="${OPENOCD_CFG:-$ROOT_DIR/platform/boards/infantry_f407/openocd/openocd_dap.cfg}"
+OPENOCD_CFG="${OPENOCD_CFG:-$ROOT_DIR/platform/boards/rm_f407/openocd/openocd_dap.cfg}"
 
 OPENOCD_HOST="${OPENOCD_HOST:-127.0.0.1}"
 OPENOCD_TELNET_PORT="${OPENOCD_TELNET_PORT:-4444}"

@@ -8,7 +8,7 @@ target_include_directories(rm_common INTERFACE
 
 add_subdirectory(services/safety)
 
-# Production-supported component set used by the formal infantry firmware.
+# Production-supported component set used by the formal robot firmware.
 # Keep this list narrow: compatibility demos must not silently promote every
 # historical driver and heap-backed registration API into app.elf.
 add_library(rm_components_runtime STATIC

@@ -1,8 +1,8 @@
 # 安全与任务健康服务
 
-更新日期：2026-07-20
+更新日期：2026-07-23
 
-本切片用仓库自有、与平台无关的安全状态机替代步兵应用中的局部安全布尔量，
+本切片用仓库自有、与平台无关的安全状态机替代机器人应用中的局部安全布尔量，
 并在开始控制调参前使 FreeRTOS 任务假设可测量、可观测。
 
 ## 安全约定
@@ -21,19 +21,19 @@
 空输入快照按故障关闭处理。
 
 20 ms 控制任务是安全状态转换的唯一所有者。5 ms 健康任务通过
-`InfantryApp_SetTaskHealth()` 发布单个原子布尔值，避免多任务同时改写执行器。
+`RobotApp_SetTaskHealth()` 发布单个原子布尔值，避免多任务同时改写执行器。
 安全服务支持两种应用策略：
 
 - 严格重使能：先在安全门关闭时观察完整安全姿态，再接收新的使能边沿；
 - 电平安全门：只要硬故障清除，SA 上位即进入 `ACTIVE`，SA 下位立即进入 `DISARMED`。
 
-正式步兵当前处于实板调试阶段，通过 `INFANTRY_SAFETY_REQUIRE_EXPLICIT_REARM=0` 选择
+正式机器人当前处于实板调试阶段，通过 `ROBOT_SAFETY_REQUIRE_EXPLICIT_REARM=0` 选择
 电平安全门。这与 ET08 的操作定义一致，不再要求 SB/SC/SD 全下、四摇杆回中或新的 SA
 边沿，因此不会出现 SA 已在上位却长期停在 `REARM_REQUIRED` 的情况。遥控离线、failsafe、
 输入无效、初始化失败、INS 未就绪和关键任务异常仍然禁止输出。
 
 电机反馈健康度与安全关键设备分开处理。当前
-`INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH=0`：单个电机掉线会输出 `ERROR` 日志，并由 5 ms
+`ROBOT_SAFETY_GATE_ON_MOTOR_HEALTH=0`：单个电机掉线会输出 `ERROR` 日志，并由 5 ms
 电机层只把该电机的发送槽归零，不再关闭所有在线电机；INS 仍作为安全关键设备参与
 `DEVICE_UNHEALTHY`。100 ms 电机命令租约可在控制任务完全停止时拒绝过期输出。
 
@@ -55,7 +55,7 @@
 
 `diagnostics` 和 `tuning_uart` 记录同样的指标，但作为低优先级观测任务，不参与安全联锁。
 当前通用日志默认关闭；`tuning_uart` 使用 DMA，UART 忙时丢帧。
-`InfantryTasks_GetHealthSnapshot()` 向遥测和调试器提供一致快照。
+`RobotTasks_GetHealthSnapshot()` 向遥测和调试器提供一致快照。
 
 ## 自动验证
 

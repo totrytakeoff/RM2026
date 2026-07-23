@@ -8,7 +8,7 @@ $ScriptRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Pat
 $RootDir = (Get-Item $ScriptRoot).FullName
 
 # Configuration with environment variable defaults
-if ([string]::IsNullOrEmpty($env:OPENOCD_CFG)) { $env:OPENOCD_CFG = "$RootDir\platform\boards\infantry_f407\openocd\openocd_dap.cfg" }
+if ([string]::IsNullOrEmpty($env:OPENOCD_CFG)) { $env:OPENOCD_CFG = "$RootDir\platform\boards\rm_f407\openocd\openocd_dap.cfg" }
 $OpenOCD_Cfg = $env:OPENOCD_CFG
 if ([string]::IsNullOrEmpty($env:OPENOCD_HOST)) { $env:OPENOCD_HOST = "127.0.0.1" }
 $OpenOCD_Host = $env:OPENOCD_HOST

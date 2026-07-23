@@ -1,8 +1,8 @@
-#ifndef INFANTRY_MINIMAL_CONFIG_COMPAT_H
-#define INFANTRY_MINIMAL_CONFIG_COMPAT_H
+#ifndef ROBOT_MINIMAL_CONFIG_COMPAT_H
+#define ROBOT_MINIMAL_CONFIG_COMPAT_H
 
 /* Transitional include for standalone demos. Production configuration lives
- * in applications/infantry and remains the single source of truth. */
-#include "infantry_config.h"
+ * in applications/robot and remains the single source of truth. */
+#include "robot_config.h"
 
-#endif /* INFANTRY_MINIMAL_CONFIG_COMPAT_H */
+#endif /* ROBOT_MINIMAL_CONFIG_COMPAT_H */

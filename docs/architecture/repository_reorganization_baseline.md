@@ -1,6 +1,6 @@
 # RM2026 仓库重组基线
 
-更新日期：2026-07-19
+更新日期：2026-07-23
 
 状态：顶层所有权收口已完成；API 细分、兼容模块清理与实板验收继续进行。
 
@@ -35,8 +35,8 @@
 - 删除废弃 `Src/application`，其历史仍可从 Git 追溯。
 - 顶层 `Inc`、`Src`、`hal`、`system`、`application`、`test`、`script` 和 `config` 已消失。
 - CubeMX 生成源、板级头、启动、链接、OpenOCD 和 HardFault 保留逻辑归属
-  `platform/boards/infantry_f407`。
-- 正式入口、FreeRTOS 任务/hooks 和固件组合归属 `firmware/infantry_f407`。
+  `platform/boards/rm_f407`。
+- 正式入口、FreeRTOS 任务/hooks 和固件组合归属 `firmware/rm_f407`。
 - 机器人行为、板级测试、主机测试和工具入口分别收口到
   `applications`、`tests/firmware`、`tests/host` 和 `scripts`。
 - 删除未引用的 `minimal_config1.h` 与 `test_imu` 板级配置副本；备用底盘接线测试
@@ -80,7 +80,7 @@ firmware ------> applications + components + platform + FreeRTOS
 
 ```text
 RM2026/
-|-- applications/infantry/
+|-- applications/robot/
 |-- components/
 |   |-- algorithms/
 |   |-- devices/
@@ -88,14 +88,14 @@ RM2026/
 |-- platform/
 |   |-- common/
 |   |-- stm32f4/
-|   `-- boards/infantry_f407/
+|   `-- boards/rm_f407/
 |       |-- include/
 |       |-- generated/
 |       |-- startup/
 |       |-- linker/
 |       |-- openocd/
 |       `-- fault/
-|-- firmware/infantry_f407/
+|-- firmware/rm_f407/
 |   `-- freertos/
 |-- third_party/
 |-- tests/
@@ -113,12 +113,12 @@ RM2026/
 | --- | --- |
 | CMSIS、STM32 HAL、FreeRTOS、USB Device、CMSIS-DSP、SEGGER RTT | `third_party` |
 | CAN/UART/SPI/DWT/USB/时间/看门狗适配 | `platform/stm32f4` |
-| CubeMX 生成源、板级头、启动、链接、OpenOCD、fault capture | `platform/boards/infantry_f407` |
+| CubeMX 生成源、板级头、启动、链接、OpenOCD、fault capture | `platform/boards/rm_f407` |
 | 数学、PID、滤波、四元数 EKF、校验 | `components/algorithms` |
 | 安全、设备健康、消息/传输服务 | `components/services` |
 | 电机、IMU/INS、遥控、裁判、视觉 | `components/devices` |
-| 步兵行为 | `applications/infantry` |
-| FreeRTOS 任务与正式固件组合 | `firmware/infantry_f407` |
+| 机器人行为 | `applications/robot` |
+| FreeRTOS 任务与正式固件组合 | `firmware/rm_f407` |
 | 板级 bring-up、对照、回归固件 | `tests/firmware` |
 | 纯算法、协议和状态机测试 | `tests/host` |
 
@@ -126,7 +126,7 @@ RM2026/
 和验证路径，否则在兼容清理阶段移除。
 
 遥控目录进一步按职责拆分：`components/devices/remote` 保存统一状态、C++ 适配器和
-`dt7`、`et08`、`vt` 三个设备后端；`applications/infantry/command` 只保存步兵语义映射。
+`dt7`、`et08`、`vt` 三个设备后端；`applications/robot/command` 只保存当前机器人语义映射。
 Pitch 角度边界、底盘速度边界等机械约束属于对应执行模块，不进入遥控层。
 
 ## 7. 命名与 CMake 规则

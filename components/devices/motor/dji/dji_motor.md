@@ -18,7 +18,7 @@
 > 正式 FreeRTOS 应用必须用 `DJIMotorGetCommand()` 取得完整命令副本，修改
 > 后通过 `DJIMotorPublishCommand()` 一次发布；电机任务是 PID 运行态、控制
 > 设置和 CAN 输出的唯一写入者。`DJIMotorSetRef()` 等旧接口只用于单循环
-> demo 兼容，不构成多字段原子事务。正式步兵还配置命令超时并使用全局输出
+> demo 兼容，不构成多字段原子事务。正式机器人固件还配置命令超时并使用全局输出
 > 门控，具体契约见
 > [`control_ownership_milestone.md`](../../../../docs/migration/control_ownership_milestone.md)。
 

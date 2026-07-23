@@ -1,6 +1,6 @@
 # OpenOCD RTT 一键日志（推荐）
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 ## 推荐用法（一条命令）
 
@@ -18,7 +18,7 @@ cd /path/to/RM2026
 ## 常用参数
 
 ```bash
-./scripts/log.sh --cfg platform/boards/infantry_f407/openocd/openocd_dap.cfg
+./scripts/log.sh --cfg platform/boards/rm_f407/openocd/openocd_dap.cfg
 ./scripts/log.sh --reset-run 0
 ./scripts/log.sh --rtt-port 19021 --channel 0
 ./scripts/log.sh --keep-openocd
@@ -27,7 +27,7 @@ cd /path/to/RM2026
 ## 串口资源规范
 
 1. 全工程基础日志默认走 RTT：`BSP_LOG_USE_UART=0`。
-2. 当前 ET08 正式步兵调试固件会把应用诊断同时镜像到 RTT 与 `USART6`，串口参数为 `115200 8N1`。
+2. 当前 ET08 正式机器人调试固件会把应用诊断同时镜像到 RTT 与 `USART6`，串口参数为 `115200 8N1`。
 3. 切换为 VT 后端前必须先迁走或关闭 `USART6` 应用诊断；配置中的编译期冲突检查会阻止两者同时占用。
 4. 其他固件仅在必要时可临时回退 UART 基础日志（命令行覆盖）：
 
@@ -51,7 +51,7 @@ cmake -B build -S . -DBSP_LOG_USE_UART=1 -DBSP_LOG_UART_PORT=1
 1. 启动 OpenOCD：
 
 ```bash
-openocd -f platform/boards/infantry_f407/openocd/openocd_dap.cfg
+openocd -f platform/boards/rm_f407/openocd/openocd_dap.cfg
 ```
 
 2. 连接 telnet 并执行：

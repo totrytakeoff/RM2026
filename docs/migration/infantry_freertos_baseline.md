@@ -1,13 +1,13 @@
 # 步兵 FreeRTOS 迁移基线
 
-更新日期：2026-07-20
+更新日期：2026-07-23
 
 ## 1. 范围
 
 第一阶段只针对单板步兵固件。英雄、轮腿、双板通信、控制参数重调和新控制算法
 不在本基线范围内。
 
-步兵行为唯一事实源为 `applications/infantry`：
+步兵行为唯一事实源为 `applications/robot`：
 
 - `app.elf` 通过全静态 FreeRTOS 任务执行该逻辑。
 - `test_infantry_minimal` 在原裸机调度外壳中执行同一套应用和电机阶段 API，用于实板行为对照。
@@ -15,7 +15,7 @@
 
 ## 2. 当前控制行为
 
-- ET08、DT7/DR16、VT 由 `INFANTRY_REMOTE_BACKEND` 在编译期三选一；当前正式配置只选择 ET08。
+- ET08、DT7/DR16、VT 由 `ROBOT_REMOTE_BACKEND` 在编译期三选一；当前正式配置只选择 ET08。
 - 不进行运行时输入仲裁、热备接管或自动回退，未选中的遥控驱动不会进入最终镜像。
 - 设备层只发布统一的摇杆、开关、旋钮、键盘、鼠标和按键状态；应用 Profile 只形成
   `[-1,1]` 无量纲操作意图，执行层独占物理速度、机械限位、运动学和电机饱和。
@@ -27,7 +27,7 @@
 - 当前调试配置采用 SA 电平安全门：SA 上位且硬故障清除即进入 `ACTIVE`，SA 下位立即
   关闭全局电机输出；不要求摇杆回中或捕获新的 SA 边沿。
 - 单个电机离线只记录 `ERROR` 并由电机层将对应 CAN 输出槽归零，不再阻止其他在线电机运行。
-  可通过 `INFANTRY_SAFETY_GATE_ON_MOTOR_HEALTH` 恢复整车联锁。
+  可通过 `ROBOT_SAFETY_GATE_ON_MOTOR_HEALTH` 恢复整车联锁。
 
 遥控抽象、ET08 映射及重使能规则详见
 [遥控适配器与控制分层基线](../architecture/remote_control_adapter_baseline.md)。

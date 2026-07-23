@@ -1,6 +1,6 @@
 # virtual_dbus_linux
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 Linux 上位机后台采集键盘鼠标（evdev `/dev/input/event*`），并以 DT7/DR16 的 **D-BUS 18Byte** 协议通过串口发送，供固件端 `remote_control` 模块直接复用解析。
 
@@ -42,7 +42,7 @@ sudo ./virtual_dbus --serial /dev/ttyACM0 --hz 70 --mouse-scale 1.0 --invert-y
 
 ## 协议与固件对齐
 
-- 串口：`100000 bps, 8E1`（与 `platform/boards/infantry_f407/generated/usart.c` 的 USART3 配置一致）
+- 串口：`100000 bps, 8E1`（与 `platform/boards/rm_f407/generated/usart.c` 的 USART3 配置一致）
 - 帧：固定 `18 Byte`，字段对齐 `docs/remote_control/dt7_dr16_protocol.md`
 - 默认：
   - `switch_left=up`（使固件进入键鼠模式）

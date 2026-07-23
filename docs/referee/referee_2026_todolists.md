@@ -3,7 +3,7 @@
 本文档用于管理 `components/devices/referee` 对齐 2026 协议的剩余工作项。
 状态字段建议：`TODO / DOING / DONE / BLOCKED`。
 
-更新时间：2026-07-19
+更新时间：2026-07-23
 
 ---
 
@@ -37,8 +37,8 @@
 
 建议修改位置：
 
-1. `applications/infantry/chassis/infantry_chassis.c`（功率/缓冲能量限幅）
-2. `applications/infantry/shoot/infantry_shoot.c`（发弹节流/热量保护）
+1. `applications/robot/chassis/chassis.c`（功率/缓冲能量限幅）
+2. `applications/robot/shoot/shoot.c`（发弹节流/热量保护）
 
 验收标准：
 
@@ -98,7 +98,7 @@
 建议修改位置：
 
 1. `components/devices/referee/rm_referee.c`
-2. 可配宏放到 `applications/infantry/config/infantry_config.h` 或 referee 配置头
+2. 可配宏放到 `applications/robot/config/robot_config.h` 或 referee 配置头
 
 验收标准：
 

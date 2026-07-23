@@ -1,6 +1,6 @@
 # RM2026 CMake 构建指南
 
-文档更新日期：2026-07-19
+文档更新日期：2026-07-23
 
 当前构建系统按源码所有权组织，不再通过上游风格的大库聚合第三方代码、
 板级生成代码、平台适配和机器人逻辑。目录目标与迁移约束见
@@ -10,17 +10,17 @@
 
 ```text
 third_party -> platform/boards + platform/stm32f4 -> components
-            -> applications -> firmware/infantry_f407 -> app.elf
+            -> applications -> firmware/rm_f407 -> app.elf
 ```
 
 - `third_party/`：CMSIS、CMSIS-DSP、STM32 HAL、FreeRTOS、USB Device 和
   SEGGER RTT。
-- `platform/boards/infantry_f407/`：CubeMX 生成源、板级头文件、启动、
+- `platform/boards/rm_f407/`：CubeMX 生成源、板级头文件、启动、
   链接、异常保留与 OpenOCD 配置。
 - `platform/stm32f4/`：CAN、UART、SPI、DWT、日志、USB、看门狗等平台适配。
 - `components/`：算法、设备驱动和通用服务。
-- `applications/infantry/`：步兵机器人行为与参数。
-- `firmware/infantry_f407/`：正式入口、FreeRTOS 任务策略与固件组合。
+- `applications/robot/`：机器人行为与参数。
+- `firmware/rm_f407/`：正式入口、FreeRTOS 任务策略与固件组合。
 - `tests/firmware/` 与 `tests/host/`：板级固件回归与本机纯逻辑测试。
 
 ## 环境与命令
@@ -59,15 +59,15 @@ BIN 镜像使用 `0x08000000` 基地址。HEX/ELF 默认使用文件内嵌地址
 | --- | --- | --- |
 | STM32 HAL driver | `rm_vendor_stm32_hal` | `RM::vendor_stm32_hal` |
 | FreeRTOS | `rm_vendor_freertos` | `RM::vendor_freertos` |
-| board headers | `rm_board_infantry_f407_headers` | `RM::board_infantry_f407_headers` |
-| board generated/startup | `rm_board_infantry_f407` | `RM::board_infantry_f407` |
+| board headers | `rm_board_rm_f407_headers` | `RM::board_rm_f407_headers` |
+| board generated/startup | `rm_board_rm_f407` | `RM::board_rm_f407` |
 | STM32F4 platform | `rm_platform_stm32f4` | `RM::platform_stm32f4` |
 | formal components | `rm_components_runtime` | `RM::components_runtime` |
 | compatibility components | `rm_components_compat` | - |
 | safety service | `rm_service_safety` | `RM::service_safety` |
-| infantry application | `rm_app_infantry` | `RM::app_infantry` |
-| infantry FreeRTOS policy | `rm_firmware_infantry_freertos` | `RM::firmware_infantry_freertos` |
-| infantry firmware | `rm_firmware_infantry` | `RM::firmware_infantry` |
+| robot application | `rm_robot_app` | `RM::robot_app` |
+| robot FreeRTOS policy | `rm_robot_freertos` | `RM::robot_freertos` |
+| robot firmware | `rm_robot_firmware` | `RM::robot_firmware` |
 | formal image | `app.elf` | - |
 
 `rm_components` 只为历史 demo 保留兼容聚合，不会被正式 `app.elf` 链入。
