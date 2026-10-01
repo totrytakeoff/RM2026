@@ -44,8 +44,10 @@ ET08 仍要求精确 25 字节 SBUS 帧，VT 仍执行流重组和 CRC 校验。
 历史板级 demo 默认仍在中断中 dispatch。需要任务上下文解析的固件必须在首个 endpoint 注册前调用
 `CANConfigureDispatch()` 和 `USARTConfigureDispatch()`，注册后不允许改模式。
 
-正式固件在 `RobotApp_Init()` 前选择延后模式。剩余启动期间，CAN 保留最新反馈，UART 保留最新四个事件，
-避免调度器启动前累积无界旧数据。
+正式 FreeRTOS 固件和 `test_infantry_minimal` 都在 `RobotApp_Init()` 前选择延后模式。
+FreeRTOS 的 5 ms 电机任务、裸机对照循环都在消费电机反馈前调用
+`CANDispatchPending(0)` / `USARTDispatchPending(0)`。剩余启动期间，CAN 保留最新反馈，
+UART 保留最新四个事件，避免调度器启动前累积无界旧数据。
 
 ## 4. 一致设备读取
 

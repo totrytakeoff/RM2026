@@ -74,7 +74,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-Og -g -gdwarf-2)
     add_compile_definitions(DEBUG)
 else()
-    add_compile_options(-Ofast)
+    # Keep IEEE-754 exceptional values observable in safety checks.  The
+    # previous -Ofast implied -ffinite-math-only and could turn isfinite()
+    # guards into unconditional true results in Release firmware.
+    add_compile_options(-O3)
 endif()
 
 # ----------------------------------------------------------------------------- 

@@ -142,6 +142,42 @@ USARTInstance *USARTRegister(const USART_Init_Config_s *config)
     return instance;
 }
 
+bool USARTUnregister(USARTInstance *instance)
+{
+    USARTInstance *last_instance;
+    USARTRxInbox *last_inbox;
+    RmCriticalState state;
+
+    if ((instance == NULL) || (usart_instance_count == 0U)) {
+        return false;
+    }
+
+    last_instance = &usart_instances[usart_instance_count - 1U];
+    if (instance != last_instance) {
+        /* Removing an older slot would invalidate a live endpoint pointer. */
+        return false;
+    }
+
+    if (last_instance->usart_handle != NULL) {
+        if (HAL_UART_AbortReceive(last_instance->usart_handle) != HAL_OK) {
+            /* Keep the slot owned if DMA could not be stopped safely. */
+            return false;
+        }
+    }
+
+    last_inbox = &usart_rx_inboxes[usart_instance_count - 1U];
+    state = RmCritical_Enter();
+    memset(last_instance, 0, sizeof(*last_instance));
+    memset(last_inbox, 0, sizeof(*last_inbox));
+    usart_instance_count--;
+    usart_dispatch_cursor = (usart_instance_count == 0U)
+                                ? 0U
+                                : (usart_dispatch_cursor % usart_instance_count);
+    RmCritical_Exit(state);
+
+    return true;
+}
+
 uint8_t USARTSend(USARTInstance *instance,
                   uint8_t *send_buf,
                   uint16_t send_size,

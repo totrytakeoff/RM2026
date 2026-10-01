@@ -1,6 +1,10 @@
 # 机器人正式固件调参遥测
 
-更新日期：2026-07-23
+更新日期：2026-10-02
+
+当前视觉联调默认配置为 `MINIMAL_DEBUG_ENABLE=1`、
+`ROBOT_TUNING_TELEMETRY_ENABLE=0`，让 UART6 输出低频文本状态。要使用本页的
+VOFA 遥测，需关闭文本日志并打开 `ROBOT_TUNING_TELEMETRY_ENABLE`，避免同一串口混流。
 
 各速度、机械限位、PID 和发射射频的集中说明见
 [机器人核心控制参数索引](../motor/control_parameter_reference.md)。

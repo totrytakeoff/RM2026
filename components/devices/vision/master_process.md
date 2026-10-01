@@ -1,5 +1,9 @@
 # master_process
 
+> 兼容说明：该模块保留给历史 demo，已从正式 `rm_components_runtime` 移到
+> `rm_components_compat`。正式固件使用 `vision_link` / `vision_protocol`，不要在
+> 新应用中同时初始化两套视觉链路。
+
 > TODO:
 >
 > 1. 补全标志位解析和发送设置的代码

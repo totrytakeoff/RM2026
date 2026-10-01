@@ -1,9 +1,11 @@
 # infantry_minimal 裸机对照行为规范
 
-文档更新日期：2026-07-23
+文档更新日期：2026-10-02
 
 本 target 只保留裸机轮询调度外壳，实际机器人行为直接复用
-`applications/robot`，不得再建立一套独立行为事实源。
+`applications/robot`，不得再建立一套独立行为事实源。启动时先选择延后 CAN/UART
+dispatch；每轮在 `RobotApp_MotorStep()` 前调用 `CANDispatchPending(0)` 和
+`USARTDispatchPending(0)`，与正式 FreeRTOS 电机任务保持同一入站顺序。
 
 ## 1. 输入选择与映射
 
@@ -15,7 +17,8 @@
 ## 2. 安全与失效处理
 - 统一安全停止函数 `RobotApp_ForceSafeStop()` 负责停止底盘、云台、发射。
 - 输入离线、急停触发、关键联锁拒绝时，都进入统一安全停止路径。
-- 主循环保持 `DaemonTask()` 与 `DJIMotorControl()` 常驻调用。
+- 主循环保持 `DaemonTask()` 与 `RobotApp_MotorStep()` 常驻调用；后者统一封装
+  `DJIMotorControl()`，避免对照外壳绕过应用层所有权。
 - 启动或故障恢复后禁止自动恢复。必须先观测到“SA/SB/SC/SD 全下且四轴回中”，
   再产生新的 SA 上拨沿。
 

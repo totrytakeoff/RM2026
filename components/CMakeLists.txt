@@ -27,8 +27,9 @@ add_library(rm_components_runtime STATIC
     devices/remote/dt7/dt7_remote.c
     devices/remote/et08/et08_remote.c
     devices/remote/vt/vt_remote.c
-    devices/vision/master_process.c
-    devices/vision/serial_frame_protocol.c
+    devices/vision/vision_link.c
+    devices/vision/vision_link_state.c
+    devices/vision/vision_protocol.c
     services/device_health/daemon.c
 )
 add_library(RM::components_runtime ALIAS rm_components_runtime)
@@ -64,7 +65,8 @@ target_compile_options(rm_components_runtime PRIVATE ${MCU_FLAGS})
 
 # Historical drivers retained only for board demos and regression builds.
 # They remain reachable through RM::components, but not through the formal
-# runtime target above.
+# runtime target above.  The old vision protocol is kept here for legacy
+# demos; the production target uses vision_link + vision_protocol only.
 add_library(rm_components_compat STATIC
     devices/actuator/buzzer/buzzer.c
     devices/communication/can_comm/can_comm.c
@@ -83,6 +85,8 @@ add_library(rm_components_compat STATIC
     devices/rangefinder/tfmini_plus/tfminiplus.c
     devices/referee/referee_UI.c
     devices/referee/referee_task.c
+    devices/vision/master_process.c
+    devices/vision/serial_frame_protocol.c
     services/command/std_cmd.c
     services/message_bus/message_center.c
     services/transport/unicomm/unicomm.c
@@ -104,6 +108,7 @@ target_include_directories(rm_components_compat PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/power/supercap
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/rangefinder/tfmini_plus
     ${CMAKE_CURRENT_SOURCE_DIR}/devices/remote
+    ${CMAKE_CURRENT_SOURCE_DIR}/devices/vision
     ${CMAKE_CURRENT_SOURCE_DIR}/services/command
     ${CMAKE_CURRENT_SOURCE_DIR}/services/message_bus
     ${CMAKE_CURRENT_SOURCE_DIR}/services/transport/unicomm

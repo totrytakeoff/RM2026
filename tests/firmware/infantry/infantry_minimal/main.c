@@ -22,8 +22,10 @@
 
 #include "robot_app.h"
 #include "robot_config.h"
+#include "bsp_can.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
+#include "bsp_usart.h"
 #include "daemon.h"
 #include "dji_motor.h"
 #include "ins_task.h"
@@ -74,6 +76,13 @@ int main(void)
     // BSP初始化
     DWT_Init(168);
     DaemonServiceInit();
+    /* Keep the bare-metal comparison shell on the same bounded ingress path
+     * as the formal FreeRTOS firmware.  RobotApp_Init() registers UART/CAN
+     * endpoints, so the dispatch mode must be selected first. */
+    if (!CANConfigureDispatch(CAN_DISPATCH_DEFERRED) ||
+        !USARTConfigureDispatch(USART_DISPATCH_DEFERRED)) {
+        Error_Handler();
+    }
 #if MINIMAL_DEBUG_ENABLE && ((MINIMAL_DEBUG_MODE & MINIMAL_DEBUG_MODE_TEXT) != 0)
     BSPLogInit();
 #endif
@@ -86,6 +95,9 @@ int main(void)
     while (1) {
         INS_Task();
         DaemonTask();
+        /* Parse bounded ingress snapshots before consuming motor feedback. */
+        (void)CANDispatchPending(0U);
+        (void)USARTDispatchPending(0U);
         RobotApp_MotorStep();
 
         uint32_t now = DWT_GetTimeline_ms();

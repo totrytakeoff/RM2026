@@ -3,9 +3,12 @@
 #include <math.h>
 #include <stddef.h>
 
+#include "gimbal_units.h"
+
 static bool ConfigIsValid(const GimbalAxisStateConfig *config)
 {
-    return config != NULL && isfinite(config->brake_speed_epsilon) &&
+    return config != NULL &&
+           Gimbal_FloatIsFinite(config->brake_speed_epsilon) &&
            config->brake_speed_epsilon >= 0.0f &&
            config->brake_stable_count_required > 0U &&
            config->brake_timeout_ms > 0U;
@@ -34,7 +37,7 @@ bool GimbalAxisState_Update(
     if (state == NULL) {
         return false;
     }
-    if (!ConfigIsValid(config) || !isfinite(speed_feedback)) {
+    if (!ConfigIsValid(config) || !Gimbal_FloatIsFinite(speed_feedback)) {
         GimbalAxisState_Init(state);
         return false;
     }

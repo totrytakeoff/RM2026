@@ -16,7 +16,6 @@
 #include "tim.h"
 #include "user_lib.h"
 #include "general_def.h"
-#include "master_process.h"
 #include "rm_critical.h"
 
 #include <string.h>
@@ -272,7 +271,6 @@ void INS_Task(void)
 
         INS_PublishSnapshot();
 
-        VisionSetAltitude(INS.Yaw, INS.Pitch, INS.Roll);
     }
 
     // temperature control

@@ -14,6 +14,8 @@
 #include "tuning_telemetry.h"
 #include "ins_task.h"
 #include "main.h"
+#include "usart.h"
+#include "vision_link.h"
 
 Robot_Context_t g_robot;
 
@@ -65,6 +67,30 @@ bool RobotApp_Init(void)
     gimbal_ready = Gimbal_Init();
     shoot_ready = Shoot_Init();
 
+    /*
+     * 视觉链路：与裁判系统共用 USART1，由 VISION_ENABLE / REFEREE_ENABLE
+     * 编译期互斥保证不会同时注册。注册失败只记日志，不阻断启动——
+     * 视觉是可降级的可选链路，不应把整车拉下水。
+     */
+#if VISION_ENABLE
+    {
+        static const RmVisionLinkConfig vision_config = {
+            .uart = &VISION_UART_HANDLE,
+            .timeout_ms = VISION_ONLINE_TIMEOUT_MS,
+            .initial_grace_ms = VISION_STARTUP_GRACE_MS,
+        };
+
+        if (!RmVisionLink_Init(&vision_config)) {
+            MDBG_SYS("ERROR vision link init failed; auto-aim unavailable");
+        } else {
+            MDBG_SYS("vision link ready uart=%u baud=%u timeout=%ums",
+                     (unsigned)VISION_UART_PORT,
+                     (unsigned)VISION_BAUDRATE,
+                     (unsigned)VISION_ONLINE_TIMEOUT_MS);
+        }
+    }
+#endif
+
     g_robot.initialized = (input_ready && chassis_ready && gimbal_ready &&
                            shoot_ready)
                               ? 1U
@@ -99,10 +125,30 @@ void RobotApp_ControlStep(uint32_t now_ms)
     bool all_motors_healthy;
     uint8_t motor_health_mask;
 
-    (void)now_ms;
     Input_GetData(&input);
     MinimalReferee_Update();
     g_robot.referee = *MinimalReferee_GetData();
+
+#if VISION_ENABLE
+    /*
+     * 自瞄模式由遥控 SB 中位选择。链路按整机模式决定是否接受目标帧，
+     * 并把姿态回传给上位机。视觉不参与安全判定，因此这一段不改变
+     * 下面的安全输入构造与执行顺序。
+     */
+    {
+        attitude_t vision_attitude = {0};
+        bool vision_attitude_ok = INS_Read(&vision_attitude);
+
+        RmVisionLink_SetAutoAim(input.control_mode == ROBOT_CONTROL_AUTO_AIM);
+        RmVisionLink_SetEnemyColor(ROBOT_ENEMY_COLOR);
+        RmVisionLink_SetBulletSpeed((uint8_t)ROBOT_BULLET_SPEED_MPS);
+        RmVisionLink_Update(
+            now_ms,
+            vision_attitude_ok ? vision_attitude.YawTotalAngle : 0.0f,
+            vision_attitude_ok ? vision_attitude.Pitch : 0.0f,
+            vision_attitude_ok ? vision_attitude.Roll : 0.0f);
+    }
+#endif
 
     safety_inputs.initialization_complete = (g_robot.initialized != 0U);
     safety_inputs.input_online = (input.online != 0U);

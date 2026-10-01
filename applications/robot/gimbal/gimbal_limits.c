@@ -3,10 +3,12 @@
 #include <math.h>
 #include <stddef.h>
 
+#include "gimbal_units.h"
+
 bool GimbalPitchLimit_IsConfigValid(const GimbalPitchLimitConfig *config)
 {
-    if (config == NULL || !isfinite(config->min_angle_deg) ||
-        !isfinite(config->max_angle_deg) ||
+    if (config == NULL || !Gimbal_FloatIsFinite(config->min_angle_deg) ||
+        !Gimbal_FloatIsFinite(config->max_angle_deg) ||
         config->max_angle_deg <= config->min_angle_deg) {
         return false;
     }
@@ -19,10 +21,10 @@ float GimbalPitchLimit_ClampAngleReference(
     float current_imu_pitch_deg,
     const GimbalPitchLimitConfig *config)
 {
-    if (!isfinite(current_imu_pitch_deg)) {
+    if (!Gimbal_FloatIsFinite(current_imu_pitch_deg)) {
         return 0.0f;
     }
-    if (!isfinite(requested_imu_angle_deg) || !imu_angle_valid ||
+    if (!Gimbal_FloatIsFinite(requested_imu_angle_deg) || !imu_angle_valid ||
         !GimbalPitchLimit_IsConfigValid(config)) {
         return current_imu_pitch_deg;
     }
@@ -45,16 +47,16 @@ float GimbalPitchLimit_AdvanceAngleReference(
     float intent;
     float next_reference;
 
-    if (!isfinite(current_reference_deg) ||
+    if (!Gimbal_FloatIsFinite(current_reference_deg) ||
         !GimbalPitchLimit_IsConfigValid(config)) {
         return 0.0f;
     }
 
     current_reference_deg = GimbalPitchLimit_ClampAngleReference(
         current_reference_deg, true, current_reference_deg, config);
-    if (!isfinite(normalized_rate_intent) ||
-        !isfinite(max_rate_deg_s) || max_rate_deg_s < 0.0f ||
-        !isfinite(elapsed_s) || elapsed_s < 0.0f) {
+    if (!Gimbal_FloatIsFinite(normalized_rate_intent) ||
+        !Gimbal_FloatIsFinite(max_rate_deg_s) || max_rate_deg_s < 0.0f ||
+        !Gimbal_FloatIsFinite(elapsed_s) || elapsed_s < 0.0f) {
         return current_reference_deg;
     }
 

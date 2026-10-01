@@ -72,6 +72,9 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
     conf.recv_buff_size = VISION_RECV_SIZE;
     conf.usart_handle = _handle;
     vision_usart_instance = USARTRegister(&conf);
+    if (vision_usart_instance == NULL) {
+        return NULL;
+    }
 
     // 为master process注册daemon,用于判断视觉通信是否离线
     DaemonConfig daemon_conf = {
@@ -80,6 +83,12 @@ Vision_Recv_s *VisionInit(UART_HandleTypeDef *_handle)
         .timeout_ms = 100U,
     };
     vision_daemon_instance = DaemonRegister(&daemon_conf);
+    if (vision_daemon_instance == NULL) {
+        if (USARTUnregister(vision_usart_instance)) {
+            vision_usart_instance = NULL;
+        }
+        return NULL;
+    }
 
     return &recv_data;
 }

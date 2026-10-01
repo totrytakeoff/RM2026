@@ -63,6 +63,17 @@ bool USARTConfigureDispatch(USARTDispatchMode mode);
 /** Register an exclusive UART endpoint in fixed static storage during startup. */
 USARTInstance *USARTRegister(const USART_Init_Config_s *config);
 
+/**
+ * Roll back the most recently registered UART endpoint during startup.
+ *
+ * Registration starts receive DMA immediately, so callers that fail a later
+ * initialization step must use this API instead of leaking the endpoint.
+ * Only the newest endpoint can be removed; this keeps all returned instance
+ * addresses stable for already initialized devices. Returns false if the
+ * endpoint is not the newest one or receive DMA cannot be stopped safely.
+ */
+bool USARTUnregister(USARTInstance *instance);
+
 /** Restart receive-to-idle DMA for an endpoint. */
 uint8_t USARTServiceInit(USARTInstance *instance);
 

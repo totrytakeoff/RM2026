@@ -351,3 +351,81 @@ target_compile_options(test_pid_reset PRIVATE
 )
 
 add_test(NAME pid_reset COMMAND test_pid_reset)
+
+add_library(rm_vision_protocol_host STATIC
+    ../../components/devices/vision/vision_protocol.c
+)
+target_include_directories(rm_vision_protocol_host PUBLIC
+    ../../components/devices/vision
+)
+target_compile_features(rm_vision_protocol_host PUBLIC c_std_11)
+target_compile_options(rm_vision_protocol_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_vision_protocol
+    vision_protocol_test.c
+)
+target_link_libraries(test_vision_protocol PRIVATE
+    rm_vision_protocol_host
+    m
+)
+target_compile_features(test_vision_protocol PRIVATE c_std_11)
+target_compile_options(test_vision_protocol PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_test(NAME vision_protocol COMMAND test_vision_protocol)
+
+add_library(rm_vision_link_state_host STATIC
+    ../../components/devices/vision/vision_link_state.c
+)
+target_include_directories(rm_vision_link_state_host PUBLIC
+    ../../components/devices/vision
+)
+target_compile_features(rm_vision_link_state_host PUBLIC c_std_11)
+target_compile_options(rm_vision_link_state_host PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_executable(test_vision_link_state
+    vision_link_state_test.c
+)
+target_link_libraries(test_vision_link_state PRIVATE
+    rm_vision_link_state_host
+)
+target_compile_features(test_vision_link_state PRIVATE c_std_11)
+target_compile_options(test_vision_link_state PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+add_test(NAME vision_link_state COMMAND test_vision_link_state)
+
+add_executable(test_vision_aim
+    vision_aim_test.c
+)
+target_include_directories(test_vision_aim PRIVATE
+    ../../applications/robot/gimbal
+)
+target_compile_features(test_vision_aim PRIVATE c_std_11)
+target_compile_options(test_vision_aim PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+target_link_libraries(test_vision_aim PRIVATE m)
+
+add_test(NAME vision_aim COMMAND test_vision_aim)

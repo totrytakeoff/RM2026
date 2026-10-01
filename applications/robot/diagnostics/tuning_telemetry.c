@@ -202,10 +202,12 @@ uint16_t TuningTelemetry_GetShootStateChannels(float channels[])
     return index;
 }
 
+#if ROBOT_TUNING_TELEMETRY_ENABLE
 static uint16_t TuningTelemetry_FillChannels(float channels[])
 {
     return TuningTelemetry_GetShootStateChannels(channels);
 }
+#endif
 
 bool TuningTelemetry_Init(void)
 {

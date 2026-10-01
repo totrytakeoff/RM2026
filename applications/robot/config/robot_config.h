@@ -22,7 +22,14 @@
  * 机器人应用调试系统配置
  *============================================================================*/
 #ifndef MINIMAL_DEBUG_ENABLE
-#define MINIMAL_DEBUG_ENABLE                        0U /* 通用文本/RTT日志总开关 */
+/*
+ * [核心-调试] 视觉上板联调期临时打开：自瞄状态只有文本日志能看到
+ * （aim ACTIVE/idle + rx/crc/tgt/rej 增量计数）。
+ * 与调参遥测互斥——文本日志和 VOFA 帧都在 USART6 上，同时开会互相穿插成乱码，
+ * 因此打开本开关时必须同时把 ROBOT_TUNING_TELEMETRY_ENABLE 置 0。
+ * 联调结束、不再需要看自瞄状态时，两个开关各自恢复原值即可。
+ */
+#define MINIMAL_DEBUG_ENABLE                        1U /* 通用文本/RTT日志总开关 */
 #endif
 
 #define MINIMAL_DEBUG_MODE_TEXT                     (1U << 0) /* [固定] 文本日志位 */
@@ -49,7 +56,11 @@
  * 当前使用 UART6 向 VOFA+ 发送 JustFloat 自定义通道。
  */
 #ifndef ROBOT_TUNING_TELEMETRY_ENABLE
-#define ROBOT_TUNING_TELEMETRY_ENABLE            1U /* [核心-调试] 独立二进制遥测总开关 */
+/*
+ * 视觉联调期关闭：让出 USART6 给通用文本日志（见 MINIMAL_DEBUG_ENABLE）。
+ * 需要 VOFA 波形时把它改回 1U，并同时关闭文本日志。
+ */
+#define ROBOT_TUNING_TELEMETRY_ENABLE            0U /* [核心-调试] 独立二进制遥测总开关 */
 #endif
 #define ROBOT_TUNING_UART_PORT                    6U      /* [固定] 当前使用 USART6 */
 #define ROBOT_TUNING_UART_BAUDRATE                115200U /* [固定] VOFA+ 波特率 */
@@ -267,6 +278,71 @@
 #endif
 
 /*============================================================================
+ * 视觉链路配置
+ *
+ * [核心-联锁] VISION_ENABLE 与 REFEREE_ENABLE 共用 USART1，编译期互斥。
+ * 裁判系统接口本身不做任何修改；视觉启用时裁判保持关闭即可。
+ *
+ * 调试阶段上位机（Ubuntu）需要串口权限：
+ *   sudo usermod -aG dialout $USER     # 重新登录后生效
+ * 或临时：sudo chmod 666 /dev/ttyACM0 /dev/ttyUSB0
+ *
+ * 协议基线见 docs/vision/vision_protocol.md。
+ *============================================================================*/
+#ifndef VISION_ENABLE
+#define VISION_ENABLE                   1U      /* [核心-联锁] 视觉通信总开关 */
+#endif
+#define VISION_UART_PORT                1U      /* [固定] 当前使用 USART1 */
+#define VISION_BAUDRATE                 921600U /* [固定] 与上位机一致，8N1 */
+
+/* 上位机 60~120 Hz 且非严格定频，超时需容忍抖动；选 250 ms 约 15 个周期。 */
+#define VISION_ONLINE_TIMEOUT_MS        250U    /* [保护] 无有效目标帧则视觉离线 */
+/* 视觉栈与机器人分开上电，需给上位机启动与相机取流留出时间。 */
+#define VISION_STARTUP_GRACE_MS         3000U   /* [保护] 启动宽限，期间不判离线 */
+/* 自瞄模式下按此周期打印一次链路增量计数（rx/crc/tgt/rej）。 */
+#define VISION_STATUS_LOG_PERIOD_MS     1000U   /* [核心-调试] 自瞄状态打印周期 */
+
+/* [核心-调试] Yaw 跟随方向。目标在云台系下偏左（y 为正）时云台应向左转。
+ * 本车 IMU yaw 为多圈累计角、正方向待实板确认：若不接管时云台稳定向错误
+ * 方向转到底，把这里改为 0U 即可，无需改动解算与测试。 */
+#ifndef VISION_YAW_FOLLOW_ENABLE
+#define VISION_YAW_FOLLOW_ENABLE        1U
+#endif
+
+#if (VISION_ENABLE > 1U) || (VISION_ONLINE_TIMEOUT_MS == 0U) || \
+    (VISION_STARTUP_GRACE_MS == 0U) || (VISION_STATUS_LOG_PERIOD_MS == 0U) || \
+    (VISION_YAW_FOLLOW_ENABLE > 1U)
+#error "VISION_* options must be 1/0 and timeouts nonzero"
+#endif
+
+#if VISION_UART_PORT == 1U
+#define VISION_UART_HANDLE huart1
+#elif VISION_UART_PORT == 6U
+#define VISION_UART_HANDLE huart6
+#else
+#error "Unsupported VISION_UART_PORT, use 1/6."
+#endif
+
+#if VISION_ENABLE && REFEREE_ENABLE
+#error "Vision link and referee share USART1; enable only one"
+#endif
+
+#if VISION_ENABLE && (VISION_UART_PORT == MINIMAL_DEBUG_UART_PORT) && \
+    MINIMAL_DEBUG_ENABLE
+#error "Vision UART conflicts with the debug console"
+#endif
+
+#if VISION_ENABLE && (VISION_UART_PORT == ROBOT_TUNING_UART_PORT) && \
+    ROBOT_TUNING_TELEMETRY_ENABLE
+#error "Vision UART conflicts with tuning telemetry"
+#endif
+
+/* 遥控后端 ET08/DT7 固定占用 USART3（同上文 3U 的既有写法）。 */
+#if VISION_ENABLE && (VISION_UART_PORT == 3U)
+#error "Vision UART conflicts with the remote-control receiver"
+#endif
+
+/*============================================================================
  * 底盘参数
  *============================================================================*/
 /*
@@ -374,6 +450,26 @@
 
 /* [保护] 控制任务异常延迟时，Pitch 单次目标积分最多按 40 ms 计算。 */
 #define PITCH_TARGET_INTEGRATION_MAX_DT_MS 40U
+
+/*============================================================================
+ * 云台自瞄接管参数
+ *
+ * 视觉下线角度目标是"角速度命令"而非绝对角，因此这里只限制视觉角度参考
+ * 相对当前姿态的单周期最大推进量。取值为手动满摇杆同量级再放宽约 3 倍：
+ * 既能跟上目标阶跃，又不会因目标跳变或跟踪器重收敛把云台猛打。
+ *============================================================================*/
+#define VISION_MAX_RATE_DEG_S          2800.0f /* [核心-调试] 角度参考最大推进速率 */
+#define VISION_MAX_RATE_PITCH_DEG_S    1200.0f /* [核心-调试] Pitch 推进速率上限 */
+
+/* [保护] 目标水平距离下限：低于该值方位角与仰角无定义，放弃该帧。 */
+#define VISION_MIN_HORIZONTAL_DIST_M   0.10f
+
+/*
+ * [核心-调试] 自瞄所需的上位机侧参数。裁判系统启用后应改为从比赛信息读取，
+ * 当前调试阶段先用常量，保证视觉在无裁判链路时也能独立跑通。
+ */
+#define ROBOT_ENEMY_COLOR               0U      /* 0=红方 1=蓝方 */
+#define ROBOT_BULLET_SPEED_MPS          15U     /* 弹速 m/s，需实测标定 */
 
 /*
  * [PID-Yaw 角度外环] IMU 角误差(deg) -> 速度参考(deg/s)。

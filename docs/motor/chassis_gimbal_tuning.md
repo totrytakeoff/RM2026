@@ -1,6 +1,6 @@
 # 机器人底盘与云台调参说明
 
-更新日期：2026-07-23
+更新日期：2026-10-02
 
 当前全部核心数值、单位、派生公式和发射参数统一收录在
 [机器人核心控制参数索引](control_parameter_reference.md)。本文重点解释底盘与云台
@@ -132,7 +132,8 @@ Pitch 与 Yaw 的策略不同：Pitch 全程角度串级，Yaw 仍使用“速�
 `PITCH_STARTUP_CENTER_DEG=0`，
 让云台回到 IMU 0°；遥控输入只推进该角度目标，不切换控制环。
 
-通用文本日志当前默认关闭。连续调参使用独立 UART6/VOFA+ 任务，通道定义见
+视觉联调配置默认开启低频通用文本日志并关闭 VOFA 遥测；连续调参时切换为关闭文本日志、
+开启独立 UART6/VOFA+ 任务。通道定义见
 [机器人正式固件 UART 调参遥测](../debug/tuning_telemetry.md)。Yaw/Pitch 已使用相同的
 `GimbalAxisTuningSnapshot`；需要 Pitch 专项变量时，在遥测入口选择 `gimbal.pitch` 即可，
 无需再访问电机内部对象。

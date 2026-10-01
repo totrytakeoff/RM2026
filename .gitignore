@@ -36,6 +36,10 @@ config/local/
 
 #other
 
+# Python tooling
+__pycache__/
+*.py[cod]
+
 node_modules/
 
 dist/

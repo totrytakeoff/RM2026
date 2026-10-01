@@ -25,6 +25,11 @@ USARTInstance *endpoint = USARTRegister(&config);
 注册或 DMA 启动失败时返回 `NULL`。`USARTServiceInit()` 用于恢复接收；HAL
 报告 busy 时会先中止陈旧接收，再尝试启动一次。
 
+启动阶段如果后续设备注册失败，可对刚注册的最后一个端点调用
+`USARTUnregister(endpoint)`。该操作先尝试停止接收 DMA，再释放端点和收件箱槽位；
+为了保持已经返回的实例地址稳定，只允许按后进先出顺序注销；DMA 无法安全停止时
+返回 `false` 并保留原端点。
+
 ## 回调上下文
 
 系统提供两种全局分发模式：

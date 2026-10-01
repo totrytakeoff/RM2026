@@ -1,6 +1,6 @@
 # 步兵 FreeRTOS 迁移基线
 
-更新日期：2026-07-23
+更新日期：2026-10-02
 
 ## 1. 范围
 
@@ -10,7 +10,8 @@
 步兵行为唯一事实源为 `applications/robot`：
 
 - `app.elf` 通过全静态 FreeRTOS 任务执行该逻辑。
-- `test_infantry_minimal` 在原裸机调度外壳中执行同一套应用和电机阶段 API，用于实板行为对照。
+- `test_infantry_minimal` 在原裸机调度外壳中执行同一套应用和电机阶段 API，用于实板行为对照；
+  两个入口都在注册端点前选择延后 CAN/UART dispatch，并在电机阶段先派发有界 inbox。
 - 废弃 `Src/application` 已删除，仅从 Git 历史追溯。
 
 ## 2. 当前控制行为
@@ -56,14 +57,17 @@ high-water 记录前保守设置。
 - 连续三次释放间隔超过周期的 125%，或工作执行时间达到/超过任务周期；
 - 历史剩余栈低于 64 words。
 
-`diagnostics` 和 `tuning_uart` 可观测但不作为安全关键任务。通用诊断日志当前默认关闭；
+`diagnostics` 和 `tuning_uart` 可观测但不作为安全关键任务。当前视觉联调配置默认开启
+低频通用文本日志、关闭 `tuning_uart`，避免两种数据流争用 UART6；需要 VOFA 波形时
+再切换为 `MINIMAL_DEBUG_ENABLE=0`、`ROBOT_TUNING_TELEMETRY_ENABLE=1`。
 `tuning_uart` 使用 UART6 DMA，串口忙时丢帧而不阻塞控制任务。
 
 ## 4. 已建立的运行时约束
 
 - CAN、UART、设备健康、DJI 电机、EKF、诊断格式化和 FreeRTOS 任务使用静态存储。
 - 设备超时使用单调毫秒截止，不依赖健康任务轮询频率。
-- 正式固件在注册设备前选择延后 CAN/UART dispatch；中断只保留有界数据，5 ms 电机任务解析。
+- 正式固件和 `test_infantry_minimal` 在注册设备前选择延后 CAN/UART dispatch；中断只保留
+  有界数据，裸机循环与 FreeRTOS 的 5 ms 电机阶段都先解析 inbox。
 - 当前选中的统一遥控快照、DJI 反馈和 INS 通过一致快照跨任务读取。
 - 20 ms 应用任务发布每个电机的完整命令；5 ms 电机任务独占 PID 运行态和 CAN 输出。
 - 正式组合启用 100 ms 命令租约，即使控制任务卡死，电机任务也会拒绝过期命令。
@@ -88,8 +92,11 @@ ctest --test-dir build-host --output-on-failure
 - 正式 `app.elf` 成功构建；
 - 裸机对照 `test_infantry_minimal` 成功构建；
 - 30 个嵌入式 demo/回归 target 全部成功构建；
-- 10 个主机测试程序全部通过；
-- Debug 正式固件 RAM 51,480 字节（39.28%），Flash 97,808 字节（9.33%）；
+- 16 个主机测试 target 已注册；运行结果以独立 `ctest --test-dir build-host --output-on-failure`
+  记录为准；
+- 当前默认视觉联调配置（`VISION_ENABLE=1`、文本日志开启、VOFA 关闭）的 Debug
+  `app.elf` 构建报告 RAM 55,272 字节、Flash 109,392 字节；资源数随视觉/日志开关变化，
+  以上一轮链接器输出为准；
 - 8 KiB 主栈预留、0 字节 C 堆预留，并包含一份 `.noinit` HardFault 保留记录；
 - 正式镜像不链入 C/FreeRTOS 堆分配、libc 格式化、C++ 动态分配、异常、RTTI 或静态局部对象 guard 运行时符号；
 - 嵌入式构建无 libnosys syscall 警告，ELF LOAD 段无 RWX。
@@ -106,7 +113,7 @@ ctest --test-dir build-host --output-on-failure
   执行层限幅，SA 下位时绝不恢复。
 - [ ] 分别拔掉一个电机反馈，确认日志报错、该电机输出归零且其余在线电机仍可控制。
 - [ ] 暂停控制任务后，所有 DJI 命令槽在 105 ms 内归零。
-- [ ] SB 下位为云台—底盘跟随，中位保持视觉自瞄预留的安全行为，上位为小陀螺。
+- [ ] SB 下位为云台—底盘跟随，中位为视觉自瞄（离线时安全降级为跟随），上位为小陀螺。
 - [ ] yaw/pitch 反馈方向正确；Pitch 正参考必须产生正 GyroX，`hold_target` 与 IMU Pitch
   同向且可直接比较，软/硬限位可阻止越界并允许向安全区退出。
 - [ ] SC 下位禁用发射，中位单发，上位连发；SD 上拨触发，单发长按不会重复排队。

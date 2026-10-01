@@ -54,7 +54,8 @@
 - 历史剩余栈低于 64 words。
 
 `diagnostics` 和 `tuning_uart` 记录同样的指标，但作为低优先级观测任务，不参与安全联锁。
-当前通用日志默认关闭；`tuning_uart` 使用 DMA，UART 忙时丢帧。
+当前视觉联调配置默认开启低频通用文本日志、关闭 `tuning_uart`，避免 UART6 混流；
+连续调参时再切换为关闭文本日志并启用 DMA 遥测，UART 忙时丢帧。
 `RobotTasks_GetHealthSnapshot()` 向遥测和调试器提供一致快照。
 
 ## 自动验证

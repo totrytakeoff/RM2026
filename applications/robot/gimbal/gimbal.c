@@ -25,6 +25,7 @@
 #include "rm_critical.h"
 #include "rm_time.h"
 #include "user_lib.h"
+#include "vision_link.h"
 
 static DJIMotorInstance *motor_yaw = NULL;
 static DJIMotorInstance *motor_pitch = NULL;
@@ -44,6 +45,17 @@ static float yaw_base_rate_estimate_rad_s = 0.0f;
 static uint8_t yaw_base_rate_initialized = 0U;
 static float pitch_current_ff = 0.0f;
 static uint32_t pitch_target_last_update_ms = 0U;
+
+/*
+ * 自瞄接管：视觉在线且 TRACKING=1 时，角度目标改由视觉下发。
+ * 链路本身做自瞄开关门控（VISION_ENABLE=0 时 RmVisionLink_IsOnline()
+ * 恒为 false），因此这里再并联一个编译期判断，关闭视觉时整段逻辑
+ * 不参与优化，也不影响现有手动路径。
+ */
+/* 本周期是否采纳了视觉角度目标。VISION_ENABLE=0 时恒为 0。 */
+static uint8_t vision_held = 0U;
+/* 上一周期是否仍由视觉拥有角度参考，用于检测降级边沿。 */
+static uint8_t vision_owner_last = 0U;
 /* These three values are written and consumed only by the 5 ms motor task. */
 static float motor_yaw_imu_angle_fdb = 0.0f;
 static float motor_yaw_imu_speed_fdb = 0.0f;
@@ -105,7 +117,9 @@ static float MotorSpeedRadS(const DJIMotorInstance *motor)
 
 static float ClampFloat(float value, float min_value, float max_value)
 {
-    if (!isfinite(value) || !isfinite(min_value) || !isfinite(max_value) ||
+    if (!Gimbal_FloatIsFinite(value) ||
+        !Gimbal_FloatIsFinite(min_value) ||
+        !Gimbal_FloatIsFinite(max_value) ||
         min_value > max_value) {
         return 0.0f;
     }
@@ -120,7 +134,8 @@ static float ClampFloat(float value, float min_value, float max_value)
 
 static float OutputLimitRatio(float output, float max_abs_output)
 {
-    if (!isfinite(output) || !isfinite(max_abs_output) ||
+    if (!Gimbal_FloatIsFinite(output) ||
+        !Gimbal_FloatIsFinite(max_abs_output) ||
         max_abs_output <= 0.0f) {
         return 0.0f;
     }
@@ -229,7 +244,7 @@ static float GetYawAngleFeedback(bool imu_available,
                                  const attitude_t *attitude)
 {
     if (imu_available && attitude != NULL &&
-        isfinite(attitude->YawTotalAngle)) {
+        Gimbal_FloatIsFinite(attitude->YawTotalAngle)) {
         return attitude->YawTotalAngle;
     }
     return MotorTotalAngle(motor_yaw);
@@ -286,7 +301,8 @@ static void UpdatePitchGravityFeedforward(bool imu_available,
 {
     float pitch_ff_raw;
 
-    if (motor_pitch == NULL || !imu_available || !isfinite(pitch_imu_deg)) {
+    if (motor_pitch == NULL || !imu_available ||
+        !Gimbal_FloatIsFinite(pitch_imu_deg)) {
         pitch_current_ff = 0.0f;
         return;
     }
@@ -306,7 +322,7 @@ static void UpdateYawBaseRateFeedforward(bool imu_available,
     float raw_base_rate_rad_s;
 
     if (!spin_mode || !imu_available || motor_yaw == NULL ||
-        !isfinite(imu_yaw_rate_rad_s)) {
+        !Gimbal_FloatIsFinite(imu_yaw_rate_rad_s)) {
         yaw_current_ff = 0.0f;
         yaw_base_rate_estimate_rad_s = 0.0f;
         yaw_base_rate_initialized = 0U;
@@ -316,7 +332,7 @@ static void UpdateYawBaseRateFeedforward(bool imu_available,
     motor_relative_rate_rad_s = MotorSpeedRadS(motor_yaw);
     raw_base_rate_rad_s = Gimbal_EstimateBaseRateRadS(
         imu_yaw_rate_rad_s, motor_relative_rate_rad_s);
-    if (!isfinite(raw_base_rate_rad_s)) {
+    if (!Gimbal_FloatIsFinite(raw_base_rate_rad_s)) {
         yaw_current_ff = 0.0f;
         yaw_base_rate_estimate_rad_s = 0.0f;
         yaw_base_rate_initialized = 0U;
@@ -359,23 +375,24 @@ bool Gimbal_Init(void)
         MDBG_GMB("invalid pitch limit config");
         return false;
     }
-    if (!isfinite(YAW_BASE_RATE_CURRENT_FF_K) ||
+    if (!Gimbal_FloatIsFinite(YAW_BASE_RATE_CURRENT_FF_K) ||
         YAW_BASE_RATE_CURRENT_FF_K < 0.0f ||
-        !isfinite(YAW_BASE_RATE_CURRENT_FF_MAX) ||
+        !Gimbal_FloatIsFinite(YAW_BASE_RATE_CURRENT_FF_MAX) ||
         YAW_BASE_RATE_CURRENT_FF_MAX < 0.0f ||
-        !isfinite(YAW_BASE_RATE_FF_LPF) ||
+        !Gimbal_FloatIsFinite(YAW_BASE_RATE_FF_LPF) ||
         YAW_BASE_RATE_FF_LPF < 0.0f ||
         YAW_BASE_RATE_FF_LPF >= 1.0f ||
-        !isfinite(YAW_BASE_RATE_FF_DEADBAND_RAD_S) ||
+        !Gimbal_FloatIsFinite(YAW_BASE_RATE_FF_DEADBAND_RAD_S) ||
         YAW_BASE_RATE_FF_DEADBAND_RAD_S < 0.0f ||
-        !isfinite(YAW_SPEED_I_MAX) || YAW_SPEED_I_MAX < 0.0f ||
+        !Gimbal_FloatIsFinite(YAW_SPEED_I_MAX) || YAW_SPEED_I_MAX < 0.0f ||
         YAW_SPEED_I_MAX > YAW_SPEED_MAX_OUT ||
-        !isfinite(PITCH_SPEED_I_MAX) || PITCH_SPEED_I_MAX < 0.0f ||
+        !Gimbal_FloatIsFinite(PITCH_SPEED_I_MAX) ||
+        PITCH_SPEED_I_MAX < 0.0f ||
         PITCH_SPEED_I_MAX > PITCH_SPEED_MAX_OUT ||
-        !isfinite(PITCH_GRAVITY_FF_K) ||
-        !isfinite(PITCH_GRAVITY_FF_MAX) ||
+        !Gimbal_FloatIsFinite(PITCH_GRAVITY_FF_K) ||
+        !Gimbal_FloatIsFinite(PITCH_GRAVITY_FF_MAX) ||
         PITCH_GRAVITY_FF_MAX < 0.0f ||
-        !isfinite(PITCH_FF_LPF) || PITCH_FF_LPF < 0.0f ||
+        !Gimbal_FloatIsFinite(PITCH_FF_LPF) || PITCH_FF_LPF < 0.0f ||
         PITCH_FF_LPF >= 1.0f ||
         PITCH_MOTOR_OUTPUT_REVERSED > 1U ||
         (YAW_SPEED_MAX_OUT + YAW_BASE_RATE_CURRENT_FF_MAX) >
@@ -495,6 +512,8 @@ bool Gimbal_Init(void)
     }
 
     ResetYawState();
+    vision_held = 0U;
+    vision_owner_last = 0U;
     if (motor_yaw != NULL) {
         bool imu_available = ReadAttitude(&attitude);
 
@@ -545,6 +564,57 @@ void Gimbal_MotorStep(void)
         Gimbal_RadPerSecToDegPerSec(attitude.Gyro[0]);
 }
 
+#if VISION_ENABLE
+/*
+ * 自瞄状态打印，用来回答实板联调时唯一真正要紧的问题：
+ * "为什么没接管"。计数按**每秒增量**打印而不是累计值——累计值要靠人工
+ * 做差才知道当前还在不在收帧，而这恰恰是最常需要看的一条。
+ * 各字段的含义（均为最近一个统计周期内的增量）：
+ *   rx   = 0          → 一个字节都没收到：接线 / 波特率 / 上位机没在发
+ *   crc/fmt > 0       → 收到了但帧不同步：协议版本或长度字段不一致
+ *   tgt > 0 但 idle   → 目标帧正常，是 TRACKING=0 或云台不在角度保持态
+ *   rej > 0           → 目标被判为非有限值（NaN/Inf），算法侧发散了
+ * 非自瞄模式下不打印，但基线仍跟随更新，避免刚切进自瞄时把历史计数
+ * 当成"这一秒收到的帧"打出来。
+ */
+static void LogVisionStatus(uint32_t now_ms, bool target_ready)
+{
+    static uint32_t last_log_ms = 0U;
+    static RmVisionLinkStats last = {0};
+    RmVisionLinkStats stats;
+    bool report;
+
+    if (!RmVisionLink_GetStats(&stats)) {
+        return;
+    }
+
+    report = (current_mode == ROBOT_CONTROL_AUTO_AIM) &&
+             ((now_ms - last_log_ms) >= VISION_STATUS_LOG_PERIOD_MS);
+    if (report) {
+        uint32_t reject_now =
+            stats.rejected_not_armed + stats.rejected_nonfinite;
+        uint32_t reject_last =
+            last.rejected_not_armed + last.rejected_nonfinite;
+
+        last_log_ms = now_ms;
+        MDBG_GMB("aim %s online=%u rx=%u crc=%u fmt=%u tgt=%u rej=%u id=%u n=%u",
+                 target_ready ? "ACTIVE" : "idle",
+                 RmVisionLink_IsOnline() ? 1U : 0U,
+                 (unsigned)(stats.rx_frames - last.rx_frames),
+                 (unsigned)(stats.crc_errors - last.crc_errors),
+                 (unsigned)(stats.format_errors - last.format_errors),
+                 (unsigned)(stats.target_frames - last.target_frames),
+                 (unsigned)(reject_now - reject_last),
+                 (unsigned)stats.last_target_id,
+                 (unsigned)stats.last_armors_num);
+        last = stats;
+    } else if (current_mode != ROBOT_CONTROL_AUTO_AIM) {
+        last = stats;
+        last_log_ms = now_ms;
+    }
+}
+#endif
+
 void Gimbal_Update(Input_Data_t *input)
 {
     uint32_t now_ms;
@@ -571,9 +641,10 @@ void Gimbal_Update(Input_Data_t *input)
 
     now_ms = RmTime_NowMs();
     imu_available = ReadAttitude(&attitude);
-    if (!imu_available || !isfinite(attitude.Pitch) ||
-        !isfinite(attitude.YawTotalAngle) ||
-        !isfinite(attitude.Gyro[0]) || !isfinite(attitude.Gyro[2])) {
+    if (!imu_available || !Gimbal_FloatIsFinite(attitude.Pitch) ||
+        !Gimbal_FloatIsFinite(attitude.YawTotalAngle) ||
+        !Gimbal_FloatIsFinite(attitude.Gyro[0]) ||
+        !Gimbal_FloatIsFinite(attitude.Gyro[2])) {
         MDBG_GMB("stop by invalid IMU feedback");
         Gimbal_Stop();
         return;
@@ -613,6 +684,101 @@ void Gimbal_Update(Input_Data_t *input)
         yaw_speed_cmd = 0.0f;
     }
     UpdateYawControlMode(input, now_ms, imu_available, &attitude);
+
+    /* 自瞄接管只在角度保持态发生：速度态仍由操作手主导（见 §1.2）。 */
+    vision_held = 0U;
+#if VISION_ENABLE
+    {
+        RmVisionTarget target = {0};
+        bool target_ready;
+
+        /*
+         * RmVisionLink_HasTarget() 已包含全部安全门：链路在线、自瞄已开启、
+         * TRACKING=1、浮点状态有限。这里只需再确认云台处于角度保持态。
+         */
+        target_ready = (current_mode == ROBOT_CONTROL_AUTO_AIM) &&
+                       (yaw_control_state.mode == AXIS_CTRL_ANGLE) &&
+                       RmVisionLink_HasTarget() &&
+                       RmVisionLink_GetTarget(&target) &&
+                       RmVisionTarget_HasFiniteState(&target);
+
+        if (target_ready) {
+            /*
+             * 解算复用 gimbal_units.h 中已由主机测试覆盖的两个函数，
+             * 避免同一套符号换算在 gimbal.c 里再抄一遍。
+             * 退化输入（水平距离过小、非有限值）返回 NaN，此处据此放弃本帧。
+             *
+             * 方向开关只作用于 Yaw 推进量，不作用于解算本身：关掉 Yaw 跟随
+             * 仍需要 target_ready 为真，Pitch 跟随与日志行为都不受影响。
+             */
+            float yaw_target_deg = Gimbal_TargetYawReferenceDeg(
+                yaw_hold_ref, target.x, target.y);
+            float pitch_delta_deg = Gimbal_TargetPitchReferenceDeg(
+                target.x, target.y, target.z, VISION_MIN_HORIZONTAL_DIST_M);
+
+            if (Gimbal_FloatIsFinite(yaw_target_deg) &&
+                Gimbal_FloatIsFinite(pitch_delta_deg)) {
+                float yaw_delta_deg = yaw_target_deg - yaw_hold_ref;
+                float yaw_limit = VISION_MAX_RATE_DEG_S *
+                                  (float)MAIN_LOOP_PERIOD_MS * 0.001f;
+                float pitch_limit = VISION_MAX_RATE_PITCH_DEG_S *
+                                    (float)MAIN_LOOP_PERIOD_MS * 0.001f;
+
+                if (VISION_YAW_FOLLOW_ENABLE == 0U) {
+                    yaw_delta_deg = 0.0f;
+                }
+
+                /*
+                 * 单周期限幅：避免目标跳变或跟踪器重收敛时把角度参考甩到
+                 * 极限。按标称控制周期计算，任务延迟时步长偏小，只慢不猛。
+                 */
+                if (yaw_limit > GIMBAL_YAW_MAX_SPEED_DEG_S) {
+                    yaw_limit = GIMBAL_YAW_MAX_SPEED_DEG_S;
+                }
+                if (pitch_limit > GIMBAL_PITCH_MAX_SPEED_DEG_S) {
+                    pitch_limit = GIMBAL_PITCH_MAX_SPEED_DEG_S;
+                }
+
+                /*
+                 * 关键：推进的是**相对增量**，不是把 atan2 的绝对值直接赋给
+                 * 参考。上位机 tracker 工作在云台系(target_frame = gimbal_link)，
+                 * 输出的是相对当前指向的方位/仰角；Pitch 的解算结果已经是
+                 * 相对修正量，不能再减去当前 IMU Pitch，否则会重复计算姿态。
+                 * 直接取绝对值会在云台转动后把目标拽回旧方向，形成正反馈持续
+                 * 打偏。
+                 *
+                 * 这里**不能**用 WrapAngleDeg180：yaw_hold_ref 与
+                 * attitude.YawTotalAngle 同为多圈累计角，折到 [-180,180] 会在
+                 * 跨越边界时产生 360 deg 阶跃。
+                 */
+                yaw_hold_ref = Gimbal_AdvanceAngleRefDeg(
+                    yaw_hold_ref, yaw_delta_deg, yaw_limit);
+                pitch_hold_ref = GimbalPitchLimit_ClampAngleReference(
+                    Gimbal_AdvanceAngleRefDeg(pitch_hold_ref, pitch_delta_deg,
+                                              pitch_limit),
+                    true, attitude.Pitch, &pitch_limit_config);
+                vision_held = 1U;
+            }
+        }
+
+        /*
+         * 视觉接管结束后必须把角度参考对齐到当前姿态。否则 target_usable
+         * 虽然已经清零，角度环仍会继续追上一帧视觉目标，无法真正降级到
+         * 当前角度保持。该边沿同时覆盖 TRACKING 清零、链路超时和离开自瞄。
+         */
+        if (vision_owner_last != 0U && vision_held == 0U) {
+            yaw_hold_ref = GetYawAngleFeedback(imu_available, &attitude);
+            pitch_hold_ref = GimbalPitchLimit_ClampAngleReference(
+                attitude.Pitch, true, attitude.Pitch, &pitch_limit_config);
+            RequestYawPidReset(DJI_MOTOR_PID_RESET_ALL);
+            RequestPitchPidReset(DJI_MOTOR_PID_RESET_ALL);
+        }
+        vision_owner_last = vision_held;
+
+        LogVisionStatus(now_ms, target_ready);
+    }
+#endif
+
     if (yaw_control_state.mode == AXIS_CTRL_SPEED) {
         yaw_outer_loop = SPEED_LOOP;
         yaw_reference = yaw_speed_cmd;
@@ -636,9 +802,15 @@ void Gimbal_Update(Input_Data_t *input)
                        ? ClampFloat(input->gimbal_pitch_intent, -1.0f, 1.0f)
                        : 0.0f;
     pitch_target_rate_cmd = pitch_intent * GIMBAL_PITCH_MAX_SPEED_DEG_S;
-    pitch_hold_ref = GimbalPitchLimit_AdvanceAngleReference(
-        pitch_hold_ref, pitch_intent, GIMBAL_PITCH_MAX_SPEED_DEG_S,
-        (float)pitch_target_elapsed_ms * 0.001f, &pitch_limit_config);
+    /*
+     * 自瞄采纳时 pitch_hold_ref 已由视觉推进，这里不得再按手动意图积分，
+     * 否则操作手残留的摇杆量会与视觉目标叠加。
+     */
+    if (vision_held == 0U) {
+        pitch_hold_ref = GimbalPitchLimit_AdvanceAngleReference(
+            pitch_hold_ref, pitch_intent, GIMBAL_PITCH_MAX_SPEED_DEG_S,
+            (float)pitch_target_elapsed_ms * 0.001f, &pitch_limit_config);
+    }
     pitch_reference = GimbalPitchLimit_ClampAngleReference(
         pitch_hold_ref, true, attitude.Pitch, &pitch_limit_config);
     pitch_hold_ref = pitch_reference;
@@ -686,6 +858,8 @@ void Gimbal_Update(Input_Data_t *input)
 void Gimbal_Stop(void)
 {
     gimbal_enabled = 0U;
+    vision_held = 0U;
+    vision_owner_last = 0U;
     gimbal_debug_last_tick = 0U;
     yaw_speed_ref_last = 0.0f;
     pitch_speed_ref_last = 0.0f;
